@@ -1,0 +1,24 @@
+# Local SQL Server for development. Start with:  docker compose up -d
+# Then in .env:
+#   SQLSERVER_HOST=localhost
+#   SQLSERVER_USER=sa
+#   SQLSERVER_PASSWORD=Your_strong_Pass123
+#   SQLSERVER_DATABASE=stellar_trader
+#   SQLSERVER_TRUST_CERT=true
+# The app creates the "stellar_trader" database and tables on first boot.
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: stellar-trader-sql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Your_strong_Pass123"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    restart: unless-stopped
+
+volumes:
+  mssql-data:

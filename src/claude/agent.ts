@@ -1,0 +1,464 @@
+import { getProvider, type AiMessage } from "../ai";
+import { config } from "../config";
+import {
+  getBalances,
+  getOpenOffers,
+  getMarketSnapshot,
+  getTradeAggregations,
+  summarizeCandles,
+  type MarketSnapshot,
+} from "../stellar/market";
+import { signerPublicKey } from "../stellar/signer";
+import { canonicalAsset } from "../stellar/assets";
+import { effectiveCapForPair } from "../policy/engine";
+import {
+  tradingTools,
+  TOOL_BALANCES,
+  TOOL_MARKET,
+  TOOL_HISTORY,
+  TOOL_PROPOSE,
+} from "./tools";
+import type { PositionSummary, TradeConfidence, TradeSide } from "../types";
+
+export interface ProposedTrade {
+  side: TradeSide;
+  baseAsset: string;
+  quoteAsset: string;
+  amount: string;
+  limitPrice: string;
+  maxSlippageBps: number;
+  reason: string;
+  confidence?: TradeConfidence;
+  targetPrice?: string;
+  invalidationPrice?: string;
+  horizon?: string;
+}
+
+export interface AnalysisResult {
+  reasoning: string;
+  proposals: ProposedTrade[];
+  toolTrace: string[];
+}
+
+/**
+ * Feedback about how THIS system's own trading has gone so far, handed to the
+ * analyst so it can learn from its open exposure and today's realized result.
+ * (Quote-denominated; see src/trading/positions.ts for scope/caveats.)
+ */
+export interface TradingMemory {
+  /** Realized PnL accrued TODAY, in XLM (drives MAX_DAILY_LOSS). */
+  realizedPnlToday: number;
+  /** Mark-to-market PnL of open positions, in XLM (monitor's latest mark). */
+  unrealizedPnl: number;
+  /** Open positions from this system's own fills (signed-FIFO net). */
+  positions: PositionSummary[];
+  /** Recent submitted trades with their forward outcome, oldest first. */
+  recentOutcomes: RecentOutcome[];
+}
+
+/** One past trade + how the market moved after it (the analyst's feedback loop). */
+export interface RecentOutcome {
+  pair: string;
+  side: TradeSide;
+  amount: string;
+  price: string;
+  /** Side-adjusted % move of the mid vs fill at +1h (null = not marked yet). */
+  mark1hPnlPct: number | null;
+  /** Side-adjusted % move at +24h. */
+  mark24hPnlPct: number | null;
+}
+
+/** Render the trading memory as a compact context block, or "" when absent. */
+function renderMemory(memory?: TradingMemory): string {
+  if (!memory) return "";
+  const pnl = fmtNum(memory.realizedPnlToday);
+  const upnl = fmtNum(memory.unrealizedPnl);
+  const positions =
+    memory.positions.length === 0
+      ? "flat (no open positions from your own trading)"
+      : memory.positions
+          .map((p) => `${p.pair} net=${fmtNum(p.netQty)} @ avg ${fmtNum(p.avgPrice)}`)
+          .join("; ");
+  const outcomes =
+    memory.recentOutcomes.length === 0
+      ? ""
+      : `\n- Your recent calls (side-adjusted % move after the trade; + = you were right): ` +
+        memory.recentOutcomes
+          .map(
+            (o) =>
+              `${o.side} ${o.pair} @ ${o.price} -> 1h ${fmtPct(o.mark1hPnlPct)}, 24h ${fmtPct(o.mark24hPnlPct)}`,
+          )
+          .join("; ");
+  return `Your trading so far (this system's OWN fills only, XLM-normalized):
+- Realized PnL today: ${pnl} XLM; unrealized on open positions: ${upnl} XLM (the backend HALTS new entries once realized + unrealized losses reach ${config.limits.maxDailyLoss} XLM, and tapers your size cap from 50% of that budget).
+- Open positions: ${positions}${outcomes}
+Use this: avoid piling onto exposure you already hold, consider taking profit / cutting a losing position, learn from calls that went against you, and trade more conservatively as the loss budget burns.`;
+}
+
+function fmtPct(p: number | null): string {
+  if (p == null) return "pending";
+  return `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`;
+}
+
+/** Clean decimal for prompt tables: <=7 dp, no trailing zeros. */
+function fmtNum(n: number): string {
+  if (!Number.isFinite(n)) return "n/a";
+  return Number(n.toFixed(7)).toString();
+}
+
+/** Map the get_price_history resolution arg to a Horizon (width, count) pair. */
+function resolutionToParams(res?: string): { ms: number; limit: number } {
+  switch (res) {
+    case "15m":
+      return { ms: 900_000, limit: 48 }; // ~12h
+    case "1d":
+      return { ms: 86_400_000, limit: 30 }; // ~30d
+    case "1h":
+    default:
+      return { ms: 3_600_000, limit: 24 }; // ~24h
+  }
+}
+
+const SYSTEM = `You are a cautious trading analyst on the Stellar ${config.network} network.
+
+Your job: look at live data, then EITHER propose exactly one well-justified trade via the propose_stellar_trade tool, OR explain in plain text why you would not trade right now.
+
+Hard rules:
+- You never hold keys and never execute. You only propose. A separate backend enforces risk limits and a human approves every trade.
+- Only trade assets on the operator's whitelist: ${config.limits.assetWhitelist.join(", ")}.
+- Keep any single trade at or below the "Per-trade size cap" stated in the request below (it depends on the pair's risk tier - blue-chip stablecoin pairs allow a larger clip - and shrinks as the daily loss budget burns). Never exceed it.
+- Keep slippage at or below ${config.limits.maxSlippageBps} bps and set max_slippage_bps accordingly.
+- Always ground your decision in fresh data before proposing: get_account_balances (holdings AND your open offers, for sizing and exposure), get_market (orderbook, spread, depth) AND get_price_history (trend, volatility, 24h range).
+- The data includes SERVER-COMPUTED indicators - use them instead of estimating: rsi14, ema8 vs ema24 (trend direction), atrPct/realizedVolPct (volatility), efficiencyRatio, rangePos (0=at the low, 1=at the high), volRatio, flowBuyPct (taker buy pressure) and a regime tag.
+- Adapt the playbook to the regime: "trending-up"/"trending-down" -> trade WITH the trend on pullbacks, never fade it; "ranging" -> mean-reversion entries near the range edges (rangePos near 0 or 1) only; "volatile" -> stand aside or halve your size, spreads and slippage eat the edge.
+- Set confidence honestly (low confidence is held for manual review), and ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and its position monitor manages exits from your invalidation level.
+- The backend also blocks entries when the spread exceeds ${config.limits.maxEntrySpreadBps}bps or 24h volume is under ${config.limits.minVolume24h} - don't waste proposals on illiquid books.
+- Check your open offers first: don't duplicate an order you already have resting, and account for capital already committed.
+- A "Your trading so far" summary may precede the request: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
+- You don't have to cross the spread: for mean-reversion entries you may work a PATIENT limit order at your level (better entry, no taker cost). The backend auto-cancels resting offers after ${config.limits.maxOfferAgeMinutes} minutes, so only place one when the level is close.
+- The hard gates (spread, volume, slippage, reward/risk, exposure caps) ARE the quality bar. When a setup clears it, take it at an honest size and confidence rather than standing flat by default; abstain only when nothing qualifies. Capital preservation still beats a marginal trade.
+
+Be concise: explain your reasoning in 2-4 sentences.`;
+
+export async function analyze(
+  baseAsset: string,
+  quoteAsset: string,
+  memory?: TradingMemory,
+): Promise<AnalysisResult> {
+  const provider = getProvider();
+  const toolTrace: string[] = [];
+  const proposals: ProposedTrade[] = [];
+  let reasoning = "";
+
+  const memoryBlock = renderMemory(memory);
+  const cap = effectiveCapForPair(
+    baseAsset,
+    quoteAsset,
+    memory?.realizedPnlToday ?? 0,
+    memory?.unrealizedPnl ?? 0,
+  );
+  const messages: AiMessage[] = [
+    {
+      role: "user",
+      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Analyze the ${baseAsset}/${quoteAsset} market for account ${
+        signerPublicKey() ?? "(none configured)"
+      } and decide whether to trade. Per-trade size cap for this pair: ${cap} units of ${baseAsset} (the base). Fetch fresh data with your tools first.`,
+    },
+  ];
+
+  for (let step = 0; step < 6; step++) {
+    const turn = await provider.run({
+      system: SYSTEM,
+      tools: tradingTools,
+      messages,
+      maxReplyTokens: 1024,
+    });
+
+    if (turn.text) reasoning += (reasoning ? "\n" : "") + turn.text;
+    if (turn.toolCalls.length === 0) break;
+
+    messages.push({
+      role: "assistant",
+      content: turn.text,
+      toolCalls: turn.toolCalls,
+      raw: turn.raw,
+    });
+
+    for (const tc of turn.toolCalls) {
+      const { content, trace } = await runTool(tc.name, tc.input);
+      if (trace) toolTrace.push(trace);
+      if (tc.name === TOOL_PROPOSE) {
+        const p = parseProposal(tc.input);
+        if (p) proposals.push(p);
+      }
+      messages.push({ role: "tool", toolCallId: tc.id, content });
+    }
+
+    // Once the model has proposed, we have what we need - stop the loop.
+    if (proposals.length > 0) break;
+  }
+
+  return {
+    reasoning: reasoning || "(no commentary)",
+    proposals,
+    toolTrace,
+  };
+}
+
+const SYSTEM_CHAIN = `You are a disciplined trading analyst scanning the Stellar ${config.network} DEX: several reputable credit tokens quoted against XLM, plus a few CROSS pairs (fx and peg markets like USDC/EURC and yUSDC/USDC).
+
+Your job: review the live order books provided, then propose the STRONGEST few trades (anywhere from zero to a small handful) via the propose_stellar_trade tool, or explain in plain text why you would stand pat.
+
+Hard rules:
+- You never hold keys and never execute. You only propose. A separate backend enforces risk limits and (unless auto-trade is on) a human approves every trade.
+- Market lines reading "TOKEN: ..." are XLM-based: base_asset is "XLM", quote_asset is that token. Lines reading "A vs B: ..." are CROSS pairs: base_asset is A, quote_asset is B. Copy the full CODE:ISSUER specs exactly as shown; all scanned legs are whitelisted.
+- Cross pairs have natural anchors - use them: yUSDC/USDC is a redeemable peg that belongs near 1.0 (a persistent deviation with depth behind it is a high-quality mean-reversion setup), and USDC/EURC tracks the EUR/USD rate (fade only clear dislocations, not fx drift).
+- Each scanned market shows its own "maxBase=" per-trade cap in BASE units of that line's pair (already tapered for today's loss budget). Never exceed it.
+- Keep slippage at or below ${config.limits.maxSlippageBps} bps and set max_slippage_bps accordingly.
+- Daily caps apply (${config.limits.maxDailyVolume} XLM-equivalent volume, ${config.limits.maxTradesPerDay} trades), so never propose more than a handful at once.
+- Each scanned market lists a 24h summary (last price, 24hΔ, range, 7dΔ/7dRange where available, vol24h, bid/ask/spread/depth) plus SERVER-COMPUTED indicators: regime, rsi, atrPct (per-candle volatility %), rangePos (0=at the low, 1=at the high) and flow (taker buy %). Trust these numbers over mental math, and use the 7d range for real support/resistance levels the 24h window can't show.
+- Adapt the playbook to each market's regime tag: "trending-up"/"trending-down" -> only trade WITH the trend (e.g. buy a pullback in an uptrend), never fade it; "ranging" -> mean-reversion entries near the range edges only (rangePos near 0 or 1); "volatile" -> stand aside or halve size; "n/a" (no tag) -> too little history, skip.
+- The backend BLOCKS entries when spread > ${config.limits.maxEntrySpreadBps}bps or 24h volume < ${config.limits.minVolume24h} XLM - don't waste proposals on those books.
+- Set confidence honestly on every proposal (low confidence is held for manual review), and ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and manages exits from your invalidation level.
+- Your balances and open (resting) offers are listed above; don't duplicate an order you already have working, and account for capital already committed.
+- A "Your trading so far" summary may precede the data: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
+- Call get_account_balances to refresh holdings/offers and ground sizing. Before proposing on a pair, call get_price_history for its candles and get_market for deeper orderbook detail. Don't chase a parabolic 24hΔ or a thin, wide-spread book.
+- You don't have to cross the spread: for mean-reversion entries you may work a PATIENT limit order at your level (e.g. a resting buy near range support, or inside the spread on a tight book) - better entry, no taker cost. The backend auto-cancels resting offers after ${config.limits.maxOfferAgeMinutes} minutes, so only place one when the level is close.
+- The hard gates (spread, volume, slippage, reward/risk, exposure caps) ARE the quality bar. When a setup clears it, take it at an honest size and confidence rather than standing flat by default; abstain only when nothing qualifies. Capital preservation still beats a marginal trade.
+
+Be concise: summarize your reasoning in 2-5 sentences, then make any proposals.`;
+
+/**
+ * Scan several pre-fetched markets at once and let Claude propose 0..N trades
+ * across them. Unlike analyze(), this does NOT stop after the first proposal -
+ * Claude can surface multiple opportunities in a single pass.
+ */
+export async function analyzeChain(
+  markets: MarketSnapshot[],
+  memory?: TradingMemory,
+): Promise<AnalysisResult> {
+  const provider = getProvider();
+  const toolTrace: string[] = [];
+  const proposals: ProposedTrade[] = [];
+  let reasoning = "";
+
+  const memoryBlock = renderMemory(memory);
+  const pub = signerPublicKey();
+  let balancesText = "(no account configured)";
+  let offersText = "[]";
+  if (pub) {
+    try {
+      balancesText = JSON.stringify(await getBalances(pub));
+    } catch {
+      balancesText = "(failed to load balances)";
+    }
+    try {
+      offersText = JSON.stringify(await getOpenOffers(pub));
+    } catch {
+      offersText = "(failed to load open offers)";
+    }
+  }
+
+  const table = markets
+    .map((m) => {
+      const s = m.stats;
+      const spread = m.spreadBps != null ? m.spreadBps.toFixed(1) : "n/a";
+      const last = s.lastPrice != null ? fmtNum(s.lastPrice) : "n/a";
+      const chg =
+        s.change24hPct != null
+          ? `${s.change24hPct >= 0 ? "+" : ""}${s.change24hPct.toFixed(2)}%`
+          : "n/a";
+      const range =
+        s.low24h != null && s.high24h != null
+          ? `${fmtNum(s.low24h)}..${fmtNum(s.high24h)}`
+          : "n/a";
+      const vol = s.baseVolume24h != null ? fmtNum(s.baseVolume24h) : "n/a";
+      const cap = effectiveCapForPair(
+        m.base,
+        m.quote,
+        memory?.realizedPnlToday ?? 0,
+        memory?.unrealizedPnl ?? 0,
+      );
+      const flow = m.flowBuyPct != null ? `${m.flowBuyPct.toFixed(0)}%buy` : "n/a";
+      // XLM markets keep the bare quote label; cross pairs show "BASE vs QUOTE"
+      // so the model copies base_asset/quote_asset exactly.
+      const label = m.base === "XLM" ? m.quote : `${m.base} vs ${m.quote}`;
+      const d7 = m.stats7d;
+      const week =
+        d7?.change24hPct != null && d7.low24h != null && d7.high24h != null
+          ? ` 7dΔ=${d7.change24hPct >= 0 ? "+" : ""}${d7.change24hPct.toFixed(2)}% 7dRange=${fmtNum(d7.low24h)}..${fmtNum(d7.high24h)}`
+          : "";
+      return `- ${label}: last=${last} 24hΔ=${chg} range=${range}${week} vol24h=${vol} bid=${m.bestBid ?? "n/a"} ask=${m.bestAsk ?? "n/a"} spread=${spread}bps depth(b/a)=${m.bids.length}/${m.asks.length} regime=${s.regime ?? "n/a"} rsi=${s.rsi14 ?? "n/a"} atrPct=${s.atrPct ?? "n/a"} rangePos=${s.rangePos ?? "n/a"} flow=${flow} maxBase=${cap}`;
+    })
+    .join("\n");
+
+  const messages: AiMessage[] = [
+    {
+      role: "user",
+      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Account: ${pub ?? "(none configured)"}
+Balances: ${balancesText}
+Open offers (your resting orders - do not blindly duplicate them): ${offersText}
+
+Scanned markets (base is XLM for all; price = quote units per 1 XLM):
+${table}
+
+Decide whether to trade. You may call get_market for deeper detail on any pair, then propose your best zero-to-few trades.`,
+    },
+  ];
+
+  const MAX_PROPOSALS = 12;
+  for (let step = 0; step < 8; step++) {
+    const turn = await provider.run({
+      system: SYSTEM_CHAIN,
+      tools: tradingTools,
+      messages,
+      maxReplyTokens: 1536,
+    });
+
+    if (turn.text) reasoning += (reasoning ? "\n" : "") + turn.text;
+    if (turn.toolCalls.length === 0) break;
+
+    messages.push({
+      role: "assistant",
+      content: turn.text,
+      toolCalls: turn.toolCalls,
+      raw: turn.raw,
+    });
+
+    for (const tc of turn.toolCalls) {
+      const { content, trace } = await runTool(tc.name, tc.input);
+      if (trace) toolTrace.push(trace);
+      if (tc.name === TOOL_PROPOSE && proposals.length < MAX_PROPOSALS) {
+        const p = parseProposal(tc.input);
+        if (p) proposals.push(p);
+      }
+      messages.push({ role: "tool", toolCallId: tc.id, content });
+    }
+
+    if (proposals.length >= MAX_PROPOSALS) break;
+  }
+
+  return {
+    reasoning: reasoning || "(no commentary)",
+    proposals,
+    toolTrace,
+  };
+}
+
+async function runTool(
+  name: string,
+  input: unknown,
+): Promise<{ content: string; trace?: string }> {
+  try {
+    if (name === TOOL_BALANCES) {
+      const pub = signerPublicKey();
+      if (!pub) {
+        return {
+          content: "No account configured.",
+          trace: "get_account_balances -> no account",
+        };
+      }
+      const [balances, openOffers] = await Promise.all([
+        getBalances(pub),
+        getOpenOffers(pub).catch(() => []),
+      ]);
+      return {
+        content: JSON.stringify({ balances, openOffers }),
+        trace: `get_account_balances -> ${balances.length} balance(s), ${openOffers.length} open offer(s)`,
+      };
+    }
+    if (name === TOOL_MARKET) {
+      const o = input as { base_asset?: string; quote_asset?: string };
+      const base = o.base_asset ?? "";
+      const quote = o.quote_asset ?? "";
+      const snap = await getMarketSnapshot(base, quote, 8);
+      return {
+        content: JSON.stringify(snap),
+        trace: `get_market ${base}/${quote} -> bid ${snap.bestBid} / ask ${snap.bestAsk}`,
+      };
+    }
+    if (name === TOOL_HISTORY) {
+      const o = input as {
+        base_asset?: string;
+        quote_asset?: string;
+        resolution?: string;
+      };
+      const base = o.base_asset ?? "";
+      const quote = o.quote_asset ?? "";
+      const { ms, limit } = resolutionToParams(o.resolution);
+      const candles = await getTradeAggregations(base, quote, ms, limit);
+      const stats = summarizeCandles(candles, ms);
+      const chg =
+        stats.change24hPct != null ? `${stats.change24hPct.toFixed(2)}%` : "n/a";
+      return {
+        content: JSON.stringify({
+          resolution: o.resolution ?? "1h",
+          stats,
+          candles,
+        }),
+        trace: `get_price_history ${base}/${quote} -> ${candles.length} candle(s), Δ ${chg}`,
+      };
+    }
+    if (name === TOOL_PROPOSE) {
+      return {
+        content:
+          "Proposal received. The backend will apply risk policy and a human will review it.",
+        trace: "propose_stellar_trade -> captured",
+      };
+    }
+    return { content: `Unknown tool: ${name}` };
+  } catch (err) {
+    // Name the pair in the trace - a bare "get_price_history -> error" line
+    // tells the operator nothing about WHICH market failed.
+    const o = input as { base_asset?: string; quote_asset?: string } | null;
+    const pair =
+      o && (o.base_asset || o.quote_asset)
+        ? ` ${o.base_asset ?? "?"}/${o.quote_asset ?? "?"}`
+        : "";
+    return {
+      content: `Error: ${(err as Error).message}`,
+      trace: `${name}${pair} -> error: ${(err as Error).message}`,
+    };
+  }
+}
+
+function parseProposal(input: unknown): ProposedTrade | null {
+  const o = input as Record<string, unknown>;
+  const side: TradeSide | null =
+    o.side === "buy" || o.side === "sell" ? o.side : null;
+  if (!side) return null;
+
+  const base = String(o.base_asset ?? "");
+  const quote = String(o.quote_asset ?? "");
+  const safe = (spec: string) => {
+    try {
+      return canonicalAsset(spec);
+    } catch {
+      return spec; // keep raw; the policy engine will reject an invalid asset
+    }
+  };
+
+  const confidence =
+    o.confidence === "low" || o.confidence === "medium" || o.confidence === "high"
+      ? o.confidence
+      : undefined;
+  const optNum = (v: unknown): string | undefined => {
+    if (v == null) return undefined;
+    const s = String(v).trim();
+    return s && Number(s) > 0 ? s : undefined;
+  };
+
+  return {
+    side,
+    baseAsset: safe(base),
+    quoteAsset: safe(quote),
+    amount: String(o.amount ?? ""),
+    limitPrice: String(o.limit_price ?? ""),
+    maxSlippageBps: Number(o.max_slippage_bps ?? 0),
+    reason: String(o.reason ?? ""),
+    confidence,
+    targetPrice: optNum(o.target_price),
+    invalidationPrice: optNum(o.invalidation_price),
+    horizon: o.horizon != null ? String(o.horizon).slice(0, 16) : undefined,
+  };
+}
