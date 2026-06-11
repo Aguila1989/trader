@@ -269,6 +269,11 @@ async function markPositions(snaps: SnapCache): Promise<void> {
     const mid = await snaps.mid(pos.base, pos.quote);
     if (mid == null || !(mid > 0) || !(pos.avgPrice > 0)) continue;
 
+    // Keep the XLM rate map fresh from the marks we fetch anyway, so
+    // cross-pair conversions stay current between chain scans.
+    if (pos.base === "XLM") setXlmRate(pos.quote, 1 / mid);
+    else if (pos.quote === "XLM") setXlmRate(pos.base, mid);
+
     // Signed unrealized PnL in quote units, then normalized to XLM exactly
     // like realized deltas, so the loss gate compares one unit.
     const unrealizedQuote = (mid - pos.avgPrice) * pos.netQty;

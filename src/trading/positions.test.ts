@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { ledger, computeEvolution, type Fill } from "./positions";
+import {
+  ledger,
+  computeEvolution,
+  realizedToXlm,
+  setXlmRate,
+  xlmNotional,
+  type Fill,
+} from "./positions";
 
 function fill(over: Partial<Fill>): Fill {
   return {
@@ -76,6 +83,37 @@ describe("realized PnL normalization to XLM", () => {
       fill({ base: "USDC", quote: "EURC", side: "sell", amount: 100, price: 1.0 }),
     );
     expect(realized).toBeCloseTo(10, 7);
+  });
+});
+
+describe("XLM rate map for cross pairs", () => {
+  // Full CODE:ISSUER specs so these rates never collide with the bare-code
+  // fixtures used elsewhere in this file.
+  const USDC = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+  const EURC = "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2";
+
+  it("converts a cross-pair realized delta via the quote asset's rate", () => {
+    setXlmRate(EURC, 6); // 1 EURC = 6 XLM
+    // 10 EURC of profit on USDC/EURC -> 60 XLM.
+    expect(realizedToXlm(10, USDC, EURC, 0.87)).toBeCloseTo(60, 7);
+  });
+
+  it("computes cross-pair notional via the base asset's rate when known", () => {
+    setXlmRate(USDC, 5.2); // 1 USDC = 5.2 XLM
+    // 100 USDC of base notional -> 520 XLM-equivalent.
+    expect(xlmNotional(USDC, EURC, 100, 0.87)).toBeCloseTo(520, 7);
+  });
+
+  it("falls back to quote rate x price when the base rate is unknown", () => {
+    const FOO = "FOO:GFOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO";
+    setXlmRate(EURC, 6);
+    // 100 FOO @ 0.5 EURC each = 50 EURC = 300 XLM.
+    expect(xlmNotional(FOO, EURC, 100, 0.5)).toBeCloseTo(300, 7);
+  });
+
+  it("XLM legs never need the map", () => {
+    expect(xlmNotional("XLM", USDC, 25, 0.19)).toBeCloseTo(25, 7);
+    expect(xlmNotional(USDC, "XLM", 10, 5.2)).toBeCloseTo(52, 7);
   });
 });
 
