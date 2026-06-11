@@ -176,9 +176,12 @@ describe("checkPolicy", () => {
 });
 
 describe("maxAmountForPair", () => {
-  it("uses the high cap only when every non-XLM leg is high tier", () => {
+  it("uses the high cap for XLM-vs-high-tier pairs", () => {
     expect(maxAmountForPair("XLM", USDC)).toBe(50);
-    expect(maxAmountForPair(USDC, EURC)).toBe(50);
+  });
+
+  it("keeps CROSS pairs (no XLM leg) at the standard cap - the high cap is in XLM-ish base units and 50 USDC is ~5x the real size of 50 XLM", () => {
+    expect(maxAmountForPair(USDC, EURC)).toBe(10);
   });
 
   it("uses the standard cap for low-tier or mixed pairs", () => {

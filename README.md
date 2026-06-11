@@ -57,8 +57,27 @@ Two ways to put a market in front of the AI:
 
 - **Ask AI** on a single base/quote pair you type in.
 - **Scan chain** sweeps a curated universe of reputable Stellar credit tokens,
-  each quoted against XLM, in one pass. The AI reviews all of them and proposes
-  the strongest zero-to-few trades.
+  each quoted against XLM, **plus a few cross pairs** (see below), in one pass.
+  The AI reviews all of them and proposes the strongest zero-to-few trades.
+
+### Cross pairs (fx / peg books)
+
+Not all liquidity is visible through XLM: some of the best mean-reversion books
+trade token-vs-token. The scan therefore also covers **`SCAN_PAIRS`** (default
+`USDC/EURC,yUSDC/USDC`, both verified liquid on mainnet):
+
+- **USDC/EURC** - effectively a EUR/USD fx book (~20bps spread): it moves on
+  the fx rate, not on XLM, so it is an opportunity stream independent of every
+  XLM-based market.
+- **yUSDC/USDC** - a redeemable **peg** pair that belongs near 1.0: deviations
+  with depth behind them are bounded mean-reversion setups. (Its XLM book is
+  dead wide - cross-pair scanning is what makes it reachable at all.)
+
+Cross-pair legs are auto-whitelisted, PnL/volume/exposure from cross trades are
+converted to XLM through live rates sampled from the XLM books each scan, and
+cross pairs always use the *standard* per-trade cap (the caps are denominated
+in base units, and 50 USDC is ~5x the real size of 50 XLM). Set
+`SCAN_PAIRS=none` to disable.
 
 The curated universe is split into two **risk tiers** that drive the per-trade
 size cap:
@@ -68,10 +87,10 @@ size cap:
 | **High** (deep, low-volatility blue-chips) | USDC, EURC | `MAX_AMOUNT_PER_TRADE_HIGH` (default 50) |
 | **Low** (smaller-cap / more volatile / exotic-fiat) | AQUA, yXLM, yUSDC, SHX, ARST, NGNT, LSP, AFR | `MAX_AMOUNT_PER_TRADE` (default 10) |
 
-The bigger cap applies **only** when *every* non-XLM leg of a pair is a
-high-tier asset; any low-tier or custom/unknown leg falls back to the standard
-cap. Sizing up only in the deepest, most stable names is the risk-correct place
-to take a larger clip.
+The bigger cap applies **only** when an XLM-based pair's other leg is a
+high-tier asset; any low-tier, custom/unknown or cross-pair leg falls back to
+the standard cap. Sizing up only in the deepest, most stable names is the
+risk-correct place to take a larger clip.
 
 The universe is deliberately a hand-picked, *creditable* set rather than every
 asset on Horizon (the long tail is mostly dust and dead issuers). Every curated
