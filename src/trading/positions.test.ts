@@ -118,7 +118,7 @@ describe("XLM rate map for cross pairs", () => {
 });
 
 describe("computeEvolution", () => {
-  it("accumulates volume, trade count and PnL per fill", () => {
+  it("accumulates XLM-normalized volume, trade count and PnL per fill", () => {
     const fills: Fill[] = [
       fill({ side: "buy", amount: 100, price: 0.5, ts: "2026-01-01T00:00:00Z" }),
       fill({ side: "sell", amount: 100, price: 0.6, ts: "2026-01-01T01:00:00Z" }),
@@ -126,10 +126,12 @@ describe("computeEvolution", () => {
     const series = computeEvolution(fills);
     expect(series).toHaveLength(2);
     expect(series[0]?.cumulativeTrades).toBe(1);
-    expect(series[0]?.cumulativeVolume).toBeCloseTo(100, 7);
+    // base USDC / quote XLM: 100 @ 0.5 -> 50 XLM notional.
+    expect(series[0]?.cumulativeVolume).toBeCloseTo(50, 7);
     expect(series[0]?.cumulativePnl).toBeCloseTo(0, 7);
     expect(series[1]?.cumulativeTrades).toBe(2);
-    expect(series[1]?.cumulativeVolume).toBeCloseTo(200, 7);
+    // + 100 @ 0.6 -> 60 XLM notional.
+    expect(series[1]?.cumulativeVolume).toBeCloseTo(110, 7);
     expect(series[1]?.cumulativePnl).toBeCloseTo(10, 7);
   });
 });

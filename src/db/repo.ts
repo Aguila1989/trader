@@ -171,7 +171,7 @@ export async function insertProposal(p: TradeProposal): Promise<void> {
 /** Persist the mutable fields after a status change. */
 export async function updateProposal(p: TradeProposal): Promise<void> {
   if (!dbReady()) return;
-  await getPool()
+  const result = await getPool()
     .request()
     .input("id", sql.NVarChar(64), p.id)
     .input("updatedAt", sql.DateTime2, new Date(p.updatedAt))
@@ -204,6 +204,36 @@ export async function updateProposal(p: TradeProposal): Promise<void> {
              mark24hPnlPct = @mark24hPnlPct
        WHERE id = @id;`,
     );
+  // Upsert fallback: if the original INSERT failed transiently (its error is
+  // swallowed by store.persist so the app keeps trading), every UPDATE here
+  // would silently match 0 rows and the trade would be missing from every
+  // persistence-backed counter after a restart. Re-insert with current state.
+  if ((result.rowsAffected?.[0] ?? 0) === 0) {
+    await insertProposal(p);
+  }
+}
+
+/**
+ * Rows with PENDING post-trade work, regardless of recency: tracked resting
+ * offers (later fills to book, stale cancels to fire) and submitting/failed
+ * rows whose tx hash may still settle. Merged into the in-memory view on boot
+ * so the monitor never loses them to the recent-100 hydration window.
+ */
+export async function listActionableProposals(): Promise<TradeProposal[]> {
+  if (!dbReady()) return [];
+  const result = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .query<ProposalRow>(
+      `SELECT ${SELECT_COLS}
+         FROM dbo.Proposals
+        WHERE network = @net
+          AND ((status = 'submitted' AND offerId IS NOT NULL)
+            OR (status IN ('submitting', 'failed') AND txHash IS NOT NULL
+                AND createdAt > DATEADD(hour, -24, SYSUTCDATETIME())))
+        ORDER BY createdAt DESC;`,
+    );
+  return result.recordset.map(rowToProposal);
 }
 
 /** Newest-created proposals, for hydrating the in-memory live view on boot. */

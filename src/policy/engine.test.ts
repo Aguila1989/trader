@@ -184,6 +184,10 @@ describe("maxAmountForPair", () => {
     expect(maxAmountForPair(USDC, EURC)).toBe(10);
   });
 
+  it("keeps INVERTED pairs (XLM as quote) at the standard cap - 50 USDC base would be ~5x the calibrated size", () => {
+    expect(maxAmountForPair(USDC, "XLM")).toBe(10);
+  });
+
   it("uses the standard cap for low-tier or mixed pairs", () => {
     expect(maxAmountForPair("XLM", AQUA)).toBe(10);
     expect(maxAmountForPair(USDC, AQUA)).toBe(10);
@@ -219,6 +223,25 @@ describe("liquidity gates", () => {
     const res = run({}, { context: {}, autoExecution: true });
     expect(res.allowed).toBe(false);
     expect(res.violations.join(" ")).toMatch(/fails closed/i);
+  });
+
+  it("fails CLOSED on a missing target/invalidation bracket under auto-execution", () => {
+    // Fresh market data, but no stated bracket: an unattended entry must not
+    // submit without the stop the reward/risk gate validates.
+    const res = run(
+      {},
+      { context: { bestBid: 0.5, bestAsk: 0.5, baseVolume24h: 10_000 }, autoExecution: true },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/target_price\/invalidation_price/i);
+  });
+
+  it("passes auto-execution with fresh data and a valid bracket", () => {
+    const res = run(
+      { targetPrice: "0.6", invalidationPrice: "0.45" },
+      { context: { bestBid: 0.5, bestAsk: 0.5, baseVolume24h: 10_000 }, autoExecution: true },
+    );
+    expect(res.allowed).toBe(true);
   });
 });
 

@@ -248,6 +248,18 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
 
   // 8. Reward/risk: when the analyst states a target AND an invalidation level,
   //    they must point the right way and clear the minimum ratio. (Entries only.)
+  //    Unattended entries fail CLOSED when the bracket is missing: the prompt
+  //    demands both fields on every proposal, so an entry without a stated
+  //    stop must never submit without a human looking at it.
+  if (!riskReducing && limits.minRiskReward > 0 && inp.autoExecution) {
+    const t = Number(proposal.targetPrice ?? "");
+    const inv = Number(proposal.invalidationPrice ?? "");
+    if (!(t > 0) || !(inv > 0)) {
+      violations.push(
+        "Missing or invalid target_price/invalidation_price - auto-execution requires a stated bracket (fails closed).",
+      );
+    }
+  }
   if (
     !riskReducing &&
     limits.minRiskReward > 0 &&
@@ -407,12 +419,11 @@ export function effectiveCapForPair(
 export function maxAmountForPair(base: string, quote: string): number {
   const std = config.limits.maxAmountPerTrade;
   const high = Math.max(config.limits.maxAmountPerTradeHigh, std);
-  const legs = [base, quote].filter((a) => !isXlmSpec(a));
-  if (legs.length === 0) return std;
-  // Caps are in BASE-asset units and calibrated for XLM-based pairs. On a
-  // CROSS pair (no XLM leg) the base unit can be worth far more than 1 XLM -
-  // 50 USDC is ~5x the real size of 50 XLM - so cross pairs always keep the
-  // conservative standard cap regardless of tier.
-  if (legs.length === 2) return std;
-  return legs.every((a) => curatedTier(a) === "high") ? high : std;
+  // Caps are in BASE-asset units and the HIGH cap is calibrated for the
+  // chain-scan shape (base = XLM). Any pair whose base is NOT XLM - cross
+  // pairs like USDC/EURC but also inverted manual pairs like USDC/XLM - keeps
+  // the conservative standard cap: 50 USDC is ~5x the real size of 50 XLM.
+  if (!isXlmSpec(base)) return std;
+  if (isXlmSpec(quote)) return std; // degenerate XLM/XLM
+  return curatedTier(quote) === "high" ? high : std;
 }

@@ -13,7 +13,11 @@ import {
   fillFromEffects,
 } from "../stellar/signer";
 import { buildCancelOfferTransaction } from "../stellar/builder";
-import { runExclusive, submitSystemProposal } from "./orchestrator";
+import {
+  recoverRestingOfferId,
+  runExclusive,
+  submitSystemProposal,
+} from "./orchestrator";
 import type { ProposedTrade } from "../claude/agent";
 import type { PositionSummary, TradeProposal } from "../types";
 
@@ -50,6 +54,17 @@ const EPS = 1e-7;
 const STOP_RETRY_MS = 5 * 60_000;
 /** How far back the late-landing recheck looks (Horizon retention is ample). */
 const RECHECK_WINDOW_MS = 24 * 3_600_000;
+/**
+ * A proposal stuck in "submitting" longer than this is a crash artifact, not
+ * an in-flight submit: the live path resolves within the signer's 120s poll
+ * window. Its tx hash was persisted BEFORE the submit, so it can be settled
+ * definitively - booked if the tx landed, failed if the timebound expired.
+ * Measured from updatedAt (bumped when the hash was persisted at submit
+ * start) - NOT createdAt: a manually-approved proposal can legitimately be
+ * ~10 min old (maxProposalAgeSeconds) when its submit BEGINS, and treating an
+ * in-flight submit as stuck would double-book the trade.
+ */
+const STUCK_SUBMITTING_MS = 10 * 60_000;
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
@@ -110,6 +125,60 @@ function remainingBaseOf(
   return amount * price;
 }
 
+/** A trade row from Horizon's per-offer trade history, narrowed. */
+interface OfferTradeLike {
+  base_asset_type?: string;
+  base_asset_code?: string;
+  base_asset_issuer?: string;
+  counter_asset_type?: string;
+  counter_asset_code?: string;
+  counter_asset_issuer?: string;
+  base_amount?: string;
+  counter_amount?: string;
+}
+
+function tradeAssetSpec(type?: string, code?: string, issuer?: string): string {
+  if (type === "native") return "XLM";
+  return code && issuer ? `${code}:${issuer}` : (type ?? "");
+}
+
+/**
+ * Base-asset units this proposal's offer ACTUALLY traded, proven by Horizon's
+ * per-offer trade history - never inferred from the offer's absence from the
+ * book, because a cancel (ours with lost bookkeeping after a crash, or the
+ * operator's from a wallet) removes an offer without filling it. Returns null
+ * when the history cannot be fetched right now.
+ */
+async function verifiedOfferFilledBase(p: TradeProposal): Promise<number | null> {
+  try {
+    const page = await horizon
+      .trades()
+      .forOffer(p.offerId as string)
+      .limit(200)
+      .call();
+    let total = 0;
+    for (const t of page.records as unknown as OfferTradeLike[]) {
+      const baseSpec = tradeAssetSpec(
+        t.base_asset_type,
+        t.base_asset_code,
+        t.base_asset_issuer,
+      );
+      const counterSpec = tradeAssetSpec(
+        t.counter_asset_type,
+        t.counter_asset_code,
+        t.counter_asset_issuer,
+      );
+      // Horizon's base/counter ordering is its own canonical one, not the
+      // proposal's - pick whichever leg is the proposal's base asset.
+      if (baseSpec === p.baseAsset) total += Number(t.base_amount) || 0;
+      else if (counterSpec === p.baseAsset) total += Number(t.counter_amount) || 0;
+    }
+    return round7(total);
+  } catch {
+    return null;
+  }
+}
+
 async function reconcileOffers(): Promise<void> {
   const tracked = store
     .listProposals()
@@ -129,14 +198,23 @@ async function reconcileOffers(): Promise<void> {
     const offer = byId.get(p.offerId as string);
 
     if (!offer) {
-      // The offer left the book without us cancelling it: the remainder was
-      // taken. A maker fill executes at the maker's own quoted price, so the
-      // limit price is the correct booking price.
-      if (remainingBooked > EPS) {
-        store.recordIncrementalFill(p.id, remainingBooked, Number(p.limitPrice) || 0);
+      // The offer left the book - but absence does NOT mean it filled: our
+      // own cancel may have landed with the bookkeeping lost to a crash, or
+      // the operator cancelled it from a wallet. Book only what the offer's
+      // on-chain TRADE HISTORY proves, then stop tracking.
+      const traded = await verifiedOfferFilledBase(p);
+      if (traded == null) continue; // Horizon unavailable - retry next tick
+      const delta = round7(traded - booked);
+      if (delta > EPS) {
+        store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0);
         store.log(
           "trade",
-          `Offer ${p.offerId} (proposal ${shortId(p.id)}) left the book - booked the remaining ${remainingBooked} ${p.baseAsset} as filled.`,
+          `Offer ${p.offerId} (proposal ${shortId(p.id)}) left the book - booked ${delta} ${p.baseAsset} of VERIFIED fills.`,
+        );
+      } else if (remainingBooked > EPS) {
+        store.log(
+          "info",
+          `Offer ${p.offerId} (proposal ${shortId(p.id)}) left the book with ${remainingBooked} ${p.baseAsset} unfilled (cancelled) - nothing booked.`,
         );
       }
       store.updateProposal(p.id, { offerId: undefined });
@@ -167,11 +245,13 @@ async function reconcileOffers(): Promise<void> {
             const tx = await buildCancelOfferTransaction(p, p.offerId as string);
             await signAndSubmit(tx);
           });
-          store.updateProposal(p.id, { offerId: undefined });
+          // Deliberately KEEP offerId: the next tick finds the offer gone and
+          // books any fills that landed in the snapshot->cancel race window
+          // from the offer's verified trade history, then clears tracking.
           store.log(
             "trade",
             `Cancelled stale offer ${offer.id} (proposal ${shortId(p.id)}): ` +
-              `${remainingChain} ${p.baseAsset} unfilled after ${Math.round(ageMs / 60000)}min.`,
+              `~${remainingChain} ${p.baseAsset} unfilled after ${Math.round(ageMs / 60000)}min (final fills reconcile next tick).`,
           );
         } catch (err) {
           store.log(
@@ -211,19 +291,82 @@ function hasActiveClose(pos: PositionSummary): boolean {
       q.reason.startsWith("[stop-loss]") &&
       (q.status === "proposed" ||
         q.status === "pending_approval" ||
-        q.status === "submitting"),
+        q.status === "submitting" ||
+        // A submitted close whose remainder still RESTS on the book is very
+        // much active: without this, the still-breached position re-triggers
+        // after STOP_RETRY_MS and a duplicate full-size close stacks on top
+        // of the resting one - both filling would overshoot through zero
+        // into an unintended opposite position.
+        (q.status === "submitted" && q.offerId != null)),
   );
+}
+
+/**
+ * Base units already promised by LIVE resting [stop-loss] closes on this pair.
+ * Only stop closes count: they are priced through the touch and will fill
+ * barring gaps. An analyst's passive take-profit order must NOT reduce the
+ * stop size - in a falling market it sits above the price and never fills.
+ */
+function restingCloseRemainder(pos: PositionSummary): number {
+  const closeSide = pos.netQty > 0 ? "sell" : "buy";
+  let sum = 0;
+  for (const q of store.listProposals()) {
+    if (
+      q.status === "submitted" &&
+      q.offerId != null &&
+      q.side === closeSide &&
+      q.baseAsset === pos.base &&
+      q.quoteAsset === pos.quote &&
+      q.reason.startsWith("[stop-loss]")
+    ) {
+      sum += Math.max(
+        0,
+        (Number(q.amount) || 0) - (Number(q.filledAmount ?? 0) || 0),
+      );
+    }
+  }
+  return sum;
+}
+
+/**
+ * The analyst's OWN stop for this position: the invalidation_price of the most
+ * recent submitted proposal that opened/extended it. This is what makes the
+ * reward/risk gate honest - the risk distance the model stated (and policy
+ * validated) is the one that actually triggers the exit. The fixed
+ * STOP_LOSS_PCT remains as the hard backstop for positions without one.
+ */
+function statedInvalidation(pos: PositionSummary): number | null {
+  const openSide = pos.netQty > 0 ? "buy" : "sell";
+  for (const q of store.listProposals()) {
+    // listProposals is newest-first; the first match is the latest thesis.
+    if (
+      q.status === "submitted" &&
+      q.side === openSide &&
+      q.baseAsset === pos.base &&
+      q.quoteAsset === pos.quote &&
+      q.invalidationPrice != null
+    ) {
+      const inv = Number(q.invalidationPrice);
+      if (inv > 0) return inv;
+    }
+  }
+  return null;
 }
 
 async function proposeStopClose(
   pos: PositionSummary,
   snap: MarketSnapshot,
   movePct: number,
+  invalidation?: number,
 ): Promise<void> {
   const now = Date.now();
   const last = stopAttempts.get(pos.pair) ?? 0;
   if (now - last < STOP_RETRY_MS) return;
   if (hasActiveClose(pos)) return;
+  // Close only what no live resting stop already covers (a partially-filled
+  // earlier close keeps working its remainder on the book).
+  const uncovered = round7(Math.abs(pos.netQty) - restingCloseRemainder(pos));
+  if (uncovered <= EPS) return;
   stopAttempts.set(pos.pair, now);
 
   // Cross the touch deliberately (half the slippage budget) so the close
@@ -235,21 +378,25 @@ async function proposeStopClose(
   if (ref == null || !(ref > 0)) return;
   const limit = closingLong ? ref * (1 - margin) : ref * (1 + margin);
 
+  const trigger =
+    invalidation != null
+      ? `crossed the analyst's invalidation level ${invalidation}`
+      : `moved ${movePct.toFixed(2)}% against the avg entry`;
   const trade: ProposedTrade = {
     side: closingLong ? "sell" : "buy",
     baseAsset: pos.base,
     quoteAsset: pos.quote,
-    amount: String(round7(Math.abs(pos.netQty))),
+    amount: String(uncovered),
     limitPrice: String(round7(limit)),
     maxSlippageBps: config.limits.maxSlippageBps,
     confidence: "high",
     reason:
-      `[stop-loss] ${pos.pair} moved ${movePct.toFixed(2)}% against the avg entry ` +
-      `${pos.avgPrice} (mark ~${round7(ref)}). Closing ${round7(Math.abs(pos.netQty))} ${pos.base} to cap the loss.`,
+      `[stop-loss] ${pos.pair} ${trigger} ` +
+      `(avg entry ${pos.avgPrice}, mark ~${round7(ref)}). Closing ${uncovered} ${pos.base} to cap the loss.`,
   };
   store.log(
     "warn",
-    `Stop-loss triggered on ${pos.pair}: ${movePct.toFixed(2)}% adverse move - proposing close.`,
+    `Stop-loss triggered on ${pos.pair}: ${trigger} - proposing close.`,
   );
   await submitSystemProposal(trade, "monitor");
 }
@@ -283,12 +430,21 @@ async function markPositions(snaps: SnapCache): Promise<void> {
       pos.netQty > 0
         ? ((mid - pos.avgPrice) / pos.avgPrice) * 100
         : ((pos.avgPrice - mid) / pos.avgPrice) * 100;
-    if (
-      config.limits.stopLossPct > 0 &&
-      movePct <= -config.limits.stopLossPct &&
-      snap
-    ) {
-      await proposeStopClose(pos, snap, movePct);
+    // Two stop triggers: the analyst's own invalidation level (the risk the
+    // reward/risk gate validated), and the fixed % stop as the hard backstop.
+    const invalidation = statedInvalidation(pos);
+    const invalidated =
+      invalidation != null &&
+      (pos.netQty > 0 ? mid <= invalidation : mid >= invalidation);
+    const pctBreached =
+      config.limits.stopLossPct > 0 && movePct <= -config.limits.stopLossPct;
+    if (snap && (invalidated || pctBreached)) {
+      await proposeStopClose(
+        pos,
+        snap,
+        movePct,
+        invalidated ? (invalidation as number) : undefined,
+      );
     }
   }
   store.setUnrealizedPnl(round7(total));
@@ -338,15 +494,21 @@ async function outcomeMarks(snaps: SnapCache): Promise<void> {
 async function recheckTimedOut(): Promise<void> {
   const pub = signerPublicKey();
   if (!pub) return;
-  const candidates = store
-    .listProposals()
-    .filter(
-      (p) =>
-        p.status === "failed" &&
-        p.txHash &&
-        /not found on-ledger/i.test(p.error ?? "") &&
-        Date.now() - Date.parse(p.createdAt) < RECHECK_WINDOW_MS,
-    );
+  const candidates = store.listProposals().filter((p) => {
+    if (!p.txHash) return false;
+    const age = Date.now() - Date.parse(p.createdAt);
+    if (!Number.isFinite(age) || age >= RECHECK_WINDOW_MS) return false;
+    if (p.status === "failed") return /not found on-ledger/i.test(p.error ?? "");
+    // Crash recovery: the hash was persisted before submit, so a row stuck in
+    // "submitting" past the live path's window can be settled by hash. Age
+    // since the LAST update (the hash persist at submit start) - createdAt
+    // would misclassify an in-flight submit of an older approved proposal.
+    if (p.status === "submitting") {
+      const inFlight = Date.now() - Date.parse(p.updatedAt);
+      return Number.isFinite(inFlight) && inFlight > STUCK_SUBMITTING_MS;
+    }
+    return false;
+  });
 
   for (const p of candidates) {
     let successful: boolean;
@@ -357,7 +519,19 @@ async function recheckTimedOut(): Promise<void> {
         .call()) as unknown as { successful?: boolean };
       successful = rec.successful !== false;
     } catch {
-      continue; // still not on-ledger; keep the failed status and retry later
+      // Not on-ledger. For a crash-stranded "submitting" row the tx timebound
+      // (120s) is long gone - it can never land; close it out as failed.
+      if (p.status === "submitting") {
+        store.updateProposal(p.id, {
+          status: "failed",
+          error: `Submit was interrupted (crash/restart) and transaction ${p.txHash} never reached the ledger.`,
+        });
+        store.log(
+          "warn",
+          `Proposal ${shortId(p.id)} was stranded in "submitting"; its tx never landed - marked failed.`,
+        );
+      }
+      continue; // failed rows keep their status and retry next tick
     }
 
     if (!successful) {
@@ -387,12 +561,20 @@ async function recheckTimedOut(): Promise<void> {
     const avgPrice =
       filledBase > 0 && quoteLeg > 0 ? quoteLeg / filledBase : Number(p.limitPrice) || 0;
 
+    // If part of the order rests on the book, recover the offer id so the
+    // remainder is tracked (later fills booked, stale-cancel applies) instead
+    // of orphaned - the effects-based fill carries no currentOffer.
+    let offerId: string | undefined;
+    if ((Number(p.amount) || 0) - filledBase > EPS) {
+      offerId = await recoverRestingOfferId(p);
+    }
     const updated = store.updateProposal(p.id, {
       status: "submitted",
       error: undefined,
       submittedAt: new Date().toISOString(),
       filledAmount: String(round7(filledBase)),
       filledPrice: String(round7(avgPrice)),
+      ...(offerId ? { offerId } : {}),
     });
     if (updated) store.recordSubmittedTrade(updated);
     store.log(
