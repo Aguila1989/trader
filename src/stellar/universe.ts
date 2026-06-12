@@ -86,6 +86,24 @@ export const CURATED_SCAN_ASSETS: CuratedAsset[] = [
     label: "Afreum (afreum.com)",
     tier: "low",
   },
+  // Verified against the live ledger 2026-06-11 (dominant issuer by holders +
+  // home_domain + live XLM book): ~13.6k holders, ~38bps spread, ~4k XLM/day.
+  // A gold-backed claim is the PROJECT's own - treat it as a traded token, not
+  // audited bullion.
+  {
+    spec: "GOLD:GBC5ZGK6MQU3XG5Y72SXPA7P5R5NHYT2475SNEJB2U3EQ6J56QLVGOLD",
+    label: "Gold token (mintx.co)",
+    tier: "low",
+  },
+  // Verified 2026-06-11: the dominant USDT issuer on Stellar by holders
+  // (~5k), ~2bps spread but thin flow (~470 XLM/day - often under
+  // MIN_VOLUME_24H, where the entry gate correctly skips it). NOTE: issued by
+  // the stellarstable.co anchor, NOT by Tether Ltd directly.
+  {
+    spec: "USDT:GB5V6AUF6MJFKTDOQWGB4QLH5HHVHKPF37P64URIARNEUL272KUL7USD",
+    label: "USDT (stellarstable.co anchor)",
+    tier: "low",
+  },
 ];
 
 /** Upper-cased spec -> tier, for case-insensitive lookups. */

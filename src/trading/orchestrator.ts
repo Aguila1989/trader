@@ -6,11 +6,17 @@ import { checkPolicy } from "../policy/engine";
 import {
   bookLevelsBase,
   getMarketSnapshot,
+  getOpenOffers,
   type MarketSnapshot,
 } from "../stellar/market";
 import { buildOfferTransaction } from "../stellar/builder";
 import { preflightCheck } from "../stellar/preflight";
-import { signAndSubmit, type OfferResultLike } from "../stellar/signer";
+import {
+  signOnly,
+  signerPublicKey,
+  submitSigned,
+  type OfferResultLike,
+} from "../stellar/signer";
 import { setXlmRate } from "./positions";
 import {
   analyze,
@@ -448,7 +454,13 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   store.log("trade", `Submitting ${shortId(id)} to Stellar ${config.network}...`);
   try {
     const tx = await buildOfferTransaction(p);
-    const { hash, offerResults } = await signAndSubmit(tx);
+    // Sign first and persist the hash BEFORE the network submit: if the
+    // process dies mid-submit, the monitor can recover this row by hash
+    // (recheckTimedOut) instead of leaving real on-chain exposure outside
+    // every ledger and cap.
+    const hash = signOnly(tx);
+    store.updateProposal(id, { txHash: hash });
+    const { offerResults } = await submitSigned(tx, hash);
     // Reconcile the REAL fill before recording the trade, so daily volume, the
     // PnL ledger and positions reflect what actually traded - not an optimistic
     // full fill at the limit. A null fill (timeout path) keeps the old
@@ -465,6 +477,14 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
       // A resting remainder leaves an offer on the book - remember its id so
       // the position monitor can book later fills and cancel it when stale.
       if (fill.offerId) patch.offerId = fill.offerId;
+      else if (Number(p.amount) - fill.filledBase > 1e-7) {
+        // Timeout/effects path: the submit response (and its currentOffer id)
+        // was lost, but an offer for the unfilled remainder rests on-chain.
+        // Recover its id from the account's open offers so it isn't orphaned
+        // (untracked = later fills never booked, stale-cancel never fires).
+        const recovered = await recoverRestingOfferId(p);
+        if (recovered) patch.offerId = recovered;
+      }
     }
     const recorded = store.updateProposal(id, patch) ?? p;
     store.recordSubmittedTrade(recorded);
@@ -571,6 +591,38 @@ export function reconcileOfferFill(
     );
   }
   return { filledBase: round7(filledBase), avgPrice: round7(avgPrice), offerId };
+}
+
+/**
+ * Best-effort recovery of a resting offer's id when the submit response (and
+ * its currentOffer) was lost to a timeout: match the account's open offers by
+ * the proposal's legs and limit price. Returns undefined when no match - the
+ * caller keeps the proposal untracked rather than guessing.
+ */
+export async function recoverRestingOfferId(
+  p: TradeProposal,
+): Promise<string | undefined> {
+  const pub = signerPublicKey();
+  if (!pub) return undefined;
+  try {
+    const offers = await getOpenOffers(pub);
+    const selling = p.side === "sell" ? p.baseAsset : p.quoteAsset;
+    const buying = p.side === "sell" ? p.quoteAsset : p.baseAsset;
+    const limit = Number(p.limitPrice) || 0;
+    if (!(limit > 0)) return undefined;
+    // Offer price is buying-per-selling: equals the limit for a sell (quote
+    // per base) and its inverse for a buy (base per quote).
+    const expected = p.side === "sell" ? limit : 1 / limit;
+    for (const o of offers) {
+      if (o.selling !== selling || o.buying !== buying) continue;
+      const op = Number(o.price) || 0;
+      if (op > 0 && Math.abs(op - expected) / expected < 0.001) return o.id;
+    }
+  } catch {
+    // Horizon unavailable: stay untracked; the monitor's untracked-offer
+    // warning still surfaces it to the operator.
+  }
+  return undefined;
 }
 
 function current(id: string): TradeProposal {

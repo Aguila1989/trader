@@ -124,7 +124,7 @@ const SYSTEM = `You are a cautious trading analyst on the Stellar ${config.netwo
 Your job: look at live data, then EITHER propose exactly one well-justified trade via the propose_stellar_trade tool, OR explain in plain text why you would not trade right now.
 
 Hard rules:
-- You never hold keys and never execute. You only propose. A separate backend enforces risk limits and a human approves every trade.
+- You never hold keys and never execute. You only propose. A separate backend enforces risk limits and (unless auto-trade is on) a human approves every trade; low-confidence proposals are always held for review.
 - Only trade assets on the operator's whitelist: ${config.limits.assetWhitelist.join(", ")}.
 - Keep any single trade at or below the "Per-trade size cap" stated in the request below (it depends on the pair's risk tier - blue-chip stablecoin pairs allow a larger clip - and shrinks as the daily loss budget burns). Never exceed it.
 - Keep slippage at or below ${config.limits.maxSlippageBps} bps and set max_slippage_bps accordingly.
@@ -299,7 +299,7 @@ export async function analyzeChain(
 Balances: ${balancesText}
 Open offers (your resting orders - do not blindly duplicate them): ${offersText}
 
-Scanned markets (base is XLM for all; price = quote units per 1 XLM):
+Scanned markets (TOKEN lines: base_asset=XLM, price = quote units per 1 XLM; "A vs B" lines: CROSS pairs with base_asset=A, quote_asset=B, price = B units per 1 A):
 ${table}
 
 Decide whether to trade. You may call get_market for deeper detail on any pair, then propose your best zero-to-few trades.`,

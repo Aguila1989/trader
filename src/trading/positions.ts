@@ -232,6 +232,9 @@ export const ledger = new Ledger();
 /**
  * Replay an ordered list of fills through a throwaway ledger to produce the
  * cumulative volume / trade-count / realized-PnL series for the charts.
+ * Volume accrues XLM-NORMALIZED (like daily.volume and the PnL line) so the
+ * series doesn't add XLM, USDC and EURC units together once cross-pair
+ * trades exist.
  */
 export function computeEvolution(fills: Fill[]): EvolutionPoint[] {
   const byPair = new Map<string, Lot[]>();
@@ -247,7 +250,7 @@ export function computeEvolution(fills: Fill[]): EvolutionPoint[] {
     }
     const realizedQuote = applyFill(lots, signedQty(f.side, f.amount), f.price);
     pnl += realizedToXlm(realizedQuote, f.base, f.quote, f.price);
-    vol += f.amount;
+    vol += xlmNotional(f.base, f.quote, f.amount, f.price);
     count += 1;
     return {
       ts: f.ts ?? "",

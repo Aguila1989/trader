@@ -62,7 +62,7 @@ export const tradingTools: AiTool[] = [
   {
     name: TOOL_PROPOSE,
     description:
-      "Propose exactly ONE Stellar DEX trade for the human operator to review. This does NOT sign or submit anything: the backend applies hard risk limits and a human approves or rejects. Only call when you have a concrete, justified trade backed by data you fetched.",
+      "Propose exactly ONE Stellar DEX trade. This does NOT sign or submit anything: the backend applies hard risk limits, and a human approves or rejects unless auto-trade is enabled (low-confidence proposals are always held for manual review). Only call when you have a concrete, justified trade backed by data you fetched.",
     inputSchema: {
       type: "object",
       properties: {
@@ -116,6 +116,8 @@ export const tradingTools: AiTool[] = [
         "max_slippage_bps",
         "reason",
         "confidence",
+        "target_price",
+        "invalidation_price",
       ],
     },
   },

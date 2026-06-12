@@ -5,7 +5,15 @@ import { aiReady, aiModel, aiProviderId, availableProviders, setActiveProvider }
 import { signerPublicKey } from "../stellar/signer";
 import { dbReady } from "../db/pool";
 import * as repo from "../db/repo";
-import { ledger, computeEvolution, xlmNotional, type Fill } from "./positions";
+import {
+  ledger,
+  computeEvolution,
+  isXlmSpec,
+  setXlmRate,
+  xlmNotional,
+  type Fill,
+} from "./positions";
+import { getMarketSnapshot } from "../stellar/market";
 import type {
   DailyState,
   EvolutionPoint,
@@ -51,6 +59,36 @@ function round7(n: number): number {
   return Number(n.toFixed(7));
 }
 
+/**
+ * Prime the XLM rate map for every asset that appears on a CROSS-pair fill,
+ * BEFORE the boot replay runs. The map is empty at boot (it is normally fed by
+ * the chain scan / monitor, which start later), and replaying cross-pair fills
+ * without rates would restore the daily loss/volume counters at raw 1:1 values
+ * - under-counting them by the asset's real XLM rate.
+ */
+async function primeXlmRates(fills: Fill[]): Promise<void> {
+  const need = new Set<string>();
+  for (const f of fills) {
+    if (!isXlmSpec(f.base) && !isXlmSpec(f.quote)) {
+      need.add(f.base);
+      need.add(f.quote);
+    }
+  }
+  for (const asset of need) {
+    try {
+      const snap = await getMarketSnapshot("XLM", asset, 1);
+      const mid =
+        snap.bestBid != null && snap.bestAsk != null
+          ? (snap.bestBid + snap.bestAsk) / 2
+          : (snap.stats.lastPrice ?? snap.bestBid ?? snap.bestAsk);
+      if (mid != null && mid > 0) setXlmRate(asset, 1 / mid);
+    } catch {
+      // No XLM book reachable right now: conversions for this asset fall back
+      // to raw values until the first scan refreshes the rate.
+    }
+  }
+}
+
 /** Single in-memory source of truth + a Server-Sent-Events fan-out. */
 class Store {
   private proposals: TradeProposal[] = [];
@@ -91,6 +129,15 @@ class Store {
     try {
       const recent = await repo.listRecentProposals(MAX_PROPOSALS);
       this.proposals = recent;
+      // Merge rows with PENDING post-trade work that fell outside the recent
+      // window (tracked resting offers, crash-stranded submits, late-landing
+      // rechecks) - the monitor iterates the in-memory list, so dropping them
+      // here would orphan their fills/cancels even though the DB has them.
+      const actionable = await repo.listActionableProposals();
+      const have = new Set(this.proposals.map((r) => r.id));
+      for (const a of actionable) {
+        if (!have.has(a.id)) this.proposals.push(a);
+      }
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -100,6 +147,9 @@ class Store {
       // the MAX_DAILY_LOSS guard survives a restart. Same day boundary (local
       // midnight in config.timezone) as repo.sumTodaySubmitted().
       const fills = await repo.listSubmittedFills();
+      // Cross-pair fills need live XLM rates to restore the SAME numbers the
+      // live path booked; prime them before replaying.
+      await primeXlmRates(fills);
       const sinceIso = dayStartUtc().toISOString();
       this.daily.realizedPnl = ledger.replay(fills, sinceIso);
       // Restore today's volume in the same XLM-normalized unit the live
@@ -142,7 +192,22 @@ class Store {
   addProposal(p: TradeProposal): void {
     this.proposals.unshift(p);
     if (this.proposals.length > MAX_PROPOSALS) {
-      this.proposals.length = MAX_PROPOSALS;
+      // Trim oldest-first, but never drop a row the monitor still has work on
+      // (a tracked resting offer, or an unresolved submit) - losing those
+      // silently orphans later fills and stale-offer cancels.
+      for (
+        let i = this.proposals.length - 1;
+        i >= 0 && this.proposals.length > MAX_PROPOSALS;
+        i--
+      ) {
+        const q = this.proposals[i];
+        const busy = q && (q.offerId || q.status === "submitting");
+        if (!busy) this.proposals.splice(i, 1);
+      }
+      // Hard ceiling even if everything is busy (pathological case).
+      if (this.proposals.length > MAX_PROPOSALS + 50) {
+        this.proposals.length = MAX_PROPOSALS + 50;
+      }
     }
     this.emit("proposal", p);
     this.persist(() => repo.insertProposal(p));

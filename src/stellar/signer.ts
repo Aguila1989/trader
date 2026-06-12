@@ -148,15 +148,32 @@ export async function fillFromEffects(
 }
 
 /**
- * Sign the prepared transaction and submit it to Horizon. Returns the tx hash
- * plus the manageOffer results (when Horizon answers synchronously) so the
- * caller can reconcile how much actually filled vs. what was requested.
+ * Sign the transaction in place and return its hash WITHOUT submitting.
+ * Callers persist the hash first, then call submitSigned() - so a crash
+ * between submit and the success bookkeeping leaves a recoverable hash in the
+ * database instead of stranding on-chain exposure outside every ledger.
  */
-export async function signAndSubmit(tx: Transaction): Promise<SubmitResult> {
+export function signOnly(tx: Transaction): string {
   const kp = getKeypair();
   tx.sign(kp);
-  // Capture the hash BEFORE submitting so we can reconcile a timeout.
-  const hash = tx.hash().toString("hex");
+  return tx.hash().toString("hex");
+}
+
+/** Sign + submit in one step (see signOnly/submitSigned for the split). */
+export async function signAndSubmit(tx: Transaction): Promise<SubmitResult> {
+  return submitSigned(tx, signOnly(tx));
+}
+
+/**
+ * Submit an ALREADY-SIGNED transaction to Horizon. Returns the tx hash plus
+ * the manageOffer results (when Horizon answers synchronously) so the caller
+ * can reconcile how much actually filled vs. what was requested.
+ */
+export async function submitSigned(
+  tx: Transaction,
+  hash: string,
+): Promise<SubmitResult> {
+  const kp = getKeypair();
 
   try {
     const res = (await horizon.submitTransaction(tx)) as {

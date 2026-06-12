@@ -85,7 +85,7 @@ size cap:
 | Tier | Default tokens | Per-trade cap |
 | ---- | -------------- | ------------- |
 | **High** (deep, low-volatility blue-chips) | USDC, EURC | `MAX_AMOUNT_PER_TRADE_HIGH` (default 50) |
-| **Low** (smaller-cap / more volatile / exotic-fiat) | AQUA, yXLM, yUSDC, SHX, ARST, NGNT, LSP, AFR | `MAX_AMOUNT_PER_TRADE` (default 10) |
+| **Low** (smaller-cap / more volatile / exotic-fiat) | AQUA, yXLM, yUSDC, SHX, ARST, NGNT, LSP, AFR, GOLD, USDT | `MAX_AMOUNT_PER_TRADE` (default 10) |
 
 The bigger cap applies **only** when an XLM-based pair's other leg is a
 high-tier asset; any low-tier, custom/unknown or cross-pair leg falls back to
