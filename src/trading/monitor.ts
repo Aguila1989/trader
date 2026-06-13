@@ -206,7 +206,12 @@ async function reconcileOffers(): Promise<void> {
       if (traded == null) continue; // Horizon unavailable - retry next tick
       const delta = round7(traded - booked);
       if (delta > EPS) {
-        store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0);
+        // Book under the execution lock so daily counters can't be mutated
+        // mid-flight while an executeInner sits between its policy gate and
+        // its own record() - otherwise a cap could be marginally overshot.
+        await runExclusive(async () =>
+          store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0),
+        );
         store.log(
           "trade",
           `Offer ${p.offerId} (proposal ${shortId(p.id)}) left the book - booked ${delta} ${p.baseAsset} of VERIFIED fills.`,
@@ -225,7 +230,9 @@ async function reconcileOffers(): Promise<void> {
     const remainingChain = remainingBaseOf(p, offer);
     const delta = round7(remainingBooked - remainingChain);
     if (delta > EPS) {
-      store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0);
+      await runExclusive(async () =>
+        store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0),
+      );
     }
     if (remainingChain <= EPS) {
       store.updateProposal(p.id, { offerId: undefined });
@@ -576,7 +583,9 @@ async function recheckTimedOut(): Promise<void> {
       filledPrice: String(round7(avgPrice)),
       ...(offerId ? { offerId } : {}),
     });
-    if (updated) store.recordSubmittedTrade(updated);
+    // Book under the execution lock (consistent daily-counter snapshot vs a
+    // concurrent in-flight executeInner).
+    if (updated) await runExclusive(async () => store.recordSubmittedTrade(updated));
     store.log(
       "trade",
       `Late landing reconciled: ${shortId(p.id)} (tx ${p.txHash}) actually settled - booked ${round7(filledBase)} ${p.baseAsset}.`,

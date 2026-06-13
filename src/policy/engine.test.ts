@@ -350,6 +350,49 @@ describe("risk-reducing exemptions", () => {
     expect(res.allowed).toBe(false);
     expect(res.violations.join(" ")).toMatch(/daily loss limit/i);
   });
+
+  it("exempts a genuine partial trim (same side, smaller)", () => {
+    // Long 20, sell 10 -> long 10: shrinks without flipping. Exempt.
+    const res = run(
+      { side: "sell", amount: "10", limitPrice: "0.5" },
+      { positions: [position({ netQty: 20 })], daily: { realizedPnl: -25 } },
+    );
+    expect(res.allowed).toBe(true);
+  });
+
+  it("exempts a full close to exactly zero", () => {
+    const res = run(
+      { side: "sell", amount: "20", limitPrice: "0.5" },
+      { positions: [position({ netQty: 20 })], daily: { realizedPnl: -25 } },
+    );
+    expect(res.allowed).toBe(true);
+  });
+
+  it("does NOT exempt a cross-zero FLIP - the opposite-side opening is gated", () => {
+    // Long 6, sell 10 -> short 4: lands smaller in magnitude but opens fresh
+    // directional risk on the other side, so the loss-limit halt must apply.
+    const res = run(
+      { side: "sell", amount: "10", limitPrice: "0.5" },
+      { positions: [position({ netQty: 6 })], daily: { realizedPnl: -25 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/daily loss limit/i);
+  });
+
+  it("gates a flip under auto-execution (fresh short needs its own bracket)", () => {
+    // The flip is a new entry, so auto-execution's fail-closed bracket rule
+    // applies even though it nets smaller.
+    const res = run(
+      { side: "sell", amount: "8", limitPrice: "0.5" },
+      {
+        positions: [position({ netQty: 6 })],
+        context: { bestBid: 0.5, bestAsk: 0.5, baseVolume24h: 10_000 },
+        autoExecution: true,
+      },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/target_price\/invalidation_price/i);
+  });
 });
 
 describe("unrealized losses in the loss gate", () => {
