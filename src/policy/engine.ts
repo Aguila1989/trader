@@ -85,7 +85,14 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   const signedDelta =
     amount > 0 ? (proposal.side === "buy" ? amount : -amount) : 0;
   const newNet = net + signedDelta;
-  const riskReducing = Math.abs(newNet) < Math.abs(net) - EPS;
+  // Risk-reducing = strictly shrinks the position WITHOUT flipping its sign.
+  // A trade that crosses zero (e.g. long +6, SELL 10 -> short -4) lands smaller
+  // in magnitude but opens fresh directional risk on the OTHER side, so it must
+  // NOT be exempted from the entry gates - only a trim or a full close (to
+  // exactly zero) is a genuine reduction.
+  const sameSide =
+    net === 0 || newNet === 0 || Math.sign(newNet) === Math.sign(net);
+  const riskReducing = sameSide && Math.abs(newNet) < Math.abs(net) - EPS;
 
   // 3. Per-trade size cap (tier-aware), tapered as the daily loss budget burns.
   //    A risk-reducing trade may always be as large as the position it closes.
