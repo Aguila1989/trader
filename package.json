@@ -9,6 +9,7 @@
     "dev:server": "tsx watch src/server.ts",
     "dev:web": "npm --prefix web run dev",
     "start": "tsx src/server.ts",
+    "backtest": "tsx src/backtest/cli.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "trustlines": "tsx src/stellar/trustlines.ts",
     "build": "npm --prefix web install && npm --prefix web run build",
