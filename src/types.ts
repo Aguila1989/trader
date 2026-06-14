@@ -56,6 +56,13 @@ export interface TradeProposal {
    * Absent until filled; the ledger prefers this over `limitPrice`.
    */
   filledPrice?: string;
+  /**
+   * True when this proposal was produced/filled in PAPER-TRADING mode: a
+   * simulated forward-test fill, never submitted on-chain. Paper proposals are
+   * kept OUT of the persistent trade DB so they can never corrupt the real FIFO
+   * PnL ledger on replay. In-memory only.
+   */
+  paper?: boolean;
   /** AI provider id that produced this proposal ("anthropic", "openai",
    *  "monitor" for system-generated stop-loss closes, ...). */
   provider?: string;
@@ -165,6 +172,12 @@ export interface Snapshot {
   secretConfigured: boolean;
   /** Runtime arm switch: true = policy-passing trades may submit on-chain. */
   liveTrading: boolean;
+  /**
+   * Paper-trading mode: policy-passing trades fill against the LIVE order book
+   * in simulation (no keys, no on-chain submit). Mutually exclusive with
+   * liveTrading. Lets the strategy be forward-tested with zero financial risk.
+   */
+  paperTrading: boolean;
   autoApprove: boolean;
   killSwitch: boolean;
   /** Whether SQL Server persistence is connected (false = in-memory only). */

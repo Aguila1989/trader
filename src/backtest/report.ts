@@ -1,5 +1,7 @@
 import type { BacktestResult } from "./engine";
 import { computeMetrics, type Metrics } from "./metrics";
+import type { WalkForwardResult } from "./walkforward";
+import { kellyFromMetrics, type KellySizing } from "./sizing";
 
 /**
  * Plain-text console report. No colors or external deps - readable in any
@@ -133,6 +135,74 @@ export function formatAggregate(agg: Aggregate): string {
   lines.push("");
   lines.push(verdict(m));
   return lines.join("\n");
+}
+
+/**
+ * Walk-forward report for one pair. The OUT-OF-SAMPLE block is the only number
+ * that earns belief; the in-sample line is shown purely to expose the gap
+ * between "fitted" and "real" - a big gap IS the overfitting, made visible.
+ */
+export function formatWalkForward(
+  label: string,
+  wf: WalkForwardResult,
+): string {
+  const m = wf.oosMetrics;
+  const lines: string[] = [];
+  lines.push(`\n=== ${label} ===  [walk-forward]`);
+  lines.push(
+    `  folds: ${wf.folds.length} (traded ${wf.tradedFolds}, positive OOS ${wf.positiveFolds}/${wf.tradedFolds})`,
+  );
+  const inSample =
+    wf.folds.filter((f) => f.params).length > 0
+      ? avg(wf.folds.filter((f) => f.params).map((f) => f.trainExpectancyR))
+      : 0;
+  lines.push(
+    `  in-sample (train, overfit-prone): avg expectancy ${r(inSample)}/trade`,
+  );
+  if (m.trades === 0) {
+    lines.push(`  OUT-OF-SAMPLE: no trades on any unseen slice.`);
+    return lines.join("\n");
+  }
+  lines.push(
+    `  OUT-OF-SAMPLE (the honest number): trades=${m.trades} win%=${m.winRatePct} ` +
+      `expectancy=${r(m.expectancyR)} PF=${m.profitFactor ?? "n/a"} totalR=${r(
+        m.totalR,
+      )} maxDD=${m.maxDrawdownR.toFixed(2)}R`,
+  );
+  const k = kellyFromMetrics(m);
+  lines.push(`  sizing (Kelly on OOS edge): ${sizingLine(k)}`);
+  lines.push(`  ${wfVerdict(wf)}`);
+  return lines.join("\n");
+}
+
+function sizingLine(k: KellySizing): string {
+  return `payoff b=${k.payoffRatio}, fullKelly=${(k.fullKelly * 100).toFixed(
+    1,
+  )}% -> recommend ${(k.recommendedRiskFraction * 100).toFixed(2)}% risk/trade. ${k.note}`;
+}
+
+function avg(xs: number[]): number {
+  return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
+}
+
+/** Verdict that weighs OOS expectancy AND cross-fold consistency. */
+function wfVerdict(wf: WalkForwardResult): string {
+  const e = wf.oosMetrics.expectancyR;
+  const consistent =
+    wf.tradedFolds > 0 && wf.positiveFolds / wf.tradedFolds >= 0.6;
+  if (e > 0.05 && consistent) {
+    return `VERDICT: edge SURVIVES walk-forward (${r(
+      e,
+    )}/trade OOS, positive in ${wf.positiveFolds}/${wf.tradedFolds} folds). This is the rare good outcome - size it per the Kelly line, start small, keep validating live.`;
+  }
+  if (e > 0 && !consistent) {
+    return `VERDICT: fragile - positive OOS on average (${r(
+      e,
+    )}) but only ${wf.positiveFolds}/${wf.tradedFolds} folds held up. One window is carrying it; not dependable.`;
+  }
+  return `VERDICT: NO durable edge - out-of-sample expectancy ${r(
+    e,
+  )}/trade. The in-sample optimum did not generalize. This is overfitting caught in the act; do not trade it.`;
 }
 
 /** A blunt, honest read of the headline numbers. */

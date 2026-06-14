@@ -9,6 +9,7 @@ import {
   getOpenOffers,
   type MarketSnapshot,
 } from "../stellar/market";
+import { walkBook } from "../stellar/indicators";
 import { buildOfferTransaction } from "../stellar/builder";
 import { preflightCheck } from "../stellar/preflight";
 import {
@@ -232,6 +233,9 @@ async function intake(
     targetPrice: p.targetPrice,
     invalidationPrice: p.invalidationPrice,
     horizon: p.horizon,
+    // Tag the whole proposal as paper when a paper session is active, so it is
+    // kept out of the persistent trade DB (see store.addProposal).
+    paper: store.paperTrading || undefined,
   };
   store.addProposal(proposal);
   store.log(
@@ -248,7 +252,7 @@ async function intake(
     nowMs: Date.now(),
     positions: store.getPositions(),
     unrealizedPnl: store.unrealizedPnl,
-    autoExecution: store.autoApprove && store.liveTrading,
+    autoExecution: store.autoApprove && store.armed,
   });
 
   if (!policy.allowed) {
@@ -391,30 +395,37 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   const p = store.getProposal(id);
   if (!p) return;
 
-  if (isReadOnly) {
-    store.updateProposal(id, {
-      status: "blocked",
-      policyViolations: ["Read-only mode: no signing key configured."],
-    });
-    store.log("error", `Cannot execute ${shortId(id)}: read-only mode (no signing key).`);
-    return;
+  const paper = store.paperTrading;
+
+  // Live-only gates. Paper trading skips them: it needs no signing key and no
+  // live-arm switch - it never touches the chain.
+  if (!paper) {
+    if (isReadOnly) {
+      store.updateProposal(id, {
+        status: "blocked",
+        policyViolations: ["Read-only mode: no signing key configured."],
+      });
+      store.log("error", `Cannot execute ${shortId(id)}: read-only mode (no signing key).`);
+      return;
+    }
+    // A signing key exists, but live trading is switched OFF on the dashboard.
+    // Unlike the no-key case this is recoverable, so hold the proposal for
+    // manual approval (don't kill it): flip to Live, then Approve to submit.
+    if (!store.liveTrading) {
+      store.updateProposal(id, {
+        status: "pending_approval",
+        error: "Live trading is OFF (read-only). Enable it on the dashboard, then approve.",
+      });
+      store.log("warn", `Proposal ${shortId(id)} held: live trading is OFF (read-only).`);
+      return;
+    }
   }
 
-  // A signing key exists, but live trading is switched OFF on the dashboard.
-  // Unlike the no-key case this is recoverable, so hold the proposal for manual
-  // approval (don't kill it): flip the toggle to Live, then Approve to submit.
-  if (!store.liveTrading) {
-    store.updateProposal(id, {
-      status: "pending_approval",
-      error: "Live trading is OFF (read-only). Enable it on the dashboard, then approve.",
-    });
-    store.log("warn", `Proposal ${shortId(id)} held: live trading is OFF (read-only).`);
-    return;
-  }
-
+  // One market read, shared by the policy gate and the paper-fill simulation.
+  const context = await marketContext(p.baseAsset, p.quoteAsset);
   const policy = checkPolicy({
     proposal: p,
-    context: await marketContext(p.baseAsset, p.quoteAsset),
+    context,
     daily: store.getDaily(),
     killSwitch: store.killSwitch,
     nowMs: Date.now(),
@@ -431,6 +442,36 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
     store.log(
       "warn",
       `Proposal ${shortId(id)} blocked at execution: ${policy.violations.join("; ")}`,
+    );
+    return;
+  }
+
+  // PAPER mode: simulate the fill against the live book and book it exactly like
+  // a real fill (same ledger, daily counters, outcome marks) - but never sign or
+  // submit. This is the zero-risk forward test.
+  if (paper) {
+    const fill = simulatePaperFill(p, context);
+    if (!fill) {
+      store.updateProposal(id, {
+        status: "blocked",
+        policyViolations: ["(paper) no live order book to simulate a fill against."],
+      });
+      store.log("warn", `Proposal ${shortId(id)} (paper) blocked: no book to fill against.`);
+      return;
+    }
+    const recorded =
+      store.updateProposal(id, {
+        status: "submitted",
+        txHash: "paper",
+        submittedAt: new Date().toISOString(),
+        filledAmount: String(fill.filledBase),
+        filledPrice: String(fill.avgPrice),
+        error: undefined,
+      }) ?? p;
+    store.recordSubmittedTrade(recorded);
+    store.log(
+      "trade",
+      `Proposal ${shortId(id)} PAPER-FILLED ${fill.filledBase} ${p.baseAsset} @ ~${fill.avgPrice} ${p.quoteAsset} (simulated; no on-chain submit).`,
     );
     return;
   }
@@ -532,6 +573,41 @@ interface OfferFill {
 
 function round7(n: number): number {
   return Number(n.toFixed(7));
+}
+
+export interface PaperFill {
+  /** Base units the live book could absorb for this order. */
+  filledBase: number;
+  /** Volume-weighted price that size would actually pay/receive (quote/base). */
+  avgPrice: number;
+}
+
+/**
+ * Simulate a marketable fill against the LIVE order book for paper trading.
+ *
+ * It walks the real depth (the same walkBook the policy engine uses), so the
+ * simulated price reflects the spread AND the size impact of crossing the book
+ * - exactly the friction a flat-cost backtest can't see, and exactly what
+ * decides whether a thin-token "edge" is real or an aggregation artifact. No
+ * limit bound: a paper entry is taken marketably (the policy engine already
+ * rejected sizes the book can't absorb within slippage), so this fills the size
+ * at the honest VWAP. Returns null when there is no book to fill against.
+ *
+ * Pure (no Horizon, no store) so it is unit-testable like reconcileOfferFill.
+ */
+export function simulatePaperFill(
+  p: TradeProposal,
+  context: PolicyContext,
+): PaperFill | null {
+  const levels = p.side === "buy" ? context.asks : context.bids;
+  const amount = Number(p.amount) || 0;
+  if (!levels || levels.length === 0 || !(amount > 0)) return null;
+  const walk = walkBook(levels, amount, p.side);
+  if (!(walk.fillableBase > 0) || walk.vwap == null) return null;
+  return {
+    filledBase: round7(Math.min(walk.fillableBase, amount)),
+    avgPrice: round7(walk.vwap),
+  };
 }
 
 /**

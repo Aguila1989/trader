@@ -221,6 +221,13 @@ app.post("/api/live-trading", (req, res) => {
   res.json({ liveTrading: store.liveTrading });
 });
 
+// Paper trading: policy-passing proposals fill in SIMULATION against the live
+// book (no keys, no on-chain submit). Mutually exclusive with live trading.
+app.post("/api/paper-trading", (req, res) => {
+  store.setPaperTrading(Boolean(req.body?.enabled));
+  res.json({ paperTrading: store.paperTrading, liveTrading: store.liveTrading });
+});
+
 // Switch the active AI provider at runtime. Only providers with a configured
 // API key can be selected (those are the ones the dashboard dropdown offers).
 app.post("/api/provider", (req, res) => {
