@@ -104,6 +104,12 @@ class Store {
    * Cannot be turned on without a signing key (see setLiveTrading).
    */
   liveTrading = false;
+  /**
+   * Paper-trading arm switch. true = policy-passing proposals fill in SIMULATION
+   * against the live order book (no keys, no on-chain submit), for a zero-risk
+   * forward test. Mutually exclusive with liveTrading. Defaults OFF on boot.
+   */
+  paperTrading = false;
   daily: DailyState = freshDaily();
   /**
    * Mark-to-market PnL of open positions in XLM, refreshed by the position
@@ -210,7 +216,14 @@ class Store {
       }
     }
     this.emit("proposal", p);
-    this.persist(() => repo.insertProposal(p));
+    // Paper proposals are NEVER persisted: a simulated fill must not land in the
+    // trade DB, where the boot replay would book it into the real FIFO ledger.
+    if (!p.paper) this.persist(() => repo.insertProposal(p));
+  }
+
+  /** True when proposals can execute (live on-chain OR simulated in paper). */
+  get armed(): boolean {
+    return this.liveTrading || this.paperTrading;
   }
 
   getProposal(id: string): TradeProposal | undefined {
@@ -225,7 +238,7 @@ class Store {
     if (!p) return undefined;
     Object.assign(p, patch, { updatedAt: new Date().toISOString() });
     this.emit("proposal", p);
-    this.persist(() => repo.updateProposal(p));
+    if (!p.paper) this.persist(() => repo.updateProposal(p));
     return p;
   }
 
@@ -385,6 +398,12 @@ class Store {
       return false;
     }
     this.liveTrading = enabled;
+    // Live and paper are mutually exclusive: arming real submission turns off
+    // the simulator so there is never ambiguity about whether a fill is real.
+    if (enabled && this.paperTrading) {
+      this.paperTrading = false;
+      this.log("warn", "Paper trading disabled (live trading was armed).");
+    }
     this.log(
       "warn",
       enabled
@@ -393,6 +412,27 @@ class Store {
     );
     this.emit("state", this.snapshot());
     return this.liveTrading;
+  }
+
+  /**
+   * Arm/disarm PAPER trading. Unlike live trading this needs no signing key -
+   * it never touches the chain. Enabling it disarms live trading (mutually
+   * exclusive) so a simulated session can never accidentally submit real orders.
+   */
+  setPaperTrading(enabled: boolean): boolean {
+    this.paperTrading = enabled;
+    if (enabled && this.liveTrading) {
+      this.liveTrading = false;
+      this.log("warn", "Live trading disabled (paper trading was armed).");
+    }
+    this.log(
+      "warn",
+      enabled
+        ? "PAPER TRADING ENABLED - policy-passing trades fill in SIMULATION only (no on-chain submit, zero risk)."
+        : "Paper trading disabled.",
+    );
+    this.emit("state", this.snapshot());
+    return this.paperTrading;
   }
 
   /**
@@ -438,6 +478,7 @@ class Store {
       // Whether a signing key exists at all (gates whether Live can be armed).
       secretConfigured: !isReadOnly,
       liveTrading: this.liveTrading,
+      paperTrading: this.paperTrading,
       autoApprove: this.autoApprove,
       killSwitch: this.killSwitch,
       dbConnected: dbReady(),

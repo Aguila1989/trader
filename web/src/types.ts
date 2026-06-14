@@ -95,6 +95,8 @@ export interface Snapshot {
   secretConfigured: boolean;
   /** Runtime arm switch: true = policy-passing trades may submit on-chain. */
   liveTrading: boolean;
+  /** Paper trading: simulated fills against the live book, no on-chain submit. */
+  paperTrading: boolean;
   autoApprove: boolean;
   killSwitch: boolean;
   dbConnected: boolean;

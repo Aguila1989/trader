@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { reconcileOfferFill } from "./orchestrator";
-import type { TradeProposal } from "../types";
+import { reconcileOfferFill, simulatePaperFill } from "./orchestrator";
+import type { PolicyContext, TradeProposal } from "../types";
 
 function proposal(over: Partial<TradeProposal> = {}): TradeProposal {
   return {
@@ -74,5 +74,49 @@ describe("reconcileOfferFill", () => {
     ]);
     expect(fill!.filledBase).toBeCloseTo(10, 7);
     expect(fill!.avgPrice).toBeCloseTo(0.51, 7);
+  });
+});
+
+describe("simulatePaperFill", () => {
+  const ctx: PolicyContext = {
+    bestBid: 0.49,
+    bestAsk: 0.5,
+    asks: [
+      { price: 0.5, amount: 6 },
+      { price: 0.55, amount: 10 },
+    ],
+    bids: [
+      { price: 0.49, amount: 6 },
+      { price: 0.45, amount: 10 },
+    ],
+  };
+
+  it("walks the ASK side for a buy and returns the size-weighted price", () => {
+    // 6 @ 0.50 + 4 @ 0.55 = 5.2 / 10 = 0.52 (worse than the touch - that's the
+    // spread + impact a flat-cost backtest never charges you).
+    const fill = simulatePaperFill(proposal({ amount: "10" }), ctx);
+    expect(fill).not.toBeNull();
+    expect(fill!.filledBase).toBeCloseTo(10, 7);
+    expect(fill!.avgPrice).toBeCloseTo(0.52, 7);
+  });
+
+  it("walks the BID side for a sell", () => {
+    // 6 @ 0.49 + 4 @ 0.45 = 4.74 / 10 = 0.474.
+    const fill = simulatePaperFill(proposal({ side: "sell", amount: "10" }), ctx);
+    expect(fill!.avgPrice).toBeCloseTo(0.474, 7);
+  });
+
+  it("fills only what the book can absorb (partial)", () => {
+    const fill = simulatePaperFill(proposal({ amount: "100" }), ctx);
+    expect(fill!.filledBase).toBeCloseTo(16, 7); // 6 + 10 visible
+  });
+
+  it("returns null when there is no book to fill against", () => {
+    expect(simulatePaperFill(proposal(), {})).toBeNull();
+    expect(simulatePaperFill(proposal(), { asks: [] })).toBeNull();
+  });
+
+  it("returns null for a non-positive amount", () => {
+    expect(simulatePaperFill(proposal({ amount: "0" }), ctx)).toBeNull();
   });
 });

@@ -44,6 +44,8 @@ export const useTraderStore = defineStore("trader", () => {
   const isAutoTrade = computed(() => snapshot.value?.autoApprove ?? false);
   /** Live trading armed (trades may submit on-chain). */
   const isLive = computed(() => snapshot.value?.liveTrading ?? false);
+  /** Paper trading armed (simulated fills, no on-chain submit). */
+  const isPaper = computed(() => snapshot.value?.paperTrading ?? false);
   /** A signing key exists, so Live trading CAN be armed. */
   const canGoLive = computed(() => snapshot.value?.secretConfigured ?? false);
   /** Effective read-only: no key OR not armed. Gates the approve buttons. */
@@ -175,6 +177,9 @@ export const useTraderStore = defineStore("trader", () => {
   }
   async function setLiveTrading(enabled: boolean): Promise<void> {
     await api.setLiveTrading(enabled);
+  }
+  async function setPaperTrading(enabled: boolean): Promise<void> {
+    await api.setPaperTrading(enabled);
   }
   async function setKill(active: boolean): Promise<void> {
     await api.setKill(active);
@@ -323,9 +328,11 @@ export const useTraderStore = defineStore("trader", () => {
     canGoLive,
     isReadOnly,
     modeLabel,
+    isPaper,
     init,
     setAutoApprove,
     setLiveTrading,
+    setPaperTrading,
     setKill,
     switchProvider,
     approve,

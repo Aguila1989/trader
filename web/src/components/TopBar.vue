@@ -31,8 +31,17 @@ function setMode(auto: boolean): void {
   if (store.isAutoTrade !== auto) void store.setAutoApprove(auto);
 }
 
-function setLive(live: boolean): void {
-  if (store.isLive !== live) void store.setLiveTrading(live);
+// Read-only / Paper / Live are mutually exclusive access modes. The backend
+// enforces the exclusivity too; this just routes the click to the right toggle.
+function setAccess(mode: "readonly" | "paper" | "live"): void {
+  if (mode === "live") {
+    if (!store.isLive) void store.setLiveTrading(true);
+  } else if (mode === "paper") {
+    if (!store.isPaper) void store.setPaperTrading(true);
+  } else {
+    if (store.isLive) void store.setLiveTrading(false);
+    if (store.isPaper) void store.setPaperTrading(false);
+  }
 }
 </script>
 
@@ -43,7 +52,8 @@ function setLive(live: boolean): void {
     <div class="badges">
       <span class="badge" :class="networkBadge.cls">{{ networkBadge.text }}</span>
       <span class="badge" :class="modeBadgeClass">{{ store.modeLabel }}</span>
-      <span v-if="store.snapshot?.readOnly" class="badge warn">read-only</span>
+      <span v-if="store.isPaper" class="badge warn">PAPER</span>
+      <span v-else-if="store.snapshot?.readOnly" class="badge warn">read-only</span>
       <!-- AI provider picker: lists every provider that has a key configured.
            Switching is live; the model shown updates from the next snapshot. -->
       <select
@@ -68,14 +78,23 @@ function setLive(live: boolean): void {
     </div>
 
     <div class="controls">
-      <!-- Master arm switch: read-only (observe) vs. live (can submit). -->
+      <!-- Master arm switch: observe / simulate / submit. Read-only, Paper and
+           Live are mutually exclusive. Paper needs no key - it never submits. -->
       <div class="segmented" role="group" aria-label="Trading access">
         <button
           class="seg"
-          :class="{ active: !store.isLive }"
-          @click="setLive(false)"
+          :class="{ active: !store.isLive && !store.isPaper }"
+          @click="setAccess('readonly')"
         >
           Read-only
+        </button>
+        <button
+          class="seg auto"
+          :class="{ active: store.isPaper }"
+          title="Paper trading: fill proposals in SIMULATION against the live book. Forward-test the strategy with zero risk - no signing key needed."
+          @click="setAccess('paper')"
+        >
+          Paper
         </button>
         <button
           class="seg live"
@@ -86,7 +105,7 @@ function setLive(live: boolean): void {
               ? 'Allow policy-passing trades to submit on-chain (REAL orders)'
               : 'Add a STELLAR_SECRET to enable live trading'
           "
-          @click="setLive(true)"
+          @click="setAccess('live')"
         >
           Live trading
         </button>

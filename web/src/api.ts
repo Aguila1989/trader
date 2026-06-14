@@ -99,6 +99,11 @@ export const api = {
     postJSON<{ autoApprove: boolean }>("/api/auto-approve", { enabled }),
   setLiveTrading: (enabled: boolean) =>
     postJSON<{ liveTrading: boolean }>("/api/live-trading", { enabled }),
+  setPaperTrading: (enabled: boolean) =>
+    postJSON<{ paperTrading: boolean; liveTrading: boolean }>(
+      "/api/paper-trading",
+      { enabled },
+    ),
   setProvider: (id: string) =>
     postJSON<{ aiProvider?: string; model?: string; error?: string }>(
       "/api/provider",
