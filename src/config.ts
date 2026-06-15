@@ -205,6 +205,25 @@ export const config = {
    */
   dashboardToken: env("DASHBOARD_TOKEN"),
   /**
+   * Extra browser origins allowed to make state-changing /api calls (the CSRF
+   * allowlist). Comma-separated, e.g. "https://trader.example.com". Same-origin
+   * requests and loopback always pass, and a reverse proxy's X-Forwarded-Host is
+   * honored automatically; set this only when you serve the dashboard from
+   * another origin behind a proxy that rewrites Host AND drops X-Forwarded-Host.
+   * Only the host part is matched.
+   */
+  trustedOrigins: env("DASHBOARD_TRUSTED_ORIGINS")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((o) => {
+      try {
+        return new URL(o).host;
+      } catch {
+        return o;
+      }
+    }),
+  /**
    * Refuse to start on mainnet ("public") without a database. Without one,
    * daily caps + realized-PnL reset on every restart, which disarms the
    * MAX_DAILY_LOSS guard. Set true only if you accept that risk.

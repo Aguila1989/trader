@@ -74,6 +74,11 @@ let running = false;
 const stopAttempts = new Map<string, number>();
 /** Offer ids we've already warned about as untracked (warn once each). */
 const warnedOffers = new Set<string>();
+/** pair -> last successfully-marked unrealized contribution (XLM). Carried
+ *  forward when a pair can't be priced on a tick, so a momentary Horizon /
+ *  liquidity gap can't make store.unrealizedPnl spring toward 0 and loosen the
+ *  MAX_DAILY_LOSS halt + size taper. Cleared when the book goes flat. */
+const lastMark = new Map<string, number>();
 
 function round7(n: number): number {
   return Number(n.toFixed(7));
@@ -412,16 +417,35 @@ async function markPositions(snaps: SnapCache): Promise<void> {
   const positions = store.getPositions();
   if (positions.length === 0) {
     store.setUnrealizedPnl(0);
-    // No positions: clear stop history so a fresh position starts clean.
+    // No positions: clear stop history + carried marks so a fresh position
+    // starts clean.
     stopAttempts.clear();
+    lastMark.clear();
     return;
   }
+
+  // Prune carried marks for pairs no longer open, so a pair that CLOSED and
+  // REOPENED opposite-side can't carry its prior (wrong-sign) mark into the new
+  // position on an unpriced tick - a stale positive could otherwise cancel a
+  // real loss elsewhere and loosen the loss halt. Also bounds the map's growth.
+  const live = new Set(positions.map((p) => p.pair));
+  for (const k of lastMark.keys()) if (!live.has(k)) lastMark.delete(k);
 
   let total = 0;
   for (const pos of positions) {
     const snap = await snaps.get(pos.base, pos.quote);
     const mid = await snaps.mid(pos.base, pos.quote);
-    if (mid == null || !(mid > 0) || !(pos.avgPrice > 0)) continue;
+    if (mid == null || !(mid > 0) || !(pos.avgPrice > 0)) {
+      // Can't price this position right now (Horizon hiccup or a momentarily
+      // empty book). Carry its last known mark forward so the published
+      // unrealized PnL doesn't UNDER-read the open loss - dropping it to 0 would
+      // loosen the loss halt and the size taper exactly when pricing is flaky.
+      // The stop check is necessarily skipped (nothing to close into); it
+      // re-runs on the next tick.
+      const carried = lastMark.get(pos.pair);
+      if (carried !== undefined) total += carried;
+      continue;
+    }
 
     // Keep the XLM rate map fresh from the marks we fetch anyway, so
     // cross-pair conversions stay current between chain scans.
@@ -431,7 +455,9 @@ async function markPositions(snaps: SnapCache): Promise<void> {
     // Signed unrealized PnL in quote units, then normalized to XLM exactly
     // like realized deltas, so the loss gate compares one unit.
     const unrealizedQuote = (mid - pos.avgPrice) * pos.netQty;
-    total += realizedToXlm(unrealizedQuote, pos.base, pos.quote, mid);
+    const contributionXlm = realizedToXlm(unrealizedQuote, pos.base, pos.quote, mid);
+    lastMark.set(pos.pair, contributionXlm);
+    total += contributionXlm;
 
     const movePct =
       pos.netQty > 0
@@ -505,7 +531,13 @@ async function recheckTimedOut(): Promise<void> {
     if (!p.txHash) return false;
     const age = Date.now() - Date.parse(p.createdAt);
     if (!Number.isFinite(age) || age >= RECHECK_WINDOW_MS) return false;
-    if (p.status === "failed") return /not found on-ledger/i.test(p.error ?? "");
+    // Recheck ANY failed row whose tx might still have landed: a NON-timeout
+    // transport error (ECONNRESET / "socket hang up" / 503) re-thrown by
+    // submitSigned marks the row "failed" even when the tx is already on-ledger,
+    // and the old /not found on-ledger/ filter never matched those - stranding
+    // real exposure outside the PnL ledger and MAX_DAILY_LOSS. Skip only rows
+    // already PROVEN failed on-ledger (settled definitively in the loop below).
+    if (p.status === "failed") return !/FAILED on-ledger/i.test(p.error ?? "");
     // Crash recovery: the hash was persisted before submit, so a row stuck in
     // "submitting" past the live path's window can be settled by hash. Age
     // since the LAST update (the hash persist at submit start) - createdAt
@@ -542,9 +574,11 @@ async function recheckTimedOut(): Promise<void> {
     }
 
     if (!successful) {
-      // Definitive: it landed and failed. Stop rechecking (the error no
-      // longer matches the retry pattern).
+      // Definitive: it landed and FAILED on-ledger. Mark terminal (status +
+      // error) so a crash-stranded "submitting" row ALSO leaves the recheck set
+      // - the error no longer matches the retry filter for either status.
       store.updateProposal(p.id, {
+        status: "failed",
         error: `Transaction ${p.txHash} was included but FAILED on-ledger.`,
       });
       continue;

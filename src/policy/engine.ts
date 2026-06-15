@@ -2,7 +2,7 @@ import { config } from "../config";
 import { canonicalAsset } from "../stellar/assets";
 import { curatedTier } from "../stellar/universe";
 import { walkBook } from "../stellar/indicators";
-import { isXlmSpec, xlmNotional } from "../trading/positions";
+import { isXlmSpec, xlmConvertible, xlmNotional } from "../trading/positions";
 import type {
   DailyState,
   PolicyContext,
@@ -226,6 +226,15 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
           "No 24h volume data - auto-execution requires liquidity data (fails closed).",
         );
       }
+      // Cross pair (neither leg XLM) with no sampled XLM rate: the volume /
+      // exposure / daily-loss caps are XLM-denominated, and without a rate
+      // xlmNotional / realizedToXlm fall back to raw quote units (caps run
+      // 3-5x loose). Refuse to OPEN such risk unattended until a rate is known.
+      if (!xlmConvertible(baseC, quoteC)) {
+        violations.push(
+          "No live XLM rate for this cross pair - the XLM-denominated caps can't be enforced; auto-execution refuses to open it (fails closed).",
+        );
+      }
     }
   }
 
@@ -297,7 +306,11 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
 
   // 9. Staleness: a proposal priced minutes ago must not execute on a market
   //    that has moved on. (The analyst/monitor can always re-propose.)
-  if (limits.maxProposalAgeSeconds > 0) {
+  //    EXEMPT risk-reducing closes: a stop-loss queued for approval can age past
+  //    this limit, and blocking the exit is worse than a slightly stale price.
+  //    The slippage/deviation gate (section 5, NOT exempted) still bounds the
+  //    fill price for closes too, so a wildly off-market stale close is caught.
+  if (!riskReducing && limits.maxProposalAgeSeconds > 0) {
     const created = Date.parse(proposal.createdAt);
     if (Number.isFinite(created)) {
       const ageSec = (nowMs - created) / 1000;

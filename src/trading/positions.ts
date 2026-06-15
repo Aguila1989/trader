@@ -110,6 +110,18 @@ export function xlmRateFor(spec: string): number | undefined {
 }
 
 /**
+ * True when an XLM-equivalent notional for this pair can be computed WITHOUT the
+ * raw 1:1 fallback - i.e. one leg is XLM, or a live XLM rate is known for a leg.
+ * The policy engine uses this to fail CLOSED on a cross pair whose XLM rate
+ * hasn't been sampled yet, instead of letting the raw fallback run the
+ * XLM-denominated caps (volume / exposure / loss) several times too loose.
+ */
+export function xlmConvertible(base: string, quote: string): boolean {
+  if (isXlmSpec(base) || isXlmSpec(quote)) return true;
+  return xlmRateFor(base) !== undefined || xlmRateFor(quote) !== undefined;
+}
+
+/**
  * XLM-equivalent notional of `amount` BASE units traded at `price` (quote per
  * base). Lets the daily volume cap and the open-exposure cap sum trades across
  * pairs in ONE unit instead of naively adding XLM, USDC and Naira together.
@@ -162,6 +174,13 @@ export function realizedToXlm(
   if (isXlmSpec(base) && price > EPS) return realizedQuote / price;
   const quoteRate = xlmRateFor(quote);
   if (quoteRate !== undefined) return realizedQuote * quoteRate;
+  // Base-rate path: XLM-per-quote = (XLM-per-base) / (quote-per-base) = baseRate
+  // / price. This mirrors xlmNotional's base-rate branch, so xlmConvertible's
+  // "either leg has a rate" promise actually holds for the loss halt too - a
+  // cross pair with only the BASE rate known no longer silently falls through to
+  // the raw 1:1 quote delta below.
+  const baseRate = xlmRateFor(base);
+  if (baseRate !== undefined && price > EPS) return realizedQuote * (baseRate / price);
   return realizedQuote;
 }
 

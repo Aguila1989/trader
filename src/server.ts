@@ -29,6 +29,48 @@ const app = express();
 app.use(express.json());
 if (webBuilt) app.use(express.static(webDist));
 
+// CSRF guard: reject cross-site STATE-CHANGING requests to /api. A browser
+// always sends Origin on a cross-origin POST and cannot forge it, so a page on
+// another site can't drive these endpoints (e.g. RELEASE the kill switch via
+// /api/kill, or burn LLM tokens via /api/scan). Allowed: same-origin (the
+// browser's Origin host equals the Host it reached, covering any bind address),
+// the public host a reverse proxy forwards in X-Forwarded-Host, any explicitly
+// configured DASHBOARD_TRUSTED_ORIGINS, and - in dev - any loopback origin (the
+// Vite dev server serves the SPA on :5175 and proxies /api here with
+// changeOrigin, which rewrites the Host). Non-browser clients send no Origin and
+// are exempt; GET/HEAD/OPTIONS are read-only.
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+    return next();
+  }
+  if (!req.path.startsWith("/api")) return next();
+  const origin = req.header("origin");
+  if (!origin) return next(); // no browser Origin = not a CSRF vector
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    res.status(403).json({ error: "bad origin" });
+    return;
+  }
+  const allowed = new Set<string>([
+    `127.0.0.1:${config.port}`,
+    `localhost:${config.port}`,
+  ]);
+  if (req.headers.host) allowed.add(req.headers.host);
+  // A TLS-terminating reverse proxy forwards the PUBLIC host here (the upstream
+  // Host is rewritten). A browser CSRF cannot set X-Forwarded-Host (a non-simple
+  // header forces a preflight, which a cross-origin request fails), so honoring
+  // it is safe.
+  const xfh = req.header("x-forwarded-host");
+  if (xfh) for (const h of xfh.split(",")) allowed.add(h.trim());
+  for (const h of config.trustedOrigins) allowed.add(h);
+  const devLoopback =
+    !webBuilt && /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(originHost);
+  if (devLoopback || allowed.has(originHost)) return next();
+  res.status(403).json({ error: "cross-origin request rejected" });
+});
+
 /**
  * Constant-time token compare. Avoids a timing side-channel that a byte-by-byte
  * `===` on a secret would leak. Returns false for an empty expected token (auth
@@ -205,7 +247,14 @@ app.post("/api/reject/:id", (req, res) => {
 });
 
 app.post("/api/kill", (req, res) => {
-  store.setKill(Boolean(req.body?.active));
+  // Require an explicit boolean so a missing/empty body can never coerce to
+  // setKill(false) and silently RELEASE the kill switch (defense-in-depth
+  // behind the CSRF guard above).
+  if (typeof req.body?.active !== "boolean") {
+    res.status(400).json({ error: "active (boolean) is required" });
+    return;
+  }
+  store.setKill(req.body.active);
   res.json({ killSwitch: store.killSwitch });
 });
 
