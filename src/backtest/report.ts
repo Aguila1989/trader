@@ -1,5 +1,10 @@
 import type { BacktestResult } from "./engine";
-import { computeMetrics, type Metrics } from "./metrics";
+import {
+  computeMetrics,
+  expectancyCI,
+  type ExpectancyCI,
+  type Metrics,
+} from "./metrics";
 import type { WalkForwardResult } from "./walkforward";
 import { kellyFromMetrics, type KellySizing } from "./sizing";
 
@@ -22,6 +27,28 @@ function pct(n: number | null): string {
 }
 function r(n: number): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}R`;
+}
+
+/** Dispersion + significance: the "is this an edge, or just luck" line. */
+function statsLine(m: Metrics): string {
+  const t = m.tStat === null ? "n/a" : m.tStat.toFixed(2);
+  return `  stats: stdev=${m.stdDevR.toFixed(2)}R  Sharpe/trade=${m.sharpePerTrade.toFixed(
+    2,
+  )}  t=${t}  (|t|>~2 ~ 95% it isn't noise)`;
+}
+
+/** 95% bootstrap CI on expectancy + a plain read of whether it clears 0. */
+function ciLine(ci: ExpectancyCI | null): string {
+  if (!ci) return `  95% CI: n/a (need >=2 trades)`;
+  const read =
+    ci.lowerR > 0
+      ? "edge holds at 95%"
+      : ci.upperR < 0
+        ? "negative at 95%"
+        : "spans 0 - NOT proven";
+  return `  95% CI (bootstrap) on expectancy: [${r(ci.lowerR)}, ${r(
+    ci.upperR,
+  )}] -> ${read}`;
 }
 
 /** One-line summary of where signals went, the crux of "why no trades". */
@@ -57,6 +84,8 @@ export function formatResult(res: BacktestResult, m: Metrics): string {
       m.profitFactor ?? "n/a"
     }`,
   );
+  lines.push(statsLine(m));
+  lines.push(ciLine(expectancyCI(res.trades)));
   lines.push(
     `  avgWin=${r(m.avgWinR)} (${pct(m.avgWinPct)})  avgLoss=${r(m.avgLossR)} (${pct(
       m.avgLossPct,
@@ -81,6 +110,7 @@ export interface Aggregate {
   pairs: number;
   pairsWithTrades: number;
   metrics: Metrics;
+  ci: ExpectancyCI | null;
 }
 
 /** Pool every pair's trades into one portfolio-level metric set. */
@@ -90,6 +120,7 @@ export function aggregate(results: BacktestResult[]): Aggregate {
     pairs: results.length,
     pairsWithTrades: results.filter((res) => res.trades.length > 0).length,
     metrics: computeMetrics(allTrades),
+    ci: expectancyCI(allTrades),
   };
 }
 
@@ -123,6 +154,8 @@ export function formatAggregate(agg: Aggregate): string {
       m.profitFactor ?? "n/a"
     }`,
   );
+  lines.push(statsLine(m));
+  lines.push(ciLine(agg.ci));
   lines.push(
     `  avgWin=${r(m.avgWinR)}  avgLoss=${r(m.avgLossR)}  maxDD=${m.maxDrawdownR.toFixed(
       2,
@@ -133,7 +166,7 @@ export function formatAggregate(agg: Aggregate): string {
     .join(" ");
   lines.push(`  exits: ${exits}`);
   lines.push("");
-  lines.push(verdict(m));
+  lines.push(verdict(m, agg.ci));
   return lines.join("\n");
 }
 
@@ -169,9 +202,12 @@ export function formatWalkForward(
         m.totalR,
       )} maxDD=${m.maxDrawdownR.toFixed(2)}R`,
   );
+  const ci = expectancyCI(wf.oosTrades);
+  lines.push(statsLine(m));
+  lines.push(ciLine(ci));
   const k = kellyFromMetrics(m);
   lines.push(`  sizing (Kelly on OOS edge): ${sizingLine(k)}`);
-  lines.push(`  ${wfVerdict(wf)}`);
+  lines.push(`  ${wfVerdict(wf, ci)}`);
   return lines.join("\n");
 }
 
@@ -185,15 +221,27 @@ function avg(xs: number[]): number {
   return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
 }
 
-/** Verdict that weighs OOS expectancy AND cross-fold consistency. */
-function wfVerdict(wf: WalkForwardResult): string {
+/**
+ * Verdict that weighs OOS expectancy, cross-fold consistency, AND statistical
+ * significance. A positive point estimate is necessary but NOT sufficient: with
+ * tens of trades, +0.4R can sit comfortably inside a CI that still includes 0.
+ * "SURVIVES" is reserved for an edge whose 95% bootstrap CI clears zero.
+ */
+function wfVerdict(wf: WalkForwardResult, ci: ExpectancyCI | null): string {
   const e = wf.oosMetrics.expectancyR;
   const consistent =
     wf.tradedFolds > 0 && wf.positiveFolds / wf.tradedFolds >= 0.6;
-  if (e > 0.05 && consistent) {
+  const significant = ci != null && ci.lowerR > 0;
+  const ciTxt = ci ? ` 95% CI [${r(ci.lowerR)}, ${r(ci.upperR)}],` : "";
+  if (e > 0.05 && consistent && significant) {
     return `VERDICT: edge SURVIVES walk-forward (${r(
       e,
-    )}/trade OOS, positive in ${wf.positiveFolds}/${wf.tradedFolds} folds). This is the rare good outcome - size it per the Kelly line, start small, keep validating live.`;
+    )}/trade OOS,${ciTxt} positive in ${wf.positiveFolds}/${wf.tradedFolds} folds). The rare good outcome - size it per the Kelly line, start small, keep validating live.`;
+  }
+  if (e > 0.05 && consistent && !significant) {
+    return `VERDICT: PROMISING but NOT yet significant - positive OOS (${r(
+      e,
+    )}/trade) and consistent across ${wf.positiveFolds}/${wf.tradedFolds} folds, but the${ciTxt} interval still includes 0. ${wf.oosMetrics.trades} trades can't rule out luck. Paper-trade to grow the sample; don't size up yet.`;
   }
   if (e > 0 && !consistent) {
     return `VERDICT: fragile - positive OOS on average (${r(
@@ -205,13 +253,20 @@ function wfVerdict(wf: WalkForwardResult): string {
   )}/trade. The in-sample optimum did not generalize. This is overfitting caught in the act; do not trade it.`;
 }
 
-/** A blunt, honest read of the headline numbers. */
-function verdict(m: Metrics): string {
+/** A blunt, honest read of the headline numbers, gated on significance. */
+function verdict(m: Metrics, ci: ExpectancyCI | null): string {
   const pf = m.profitFactor;
-  if (m.expectancyR > 0.05 && pf != null && pf > 1.2) {
+  const significant = ci != null && ci.lowerR > 0;
+  const ciTxt = ci ? ` 95% CI [${r(ci.lowerR)}, ${r(ci.upperR)}]` : "";
+  if (m.expectancyR > 0.05 && pf != null && pf > 1.2 && significant) {
     return `  VERDICT: positive expectancy (${r(
       m.expectancyR,
-    )}/trade, PF ${pf}) AFTER costs. Promising, but small samples lie - validate out-of-sample / walk-forward before trusting it with funds.`;
+    )}/trade, PF ${pf},${ciTxt}) AFTER costs. Promising - but this is in-sample; confirm out-of-sample / walk-forward before funding.`;
+  }
+  if (m.expectancyR > 0.05 && pf != null && pf > 1.2 && !significant) {
+    return `  VERDICT: positive point estimate (${r(
+      m.expectancyR,
+    )}/trade, PF ${pf}) but the${ciTxt} interval includes 0 - not distinguishable from noise at this sample size. Not proven; do not fund it.`;
   }
   if (m.expectancyR <= 0 || (pf != null && pf < 1)) {
     return `  VERDICT: NO edge - expectancy is ${r(

@@ -1,15 +1,22 @@
 import { config } from "../config";
 import { resolveScanPairs, type ScanPair } from "../stellar/universe";
 import type { Candle } from "../stellar/market";
-import { loadCandles, RESOLUTION_MS } from "./data";
+import {
+  candleQuality,
+  loadCandles,
+  MIN_CANDLE_COVERAGE,
+  RESOLUTION_MS,
+  THIN_TRADES_PER_BUCKET,
+} from "./data";
 import { kellyFromMetrics } from "./sizing";
 import {
   runBacktest,
   DEFAULT_BACKTEST_CONFIG,
+  DEFAULT_IMPACT_BPS,
   type BacktestConfig,
   type BacktestResult,
 } from "./engine";
-import { computeMetrics } from "./metrics";
+import { computeMetrics, expectancyCI } from "./metrics";
 import { DEFAULT_PARAMS } from "./strategy";
 import {
   aggregate,
@@ -69,6 +76,11 @@ Options:
   --min-volume <n>   Liquidity gate: min window base volume. Default: MIN_VOLUME_24H.
   --no-volume-gate   Disable the liquidity gate (see every raw signal).
   --optimistic       On a bar that hits both target and stop, assume target first.
+  --trade-size <n>   Order size in BASE units to model market impact for: a fill
+                     that's a big fraction of a bar's traded volume pays more than
+                     the flat spread (sqrt-scaled). Default: off (size-agnostic).
+  --impact-bps <n>   Impact in bps at 100% participation (whole-bar order).
+                     Default: ${DEFAULT_IMPACT_BPS}. Only applies with --trade-size.
   --train-bars <n>   Walk-forward training window in candles. Default: 600.
   --test-bars <n>    Walk-forward test window in candles. Default: 200.
   --refresh          Re-pull from Horizon, ignoring the on-disk cache.
@@ -109,6 +121,11 @@ function parseArgs(argv: string[]): Args | null {
     pessimisticIntrabar: !has("--optimistic"),
     params: { ...DEFAULT_PARAMS },
   };
+
+  const tradeSize = get("--trade-size");
+  if (tradeSize !== undefined) cfg.tradeSizeBase = Number(tradeSize);
+  const impactBps = get("--impact-bps");
+  if (impactBps !== undefined) cfg.impactBpsAtFullParticipation = Number(impactBps);
 
   const pinNow = get("--pin-now");
   const mode: Mode = has("--walk-forward") || has("--wf")
@@ -166,7 +183,13 @@ async function main(): Promise<void> {
 
   log(
     `Backtest: ${args.pairs.length} pair(s), ${args.resolution} candles, ${args.days}d lookback, ` +
-      `cost ${args.cfg.costBps}bps, window ${args.cfg.window}, maxHold ${args.cfg.maxHoldBars}, ` +
+      `cost ${args.cfg.costBps}bps${
+        args.cfg.tradeSizeBase
+          ? ` +impact(size ${args.cfg.tradeSizeBase} @ ${
+              args.cfg.impactBpsAtFullParticipation ?? DEFAULT_IMPACT_BPS
+            }bps/full)`
+          : ""
+      }, window ${args.cfg.window}, maxHold ${args.cfg.maxHoldBars}, ` +
       `volumeGate ${args.cfg.applyVolumeGate ? `on (>=${args.cfg.minWindowVolume})` : "off"}, ` +
       `network ${config.network}`,
   );
@@ -180,6 +203,23 @@ async function main(): Promise<void> {
         nowMs: args.nowMs,
         onProgress: log,
       });
+      const q = candleQuality(candles, resolutionMs);
+      const issues: string[] = [];
+      if (q.candles > 0 && q.medianTradesPerBucket < THIN_TRADES_PER_BUCKET) {
+        issues.push(
+          `median ${q.medianTradesPerBucket} trades/candle (thin book - the printed OHLC extremes aren't fillable with size)`,
+        );
+      }
+      if (q.candles > 1 && q.coverage < MIN_CANDLE_COVERAGE) {
+        issues.push(
+          `${Math.round(q.coverage * 100)}% time-bucket coverage (gappy - candles span silent stretches)`,
+        );
+      }
+      if (issues.length > 0) {
+        log(
+          `${p.base}/${p.quote}: DATA-QUALITY WARNING - ${issues.join("; ")}. Intrabar fills are likely optimistic; distrust any edge here until paper-traded on the live book.`,
+        );
+      }
       loaded.push({ pair: p, candles });
     } catch (err) {
       log(`${p.base}/${p.quote}: error - ${(err as Error).message}`);
@@ -217,7 +257,12 @@ function runSingle(args: Args, loaded: Loaded[], log: (m: string) => void): void
   }
 
   if (args.json) {
-    const out = results.map((res) => ({ ...res, metrics: computeMetrics(res.trades) }));
+    const resolutionMs = RESOLUTION_MS[args.resolution] ?? 0;
+    const out = results.map((res, i) => ({
+      ...res,
+      metrics: computeMetrics(res.trades),
+      dataQuality: candleQuality(loaded[i]!.candles, resolutionMs),
+    }));
     console.log(
       JSON.stringify(
         { config: { ...args, cfg: args.cfg }, results: out, aggregate: aggregate(results) },
@@ -288,9 +333,19 @@ function runWalkForward(args: Args, loaded: Loaded[], log: (m: string) => void):
     return;
   }
   const k = kellyFromMetrics(m);
+  const ci = expectancyCI(pooledOos);
   console.log(
     `  trades=${m.trades} win%=${m.winRatePct} EXPECTANCY=${m.expectancyR}R ` +
       `PF=${m.profitFactor ?? "n/a"} totalR=${m.totalR}R maxDD=${m.maxDrawdownR.toFixed(2)}R`,
+  );
+  console.log(
+    `  stdev=${m.stdDevR.toFixed(2)}R Sharpe/trade=${m.sharpePerTrade.toFixed(2)} ` +
+      `t=${m.tStat === null ? "n/a" : m.tStat.toFixed(2)}` +
+      (ci
+        ? `  95% CI=[${ci.lowerR.toFixed(2)}, ${ci.upperR.toFixed(2)}]R ${
+            ci.lowerR > 0 ? "(edge holds at 95%)" : "(spans 0 - NOT proven)"
+          }`
+        : ""),
   );
   console.log(
     `  Kelly: fullKelly=${(k.fullKelly * 100).toFixed(1)}% -> recommend ${(

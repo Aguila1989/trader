@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Candle } from "../stellar/market";
 import {
   runBacktest,
+  computeImpactBps,
   DEFAULT_BACKTEST_CONFIG,
   type BacktestConfig,
 } from "./engine";
@@ -124,5 +125,66 @@ describe("runBacktest - empty / tiny input", () => {
     const res = runBacktest("XLM", "USDC", rangingSeries(5), loose);
     expect(res.trades).toEqual([]);
     expect(res.signals).toBe(0);
+  });
+});
+
+describe("computeImpactBps", () => {
+  it("is zero when no trade size is configured (the default, size-agnostic)", () => {
+    expect(computeImpactBps(loose, 1000)).toBe(0);
+    // Coeff set but no size -> still zero: size is the switch.
+    expect(
+      computeImpactBps({ ...loose, impactBpsAtFullParticipation: 999 }, 1000),
+    ).toBe(0);
+  });
+
+  it("equals the full-participation coeff when the order is a whole bar's volume", () => {
+    const cfg = { ...loose, tradeSizeBase: 1000, impactBpsAtFullParticipation: 80 };
+    expect(computeImpactBps(cfg, 1000)).toBeCloseTo(80, 6);
+  });
+
+  it("scales with the square root of participation", () => {
+    // size/vol = 0.25 -> sqrt = 0.5 -> half the full coeff.
+    const cfg = { ...loose, tradeSizeBase: 250, impactBpsAtFullParticipation: 80 };
+    expect(computeImpactBps(cfg, 1000)).toBeCloseTo(40, 6);
+  });
+
+  it("charges max impact on a bar that traded nothing", () => {
+    const cfg = { ...loose, tradeSizeBase: 10, impactBpsAtFullParticipation: 80 };
+    expect(computeImpactBps(cfg, 0)).toBe(80);
+  });
+});
+
+describe("runBacktest - market impact", () => {
+  it("shrinks winning R once a real trade size eats into the book", () => {
+    const candles = rangingSeries(80);
+    const flat = runBacktest("XLM", "USDC", candles, loose);
+    const impacted = runBacktest("XLM", "USDC", candles, {
+      ...loose,
+      tradeSizeBase: 500, // half of each bar's 1000 volume -> ~70bps impact/fill
+      impactBpsAtFullParticipation: 100,
+    });
+    const avg = (xs: number[]) =>
+      xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
+    const flatWins = flat.trades
+      .filter((t) => t.exitReason === "target")
+      .map((t) => t.rMultiple);
+    const impactedWins = impacted.trades
+      .filter((t) => t.exitReason === "target")
+      .map((t) => t.rMultiple);
+    expect(flatWins.length).toBeGreaterThan(0);
+    expect(impactedWins.length).toBe(flatWins.length); // same trades, worse fills
+    expect(avg(impactedWins)).toBeLessThan(avg(flatWins));
+  });
+
+  it("is a no-op when no trade size is set, even with a coeff present", () => {
+    const candles = rangingSeries(80);
+    const a = runBacktest("XLM", "USDC", candles, loose);
+    const b = runBacktest("XLM", "USDC", candles, {
+      ...loose,
+      impactBpsAtFullParticipation: 999,
+    });
+    expect(b.trades.map((t) => t.rMultiple)).toEqual(
+      a.trades.map((t) => t.rMultiple),
+    );
   });
 });
