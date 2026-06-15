@@ -78,6 +78,16 @@ export interface BacktestConfig {
    * order. false assumes the target filled first (optimistic).
    */
   pessimisticIntrabar: boolean;
+  /**
+   * Optional order size in BASE units. When set, fills pay market IMPACT on top
+   * of costBps (see computeImpactBps): an order that is a big fraction of a
+   * bar's traded volume sweeps deeper into the book and fills worse. Left
+   * undefined, fills are size-agnostic (flat costBps only) - the historical
+   * default, so every existing run is byte-for-byte unchanged.
+   */
+  tradeSizeBase?: number;
+  /** Impact in bps at 100% participation, sqrt-scaled. Default DEFAULT_IMPACT_BPS. */
+  impactBpsAtFullParticipation?: number;
   params: StrategyParams;
 }
 
@@ -106,9 +116,41 @@ export interface BacktestResult {
   buyHoldPct: number | null;
 }
 
-/** Apply a per-fill cost haircut: a buyer pays up, a seller receives less. */
-function fillPrice(reference: number, side: TradeSide, costBps: number): number {
-  const k = costBps / 10_000;
+/** Bps of market impact at 100% participation (order = a whole bar's traded
+ *  volume), absent an explicit override. Sqrt-scaled in computeImpactBps. */
+export const DEFAULT_IMPACT_BPS = 50;
+
+/**
+ * Market impact for an order of `cfg.tradeSizeBase` base units against a bar
+ * that traded `barBaseVolume`. A bigger slice of the bar's volume sweeps deeper
+ * into the book, so impact grows with sqrt(participation) - the standard rough
+ * shape. Returns 0 when no trade size is set (size-agnostic: the default).
+ *
+ * IMPORTANT: candles carry no real order book, so this is a transparent PROXY,
+ * not a walked book. The true fillable cost is what paper-trading measures on
+ * the LIVE book; this only stops the backtest pretending you fill any size at a
+ * flat spread. Treat it as "how much does my own size hurt me", tunable.
+ */
+export function computeImpactBps(
+  cfg: BacktestConfig,
+  barBaseVolume: number,
+): number {
+  const size = cfg.tradeSizeBase;
+  if (size == null || size <= 0) return 0;
+  const full = cfg.impactBpsAtFullParticipation ?? DEFAULT_IMPACT_BPS;
+  if (!(barBaseVolume > 0)) return full; // no liquidity that bar -> max impact
+  const participation = Math.min(1, size / barBaseVolume);
+  return full * Math.sqrt(participation);
+}
+
+/** Apply per-fill cost: spread haircut (costBps) + market impact, directional. */
+function fillPrice(
+  reference: number,
+  side: TradeSide,
+  costBps: number,
+  impactBps: number,
+): number {
+  const k = (costBps + impactBps) / 10_000;
   return side === "buy" ? reference * (1 + k) : reference * (1 - k);
 }
 
@@ -179,10 +221,20 @@ export function runBacktest(
       }
     }
 
-    const entryPrice = fillPrice(signal.entry, signal.side, cfg.costBps);
+    const entryPrice = fillPrice(
+      signal.entry,
+      signal.side,
+      cfg.costBps,
+      computeImpactBps(cfg, candles[i]!.baseVolume),
+    );
     const exit = resolveExit(candles, i, signal, cfg);
     const exitSide: TradeSide = signal.side === "buy" ? "sell" : "buy";
-    const exitPrice = fillPrice(exit.price, exitSide, cfg.costBps);
+    const exitPrice = fillPrice(
+      exit.price,
+      exitSide,
+      cfg.costBps,
+      computeImpactBps(cfg, candles[exit.idx]!.baseVolume),
+    );
 
     const pnlPerUnit =
       signal.side === "buy" ? exitPrice - entryPrice : entryPrice - exitPrice;

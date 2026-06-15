@@ -180,3 +180,47 @@ export async function loadCandles(
 
   return candles;
 }
+
+export interface CandleQuality {
+  candles: number;
+  /**
+   * Median trades per bucket - the per-bar liquidity. This is the real tell of
+   * a thin-pair artifact: when a "1h" candle is built from a handful of small
+   * prints, its high/low are levels you could never actually fill with size, so
+   * the backtest's intrabar stop/target fills flatter the real book. The deep
+   * XLM/USDC book runs in the thousands of trades per hour; a thin token runs in
+   * single or low-double digits, where the OHLC extremes aren't tradeable.
+   */
+  medianTradesPerBucket: number;
+  /**
+   * Fraction of expected time-buckets actually present. Horizon SKIPS empty
+   * buckets on thin pairs, so a low coverage means the series is gappy and a
+   * candle following a long gap can carry a range the continuous book never
+   * offered. 1.0 = continuous; well below 1 = synthetic-heavy.
+   */
+  coverage: number;
+}
+
+/** Cheap data-quality read so a thin-pair "edge" can be distrusted on sight. */
+export function candleQuality(
+  candles: Candle[],
+  resolutionMs: number,
+): CandleQuality {
+  const n = candles.length;
+  if (n === 0) return { candles: 0, medianTradesPerBucket: 0, coverage: 1 };
+  const counts = candles.map((c) => c.tradeCount ?? 0).sort((a, b) => a - b);
+  const median = counts[Math.floor(counts.length / 2)]!;
+  let coverage = 1;
+  if (n >= 2 && resolutionMs > 0) {
+    const span =
+      Date.parse(candles[n - 1]!.time) - Date.parse(candles[0]!.time);
+    const expected = Math.round(span / resolutionMs) + 1;
+    coverage = expected > 0 ? Number((n / expected).toFixed(3)) : 1;
+  }
+  return { candles: n, medianTradesPerBucket: median, coverage };
+}
+
+/** Below this median trades/bucket, the book is too thin to trust intrabar fills. */
+export const THIN_TRADES_PER_BUCKET = 20;
+/** Below this time-bucket coverage, the history is too gappy to trust. */
+export const MIN_CANDLE_COVERAGE = 0.9;
