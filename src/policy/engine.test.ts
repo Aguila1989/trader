@@ -29,7 +29,7 @@ vi.mock("../config", () => ({
   },
 }));
 
-const { checkPolicy, maxAmountForPair, lossTaper } = await import("./engine");
+const { checkPolicy, maxAmountForPair, lossTaper, isRiskReducing } = await import("./engine");
 import type {
   TradeProposal,
   PolicyContext,
@@ -95,6 +95,37 @@ function position(over: Partial<PositionSummary> = {}): PositionSummary {
     ...over,
   };
 }
+
+describe("isRiskReducing", () => {
+  it("a fresh entry on a flat pair is NOT risk-reducing", () => {
+    expect(isRiskReducing(proposal({ side: "buy", amount: "5" }), [])).toBe(false);
+  });
+  it("trimming a long (sell < net) is risk-reducing", () => {
+    expect(
+      isRiskReducing(proposal({ side: "sell", amount: "4" }), [position({ netQty: 10 })]),
+    ).toBe(true);
+  });
+  it("fully closing a long (sell == net) is risk-reducing", () => {
+    expect(
+      isRiskReducing(proposal({ side: "sell", amount: "10" }), [position({ netQty: 10 })]),
+    ).toBe(true);
+  });
+  it("a cross-zero flip (sell > net) is NOT risk-reducing", () => {
+    expect(
+      isRiskReducing(proposal({ side: "sell", amount: "16" }), [position({ netQty: 10 })]),
+    ).toBe(false);
+  });
+  it("adding to a long is NOT risk-reducing", () => {
+    expect(
+      isRiskReducing(proposal({ side: "buy", amount: "3" }), [position({ netQty: 10 })]),
+    ).toBe(false);
+  });
+  it("covering part of a short (buy < |net|) is risk-reducing", () => {
+    expect(
+      isRiskReducing(proposal({ side: "buy", amount: "4" }), [position({ netQty: -10 })]),
+    ).toBe(true);
+  });
+});
 
 describe("checkPolicy", () => {
   it("passes a clean in-bounds trade", () => {
