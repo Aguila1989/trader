@@ -188,9 +188,11 @@ the model:
   losses count toward `MAX_DAILY_LOSS` and taper the per-trade size cap (full
   size for the first half of the budget, ramping to 25% at the limit). A
   position `STOP_LOSS_PCT` under water gets a **closing proposal** through the
-  normal policy + approval pipeline. Risk-REDUCING trades are exempt from
-  cooldown, daily caps and the loss halt - a stop-loss can never be locked out
-  (only the kill switch stops everything).
+  policy engine. Because a close is risk-REDUCING it **auto-executes whenever
+  live (or paper) trading is armed - even in manual-approval mode** (only
+  *entries* wait for your click), and it is exempt from cooldown, daily caps,
+  staleness and the loss halt - a stop-loss can never be locked out or stranded
+  waiting for approval (only the kill switch stops everything).
 - **Resting-offer lifecycle.** A partially-filled order's resting remainder is
   tracked by offer id: later fills are booked into PnL/volume as they happen,
   and offers unfilled after `MAX_OFFER_AGE_MINUTES` are cancelled - a stale

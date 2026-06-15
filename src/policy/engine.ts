@@ -335,6 +335,29 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   return { allowed: violations.length === 0, violations };
 }
 
+/**
+ * True when `proposal` STRICTLY shrinks the pair's net position without flipping
+ * its sign (a trim or a full close) - the same definition checkPolicy uses to
+ * grant the narrower risk-reducing rulebook. A cross-zero flip is NOT
+ * risk-reducing (it opens fresh directional risk on the other side). Exposed so
+ * the orchestrator can auto-execute EXITS even in manual-approval mode: a
+ * reducing trade can only lower exposure, so it never needs a human gate.
+ */
+export function isRiskReducing(
+  proposal: TradeProposal,
+  positions: PositionSummary[],
+): boolean {
+  const amount = Number(proposal.amount);
+  if (!(amount > 0)) return false;
+  const baseC = safeCanon(proposal.baseAsset);
+  const quoteC = safeCanon(proposal.quoteAsset);
+  const net = pairNet(positions, baseC, quoteC);
+  const newNet = net + (proposal.side === "buy" ? amount : -amount);
+  const sameSide =
+    net === 0 || newNet === 0 || Math.sign(newNet) === Math.sign(net);
+  return sameSide && Math.abs(newNet) < Math.abs(net) - EPS;
+}
+
 function safeCanon(spec: string): string {
   try {
     return canonicalAsset(spec);

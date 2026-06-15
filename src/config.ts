@@ -276,9 +276,10 @@ export const config = {
     pairExposureMultiplier: num("PAIR_EXPOSURE_MULTIPLIER", 3),
     /**
      * Default stop distance: when an open position is this many percent under
-     * water (vs its avg entry), the position monitor proposes a close. The
-     * close still passes policy and (in manual mode) waits for approval.
-     * 0 disables monitor-driven stops.
+     * water (vs its avg entry), the position monitor proposes a close. The close
+     * still passes the policy engine, but as a RISK-REDUCING exit it auto-submits
+     * whenever live (or paper) trading is armed - even in manual-approval mode -
+     * so a stop is never stranded waiting for a click. 0 disables monitor stops.
      */
     stopLossPct: num("STOP_LOSS_PCT", 5),
     /**

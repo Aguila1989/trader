@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { config, isReadOnly } from "../config";
 import { store } from "./store";
 import { aiModel, aiProviderId } from "../ai";
-import { checkPolicy } from "../policy/engine";
+import { checkPolicy, isRiskReducing } from "../policy/engine";
 import {
   bookLevelsBase,
   getMarketSnapshot,
@@ -264,6 +264,23 @@ async function intake(
       "warn",
       `Proposal ${shortId(proposal.id)} BLOCKED: ${policy.violations.join("; ")}`,
     );
+    return current(proposal.id);
+  }
+
+  // Defensive automation: a RISK-REDUCING close/trim auto-executes whenever
+  // execution is possible (live armed or paper), even in MANUAL-approval mode
+  // and regardless of conviction. A reducing trade can only SHRINK exposure
+  // (cross-zero flips are excluded by isRiskReducing), so a stop-loss is never
+  // stranded behind a human who may be away - the gap that otherwise lets a
+  // loser bleed in manual mode. Entries are unaffected: they fall through to the
+  // approval + conviction gates below. When NOT armed, executeInner holds it for
+  // approval anyway, so the gate stays correct.
+  if (store.armed && isRiskReducing(proposal, store.getPositions())) {
+    store.log(
+      "trade",
+      `Proposal ${shortId(proposal.id)} auto-executing: risk-reducing exit (no approval needed for closes).`,
+    );
+    await execute(proposal.id, true);
     return current(proposal.id);
   }
 
