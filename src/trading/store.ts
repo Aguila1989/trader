@@ -397,6 +397,19 @@ class Store {
       this.emit("state", this.snapshot());
       return false;
     }
+    // Refuse to arm live trading with the position monitor disabled: there would
+    // be NO stop-losses, no resting-offer reconciliation and no mark-to-market
+    // feeding the loss halt. A single boot-time warning is not enough of a guard
+    // for real money.
+    if (enabled && config.monitorIntervalSeconds <= 0) {
+      this.log(
+        "error",
+        "Cannot enable live trading: the position monitor is OFF (POSITION_MONITOR_INTERVAL_SECONDS=0) - no stop-losses or exit management. Set it > 0 and restart first.",
+      );
+      this.liveTrading = false;
+      this.emit("state", this.snapshot());
+      return false;
+    }
     this.liveTrading = enabled;
     // Live and paper are mutually exclusive: arming real submission turns off
     // the simulator so there is never ambiguity about whether a fill is real.

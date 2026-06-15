@@ -275,13 +275,17 @@ async function intake(
     return current(proposal.id);
   }
 
-  // Conviction gate: even in auto-trade, a LOW-confidence call is held for a
-  // human - the model said it isn't sure, so an unattended submit is wrong.
-  if (proposal.confidence === "low") {
+  // Conviction gate: even in auto-trade, a call that is not EXPLICITLY high- or
+  // medium-confidence is held for a human. This FAILS CLOSED on a missing or
+  // malformed confidence - parseProposal maps anything other than
+  // "low"/"medium"/"high" to undefined, and no client validates the tool
+  // schema's `required` fields, so a model (especially an OpenAI-compatible one
+  // like DeepSeek) can omit it. An undefined confidence must never auto-submit.
+  if (proposal.confidence !== "high" && proposal.confidence !== "medium") {
     store.updateProposal(proposal.id, { status: "pending_approval" });
     store.log(
       "trade",
-      `Proposal ${shortId(proposal.id)} held for manual review: low confidence.`,
+      `Proposal ${shortId(proposal.id)} held for manual review: ${proposal.confidence ?? "unstated"} confidence.`,
     );
     return current(proposal.id);
   }
@@ -394,6 +398,24 @@ function execute(id: string, auto: boolean): Promise<void> {
 async function executeInner(id: string, auto: boolean): Promise<void> {
   const p = store.getProposal(id);
   if (!p) return;
+
+  // Idempotency: approve() and autoApprove() check status BEFORE acquiring the
+  // serial lock, so a double-clicked Approve - or approve() racing autoApprove()
+  // on the same id - can queue TWO executions that both passed the pre-lock
+  // check. The status -> "submitting" flip happens later, INSIDE this lock, so
+  // without this guard the second run repeats the whole build -> sign -> submit
+  // path: a duplicate ON-CHAIN order (the cooldown only incidentally blocks a
+  // duplicate ENTRY; a risk-reducing trim or TRADE_COOLDOWN_SECONDS=0 is not
+  // gated) plus a double-counted daily.tradeCount / volume / PnL fill. Refuse to
+  // act on a proposal already in flight or done. "failed" is intentionally NOT
+  // skipped so an operator can retry a failed submit.
+  if (p.status === "submitting" || p.status === "submitted") {
+    store.log(
+      "warn",
+      `Skipping ${shortId(id)}: already ${p.status} (duplicate execute ignored).`,
+    );
+    return;
+  }
 
   const paper = store.paperTrading;
 
