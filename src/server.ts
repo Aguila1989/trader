@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config, isReadOnly, dbConfigured } from "./config";
+import { checkOrigin, isLoopbackBind } from "./csrf";
 import { aiReady, aiModel, aiProviderId } from "./ai";
 import { store } from "./trading/store";
 import {
@@ -29,46 +30,29 @@ const app = express();
 app.use(express.json());
 if (webBuilt) app.use(express.static(webDist));
 
-// CSRF guard: reject cross-site STATE-CHANGING requests to /api. A browser
-// always sends Origin on a cross-origin POST and cannot forge it, so a page on
-// another site can't drive these endpoints (e.g. RELEASE the kill switch via
-// /api/kill, or burn LLM tokens via /api/scan). Allowed: same-origin (the
-// browser's Origin host equals the Host it reached, covering any bind address),
-// the public host a reverse proxy forwards in X-Forwarded-Host, any explicitly
-// configured DASHBOARD_TRUSTED_ORIGINS, and - in dev - any loopback origin (the
-// Vite dev server serves the SPA on :5175 and proxies /api here with
-// changeOrigin, which rewrites the Host). Non-browser clients send no Origin and
-// are exempt; GET/HEAD/OPTIONS are read-only.
+// CSRF guard: reject cross-site STATE-CHANGING requests to /api. The decision
+// lives in ./csrf (checkOrigin) so it can be unit-tested without booting the
+// app; see that module for the full threat model. In short: loopback origins
+// are trusted when the server is bound to a loopback interface (the default,
+// and the dev setup where the Vite dev server on :5175 proxies here); an
+// exposed (0.0.0.0) bind falls back to same-origin + X-Forwarded-Host +
+// DASHBOARD_TRUSTED_ORIGINS. GET/HEAD/OPTIONS and non-browser clients are exempt.
+const trustLoopback = isLoopbackBind(config.bindHost);
 app.use((req, res, next) => {
-  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
-    return next();
-  }
-  if (!req.path.startsWith("/api")) return next();
-  const origin = req.header("origin");
-  if (!origin) return next(); // no browser Origin = not a CSRF vector
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    res.status(403).json({ error: "bad origin" });
-    return;
-  }
-  const allowed = new Set<string>([
-    `127.0.0.1:${config.port}`,
-    `localhost:${config.port}`,
-  ]);
-  if (req.headers.host) allowed.add(req.headers.host);
-  // A TLS-terminating reverse proxy forwards the PUBLIC host here (the upstream
-  // Host is rewritten). A browser CSRF cannot set X-Forwarded-Host (a non-simple
-  // header forces a preflight, which a cross-origin request fails), so honoring
-  // it is safe.
-  const xfh = req.header("x-forwarded-host");
-  if (xfh) for (const h of xfh.split(",")) allowed.add(h.trim());
-  for (const h of config.trustedOrigins) allowed.add(h);
-  const devLoopback =
-    !webBuilt && /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(originHost);
-  if (devLoopback || allowed.has(originHost)) return next();
-  res.status(403).json({ error: "cross-origin request rejected" });
+  const verdict = checkOrigin(
+    {
+      method: req.method,
+      path: req.path,
+      origin: req.header("origin"),
+      host: req.headers.host,
+      xForwardedHost: req.header("x-forwarded-host"),
+    },
+    { port: config.port, trustedOrigins: config.trustedOrigins, trustLoopback },
+  );
+  if (verdict === "allow") return next();
+  res.status(403).json({
+    error: verdict === "bad-origin" ? "bad origin" : "cross-origin request rejected",
+  });
 });
 
 /**
