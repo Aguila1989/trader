@@ -157,6 +157,19 @@ export const config = {
   autoApproveEnabled: bool("AUTO_APPROVE_ENABLED", false),
 
   /**
+   * Arm LIVE trading automatically at startup instead of booting read-only.
+   * Default false (the safe default: every boot starts read-only and you arm
+   * live deliberately on the dashboard, so a crash/restart never silently
+   * resumes on-chain trading). Set true ONLY for a deliberate, stable, attended
+   * deployment - and NOT under `npm run dev` (tsx watch), which restarts on
+   * every file save and would re-arm live each time. Still requires a signing
+   * key and the position monitor on (the auto-arm goes through setLiveTrading,
+   * which refuses otherwise). Arming live does NOT auto-execute: proposals still
+   * wait for approval unless AUTO_APPROVE_ENABLED is also true.
+   */
+  autoArmLiveTrading: bool("AUTO_ARM_LIVE_TRADING", false),
+
+  /**
    * Hands-free analysis loop. When > 0, the backend runs a chain scan of the
    * curated token universe every N seconds on its own - no manual "Scan chain"
    * click needed. Proposals it generates still flow through the SAME gates: they
