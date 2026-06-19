@@ -406,6 +406,21 @@ async function start(): Promise<void> {
     }
     startAutoPilot();
     startMonitor();
+    // Opt-in: arm live trading at startup instead of booting read-only. Goes
+    // through setLiveTrading so it still refuses without a signing key or with
+    // the monitor off; logs loudly so an armed boot is never silent.
+    if (config.autoArmLiveTrading) {
+      store.log(
+        "warn",
+        "AUTO_ARM_LIVE_TRADING=true: arming live trading at startup (set it false to boot read-only).",
+      );
+      if (!store.setLiveTrading(true)) {
+        store.log(
+          "error",
+          "Auto-arm failed - staying READ-ONLY. Need a STELLAR_SECRET and POSITION_MONITOR_INTERVAL_SECONDS > 0.",
+        );
+      }
+    }
     const mode = store.autoApprove ? "AUTO-TRADE" : "approve every trade";
     const host = config.bindHost === "0.0.0.0" ? "127.0.0.1" : config.bindHost;
     console.log("\n  Stellar AI Trading Bot");
