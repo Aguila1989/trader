@@ -1,4 +1,6 @@
-import { DEFAULT_PARAMS, type StrategyParams } from "../backtest/strategy";
+import { DEFAULT_PARAMS, decide, type StrategyParams } from "../backtest/strategy";
+import type { IndicatorSet } from "../stellar/indicators";
+import type { TradeSide } from "../types";
 
 /**
  * Deterministic "why no trade" explainer.
@@ -99,4 +101,68 @@ export function explainNoEntry(
 export function briefNoEntry(m: NoEntryInput): string {
   const rsi = m.rsi14 == null ? "n/a" : `${Math.round(m.rsi14)}`;
   return `${m.label} (${m.regime ?? "n/a"}, RSI ${rsi})`;
+}
+
+export interface BaselineCall {
+  /** The rulebook's side, or null to stand aside. */
+  side: TradeSide | null;
+  reason: string;
+}
+
+/**
+ * What the DETERMINISTIC rulebook (backtest strategy.decide) would do on a
+ * market - the same playbook the AI is told to follow, run mechanically over
+ * the same server-computed indicators. Used to surface where the AI's judgment
+ * DIVERGES from the rules (e.g. a range-high sell the rules would take but the
+ * AI passed on). It is a read-only check; it never changes what the bot does.
+ */
+export function baselineCall(
+  stats: IndicatorSet,
+  lastClose: number,
+  params: StrategyParams = DEFAULT_PARAMS,
+): BaselineCall {
+  const sig = decide(stats, lastClose, params);
+  return sig
+    ? { side: sig.side, reason: sig.reason }
+    : { side: null, reason: "no rulebook setup (stand aside)" };
+}
+
+export interface DivergenceCheck {
+  /** True when the rulebook and the AI disagree - the interesting case. */
+  diverged: boolean;
+  note: string;
+}
+
+/**
+ * Compare the rulebook's call to what the AI actually did on a market. Returns
+ * null when both stand aside (a non-event). The headline divergence is
+ * "rulebook would trade, AI passed" - a signal the AI skipped.
+ */
+export function divergenceNote(
+  label: string,
+  baseline: BaselineCall,
+  aiSide: TradeSide | null,
+): DivergenceCheck | null {
+  const rule = baseline.side ? baseline.side.toUpperCase() : "stand aside";
+  const ai = aiSide ? aiSide.toUpperCase() : "passed";
+  if (baseline.side === null && aiSide === null) return null;
+  if (baseline.side === aiSide) {
+    return { diverged: false, note: `${label}: rulebook ${rule}, AI ${ai} - agree.` };
+  }
+  if (baseline.side !== null && aiSide === null) {
+    return {
+      diverged: true,
+      note: `${label}: rulebook ${rule}, AI passed -> DIVERGENCE - AI skipped a signal the rules would take (${baseline.reason}).`,
+    };
+  }
+  if (baseline.side === null && aiSide !== null) {
+    return {
+      diverged: true,
+      note: `${label}: rulebook stand aside, AI ${ai} -> DIVERGENCE - AI took a trade the rules wouldn't.`,
+    };
+  }
+  return {
+    diverged: true,
+    note: `${label}: rulebook ${rule}, AI ${ai} -> DIVERGENCE - opposite sides.`,
+  };
 }
