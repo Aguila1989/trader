@@ -75,7 +75,13 @@ export const tradingTools: AiTool[] = [
         },
         limit_price: {
           type: "string",
-          description: "Limit price as quote units per 1 base unit.",
+          description:
+            "Limit price as quote units per 1 base unit. Its role depends on post_only: for a resting maker order (post_only=true) it is the WORST acceptable price (a ceiling for a buy, a floor for a sell) and the backend prices the order at the live touch; for a crossing taker order (post_only=false) it is your crossing price.",
+        },
+        post_only: {
+          type: "boolean",
+          description:
+            "Maker-first. true = REST a limit order at/just inside the touch to CAPTURE the spread (a buy joins the bid, a sell joins the ask); the backend prices it at the live touch so it never crosses, and your limit_price acts as the WORST acceptable price (a ceiling for a buy, a floor for a sell). Default for mean-reversion/range entries. false = CROSS the spread and fill immediately (taker) - only when you need an immediate fill on conviction (e.g. a breakout you fear will run); then limit_price is your crossing price.",
         },
         max_slippage_bps: {
           type: "number",

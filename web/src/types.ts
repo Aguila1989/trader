@@ -73,6 +73,13 @@ export interface TradesPage {
   offset: number;
 }
 
+export interface LogsPage {
+  rows: LogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface Limits {
   assetWhitelist: string[];
   maxAmountPerTrade: number;

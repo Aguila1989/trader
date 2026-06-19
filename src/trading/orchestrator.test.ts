@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { reconcileOfferFill, simulatePaperFill } from "./orchestrator";
+import {
+  makerLimitPrice,
+  reconcileOfferFill,
+  simulatePaperFill,
+} from "./orchestrator";
 import type { PolicyContext, TradeProposal } from "../types";
 
 function proposal(over: Partial<TradeProposal> = {}): TradeProposal {
@@ -118,5 +122,70 @@ describe("simulatePaperFill", () => {
 
   it("returns null for a non-positive amount", () => {
     expect(simulatePaperFill(proposal({ amount: "0" }), ctx)).toBeNull();
+  });
+
+  it("fills only the marketable portion for a post_only maker (rests the rest)", () => {
+    // A maker BUY resting at the bid (0.49): every ask (0.50, 0.55) is above
+    // its limit, so nothing crosses to it - it fills 0 and rests. A TAKER buy
+    // at the same touch crosses and fills the full VWAP.
+    expect(
+      simulatePaperFill(proposal({ amount: "10", limitPrice: "0.49", postOnly: true }), ctx),
+    ).toBeNull(); // 0 fillable -> null (the whole order rests)
+    const taker = simulatePaperFill(proposal({ amount: "10", limitPrice: "0.49" }), ctx);
+    expect(taker).not.toBeNull();
+    expect(taker!.filledBase).toBeCloseTo(10, 7);
+    expect(taker!.avgPrice).toBeCloseTo(0.52, 7); // full VWAP across the asks
+  });
+
+  it("a post_only maker priced at the ask fills only the touch level, rests the deeper book", () => {
+    // Maker buy with limit 0.50 (the ask touch): only the 6 units at 0.50
+    // qualify; the 10 units at 0.55 are above the limit and rest.
+    const fill = simulatePaperFill(
+      proposal({ amount: "16", limitPrice: "0.5", postOnly: true }),
+      ctx,
+    );
+    expect(fill).not.toBeNull();
+    expect(fill!.filledBase).toBeCloseTo(6, 7);
+    expect(fill!.avgPrice).toBeCloseTo(0.5, 7);
+  });
+});
+
+describe("makerLimitPrice", () => {
+  const BID = 0.48;
+  const ASK = 0.4805;
+
+  it("a buy joins the bid (no cross) when the analyst limit is above it", () => {
+    expect(makerLimitPrice("buy", BID, ASK, 0.5, 0)).toBe("0.48");
+  });
+
+  it("a buy respects the analyst's worse (lower) bound, still <= the bid", () => {
+    expect(makerLimitPrice("buy", BID, ASK, 0.475, 0)).toBe("0.475");
+  });
+
+  it("a sell joins the ask (no cross) when the analyst limit is below it", () => {
+    expect(makerLimitPrice("sell", BID, ASK, 0.46, 0)).toBe("0.4805");
+  });
+
+  it("a sell respects the analyst's worse (higher) floor, still >= the ask", () => {
+    expect(makerLimitPrice("sell", BID, ASK, 0.49, 0)).toBe("0.49");
+  });
+
+  it("returns null when the relevant touch is missing", () => {
+    expect(makerLimitPrice("buy", undefined, ASK, 0.5, 0)).toBeNull();
+    expect(makerLimitPrice("sell", BID, undefined, 0.46, 0)).toBeNull();
+  });
+
+  it("tickBps steps inside the touch but never past it (buy below the bid)", () => {
+    // 10bps inside the 0.48 bid -> 0.48 * (1 - 0.001) = 0.47952, still <= bid.
+    const priced = makerLimitPrice("buy", BID, ASK, 0.5, 10);
+    expect(Number(priced)).toBeCloseTo(0.47952, 7);
+    expect(Number(priced)).toBeLessThanOrEqual(BID);
+  });
+
+  it("tickBps steps inside the touch but never past it (sell above the ask)", () => {
+    // 10bps inside the 0.4805 ask -> 0.4805 * (1 + 0.001) = 0.4809805, still >= ask.
+    const priced = makerLimitPrice("sell", BID, ASK, 0.46, 10);
+    expect(Number(priced)).toBeCloseTo(0.4809805, 7);
+    expect(Number(priced)).toBeGreaterThanOrEqual(ASK);
   });
 });

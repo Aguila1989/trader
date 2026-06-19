@@ -160,6 +160,28 @@ app.get("/api/trades", async (req, res) => {
   }
 });
 
+// Persisted, browsable log history (paginated + filterable by level/text/time).
+app.get("/api/logs", async (req, res) => {
+  const limit = Number(req.query.limit ?? 50);
+  const offset = Number(req.query.offset ?? 0);
+  const level = req.query.level ? String(req.query.level) : undefined;
+  const q = req.query.q ? String(req.query.q) : undefined;
+  const since = req.query.since ? String(req.query.since) : undefined;
+  try {
+    res.json(
+      await store.getLogsPage({
+        limit: Number.isFinite(limit) ? limit : 50,
+        offset: Number.isFinite(offset) ? offset : 0,
+        level,
+        q,
+        since,
+      }),
+    );
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Cumulative volume / trades / PnL series for the evolution charts.
 app.get("/api/evolution", async (_req, res) => {
   try {

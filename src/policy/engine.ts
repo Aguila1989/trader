@@ -94,6 +94,15 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
     net === 0 || newNet === 0 || Math.sign(newNet) === Math.sign(net);
   const riskReducing = sameSide && Math.abs(newNet) < Math.abs(net) - EPS;
 
+  // Maker framing: is this a genuine resting (non-crossing) maker order? Only
+  // TRUE when flagged post_only AND the touch exists AND the limit does not
+  // cross (a maker buy joins the BID, a maker sell the ASK). A resting maker
+  // never sweeps the book and COLLECTS the spread rather than paying it, so the
+  // taker-sweep gates (book-walk + entry-spread) are skipped for it below. A
+  // post_only order priced to CROSS is NOT a maker (it would fill as taker);
+  // section 5c pushes a hard violation so it can never silently execute.
+  const maker = isNonCrossing(proposal, context);
+
   // 3. Per-trade size cap (tier-aware), tapered as the daily loss budget burns.
   //    A risk-reducing trade may always be as large as the position it closes.
   const baseCap = maxAmountForPair(proposal.baseAsset, proposal.quoteAsset);
@@ -162,13 +171,31 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
     }
   }
 
+  // 5c. Crossing-maker guard: a proposal flagged post_only must REST at the
+  //     touch, not cross it. If it's flagged maker, the touch exists, but the
+  //     limit WOULD cross (so isNonCrossing is false), it would fill as a TAKER
+  //     while skipping the taker gates above. Block it so a mislabeled or
+  //     un-repriced maker can never silently execute as a taker - reprice it
+  //     at/inside the touch instead.
+  if (proposal.postOnly && !maker) {
+    const touch = proposal.side === "buy" ? context.bestBid : context.bestAsk;
+    if (touch != null && touch > 0 && price > 0) {
+      violations.push(
+        proposal.side === "buy"
+          ? `post_only order priced to cross the spread (buy ${price} > bid ${touch}) - it would fill as taker; reprice at/inside the touch.`
+          : `post_only order priced to cross the spread (sell ${price} < ask ${touch}) - it would fill as taker; reprice at/inside the touch.`,
+      );
+    }
+  }
+
   // 5b. Size-vs-depth: price the FULL amount against the live book (no limit
   //     bound - the limit already caps the worst fill; this asks whether the
   //     MARKET can absorb the size at all). A tight touch with nothing behind
   //     it means a cap-size order either sweeps far past the touch or mostly
   //     rests as stale-offer bait - both are entries this bot shouldn't open.
-  //     Risk-increasing only.
-  if (!riskReducing && ref && ref > 0 && amount > 0) {
+  //     Risk-increasing TAKERS only: a non-crossing maker never sweeps the book
+  //     (it rests at the touch), so this taker-sweep check would false-block it.
+  if (!riskReducing && !maker && ref && ref > 0 && amount > 0) {
     const levels = proposal.side === "buy" ? context.asks : context.bids;
     if (levels && levels.length > 0) {
       const walk = walkBook(levels, amount, proposal.side);
@@ -195,7 +222,11 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   // 6. Liquidity gates (risk-increasing entries only): refuse to OPEN risk in
   //    markets too wide or too dead to exit cleanly.
   if (!riskReducing) {
+    // Entry-spread gate is a TAKER cost check (you pay the spread crossing in).
+    // A non-crossing maker COLLECTS the spread, so a wide book is an
+    // OPPORTUNITY for it, not a cost - skip the gate for makers.
     if (
+      !maker &&
       limits.maxEntrySpreadBps > 0 &&
       context.spreadBps != null &&
       context.spreadBps > limits.maxEntrySpreadBps
@@ -356,6 +387,29 @@ export function isRiskReducing(
   const sameSide =
     net === 0 || newNet === 0 || Math.sign(newNet) === Math.sign(net);
   return sameSide && Math.abs(newNet) < Math.abs(net) - EPS;
+}
+
+/**
+ * True only when `proposal` is a genuine resting (non-crossing) MAKER: it is
+ * flagged post_only, the relevant touch exists, and the limit does not cross
+ * it. The maker references the SAME side as the order - a buy maker joins the
+ * BID (rests at or below it), a sell maker the ASK (rests at or above it).
+ * A post_only order priced PAST its touch would fill as a taker, so it is NOT a
+ * non-crossing maker (checkPolicy turns that case into a hard violation).
+ */
+function isNonCrossing(
+  proposal: TradeProposal,
+  context: PolicyContext,
+): boolean {
+  if (proposal.postOnly !== true) return false;
+  const price = Number(proposal.limitPrice);
+  if (!(price > 0)) return false;
+  if (proposal.side === "buy") {
+    const bid = context.bestBid;
+    return bid != null && bid > 0 && price <= bid + EPS;
+  }
+  const ask = context.bestAsk;
+  return ask != null && ask > 0 && price >= ask - EPS;
 }
 
 function safeCanon(spec: string): string {

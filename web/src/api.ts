@@ -1,6 +1,7 @@
 import type {
   Balance,
   EvolutionPoint,
+  LogsPage,
   MarketSnapshot,
   Snapshot,
   TradeProposal,
@@ -72,6 +73,22 @@ export const api = {
     });
     if (opts.status) q.set("status", opts.status);
     return getJSON<TradesPage>(`/api/trades?${q.toString()}`);
+  },
+  logs: (opts: {
+    limit: number;
+    offset: number;
+    level?: string;
+    q?: string;
+    since?: string;
+  }) => {
+    const q = new URLSearchParams({
+      limit: String(opts.limit),
+      offset: String(opts.offset),
+    });
+    if (opts.level) q.set("level", opts.level);
+    if (opts.q) q.set("q", opts.q);
+    if (opts.since) q.set("since", opts.since);
+    return getJSON<LogsPage>(`/api/logs?${q.toString()}`);
   },
   market: (base: string, quote: string) =>
     getJSON<MarketSnapshot & { error?: string }>(
