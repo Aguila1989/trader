@@ -21,7 +21,13 @@ import {
   type OfferResultLike,
 } from "../stellar/signer";
 import { setXlmRate } from "./positions";
-import { explainNoEntry, briefNoEntry, type NoEntryInput } from "./explain";
+import {
+  explainNoEntry,
+  briefNoEntry,
+  baselineCall,
+  divergenceNote,
+  type NoEntryInput,
+} from "./explain";
 import {
   analyze,
   analyzeChain,
@@ -29,7 +35,7 @@ import {
   type RecentOutcome,
   type TradingMemory,
 } from "../claude/agent";
-import type { PolicyContext, TradeProposal } from "../types";
+import type { PolicyContext, TradeProposal, TradeSide } from "../types";
 
 /** How many recent submitted trades (with outcomes) the analyst gets to see. */
 const MEMORY_OUTCOMES = 5;
@@ -126,12 +132,24 @@ export async function runAnalysis(
   const created: TradeProposal[] = [];
   if (result.proposals.length === 0) {
     store.log("ai", "AI proposed no trade.");
-    try {
-      const snap = await getMarketSnapshot(baseAsset, quoteAsset, 8);
+  }
+  // Rulebook check (+ the why-no-entry reason when the AI passed), from one
+  // snapshot: surfaces where the AI diverged from the deterministic playbook -
+  // e.g. a range-high sell the rules would take but the AI skipped.
+  try {
+    const snap = await getMarketSnapshot(baseAsset, quoteAsset, 8);
+    const aiSide = result.proposals[0]?.side ?? null;
+    const check = divergenceNote(
+      snapLabel(snap),
+      baselineCall(snap.stats, snap.stats.lastPrice ?? midOf(snap)),
+      aiSide,
+    );
+    if (check) store.log("info", `Rulebook check - ${check.note}`);
+    if (result.proposals.length === 0) {
       store.log("info", `Why no entry: ${explainNoEntry(snapToNoEntry(snap), noEntryGates)}`);
-    } catch {
-      // Transparency is best-effort; never let it break the analysis result.
     }
+  } catch {
+    // Transparency is best-effort; never let it break the analysis result.
   }
   for (const p of result.proposals) {
     created.push(await intake(p));
@@ -161,12 +179,36 @@ const noEntryGates = {
   minVolume24h: config.limits.minVolume24h,
 };
 
+/** Short "BASE/QUOTE" label from a snapshot (codes only, issuers dropped). */
+function snapLabel(snap: MarketSnapshot): string {
+  return snap.base === "XLM"
+    ? `XLM/${snap.quote.split(":")[0]}`
+    : `${snap.base.split(":")[0]}/${snap.quote.split(":")[0]}`;
+}
+
+/** Mid from the touch, used as the rulebook's lastClose when lastPrice is null. */
+function midOf(snap: MarketSnapshot): number {
+  if (snap.bestBid != null && snap.bestAsk != null) {
+    return (snap.bestBid + snap.bestAsk) / 2;
+  }
+  return snap.bestBid ?? snap.bestAsk ?? 0;
+}
+
+/** Stable key for matching a proposal to a scanned market (canonical legs). */
+function pairKey(base: string, quote: string): string {
+  const c = (s: string) => {
+    try {
+      return canonicalAsset(s);
+    } catch {
+      return s;
+    }
+  };
+  return `${c(base)}|${c(quote)}`;
+}
+
 /** Map a live market snapshot to the no-entry explainer's input shape. */
 function snapToNoEntry(snap: MarketSnapshot): NoEntryInput {
-  const label =
-    snap.base === "XLM"
-      ? `XLM/${snap.quote.split(":")[0]}`
-      : `${snap.base.split(":")[0]}/${snap.quote.split(":")[0]}`;
+  const label = snapLabel(snap);
   return {
     label,
     regime: snap.stats.regime ?? null,
@@ -299,6 +341,34 @@ export async function runChainScan(): Promise<ScanOutcome> {
         .join("; ")}.`,
     );
   }
+
+  // Rulebook divergences across the tradeable markets: where the AI's judgment
+  // differed from what the deterministic playbook would do (esp. skipped signals).
+  const proposedSide = new Map<string, TradeSide>();
+  for (const p of result.proposals) {
+    proposedSide.set(pairKey(p.baseAsset, p.quoteAsset), p.side);
+  }
+  const divergences = tradeable
+    .map((m) =>
+      divergenceNote(
+        snapLabel(m),
+        baselineCall(m.stats, m.stats.lastPrice ?? midOf(m)),
+        proposedSide.get(pairKey(m.base, m.quote)) ?? null,
+      ),
+    )
+    .filter((c): c is NonNullable<typeof c> => c != null && c.diverged);
+  if (divergences.length > 0) {
+    store.log(
+      "info",
+      `Rulebook divergences (${divergences.length}): ${divergences.map((d) => d.note).join(" | ")}`,
+    );
+  } else {
+    store.log(
+      "info",
+      `Rulebook check: AI matched the playbook on all ${tradeable.length} tradeable market(s).`,
+    );
+  }
+
   for (const p of result.proposals) {
     created.push(await intake(p));
   }
