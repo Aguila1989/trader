@@ -258,6 +258,14 @@ export const config = {
      */
     maxEntrySpreadBps: num("MAX_ENTRY_SPREAD_BPS", 100),
     /**
+     * Maker-first repricing step (bps). A post_only order is priced to REST at
+     * the live touch; this is how far INSIDE the touch to step it. 0 (default)
+     * joins the touch exactly (a buy at the bid, a sell at the ask); > 0 prices
+     * that many bps inside, but never past the touch (so it still rests, never
+     * crosses).
+     */
+    makerTickBps: num("MAKER_TICK_BPS", 0),
+    /**
      * Liquidity gate: minimum 24h traded volume (base units - XLM for every
      * chain-scan pair) required to OPEN a position. Dead markets are where
      * fills are bad and exits are worse. 0 disables.

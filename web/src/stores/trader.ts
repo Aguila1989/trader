@@ -6,6 +6,7 @@ import type {
   DailyState,
   EvolutionPoint,
   LogEntry,
+  LogsPage,
   MarketSnapshot,
   Snapshot,
   TradeProposal,
@@ -34,6 +35,14 @@ export const useTraderStore = defineStore("trader", () => {
   const pageLimit = ref(25);
   const pageOffset = ref(0);
   const statusFilter = ref("");
+
+  // --- persisted, browsable log history ---
+  const logsPage = ref<LogsPage | null>(null);
+  const logsLoading = ref(false);
+  const logPageLimit = ref(25);
+  const logPageOffset = ref(0);
+  const logLevelFilter = ref("");
+  const logQuery = ref("");
 
   // --- derived view-model ---
   const proposals = computed(() => snapshot.value?.proposals ?? []);
@@ -67,6 +76,7 @@ export const useTraderStore = defineStore("trader", () => {
     void loadBalances();
     void loadEvolution();
     void loadTrades();
+    void loadLogs();
     connectStream();
   }
 
@@ -147,6 +157,11 @@ export const useTraderStore = defineStore("trader", () => {
       snapshot.value.logs.unshift(entry);
       if (snapshot.value.logs.length > MAX_LOGS) {
         snapshot.value.logs.length = MAX_LOGS;
+      }
+      // Keep the persisted history fresh, but only when the user is viewing
+      // the unfiltered first page (otherwise we'd yank their view around).
+      if (logPageOffset.value === 0 && !logLevelFilter.value && !logQuery.value) {
+        void loadLogs();
       }
     });
     es.addEventListener("proposal", (ev) => {
@@ -303,6 +318,50 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  async function loadLogs(): Promise<void> {
+    logsLoading.value = true;
+    try {
+      logsPage.value = await api.logs({
+        limit: logPageLimit.value,
+        offset: logPageOffset.value,
+        level: logLevelFilter.value || undefined,
+        q: logQuery.value || undefined,
+      });
+    } catch {
+      /* leave previous data */
+    } finally {
+      logsLoading.value = false;
+    }
+  }
+
+  function setLogLevelFilter(level: string): void {
+    logLevelFilter.value = level;
+    logPageOffset.value = 0;
+    void loadLogs();
+  }
+
+  function setLogQuery(q: string): void {
+    logQuery.value = q;
+    logPageOffset.value = 0;
+    void loadLogs();
+  }
+
+  function logNextPage(): void {
+    const page = logsPage.value;
+    if (!page) return;
+    if (logPageOffset.value + logPageLimit.value < page.total) {
+      logPageOffset.value += logPageLimit.value;
+      void loadLogs();
+    }
+  }
+
+  function logPrevPage(): void {
+    if (logPageOffset.value > 0) {
+      logPageOffset.value = Math.max(0, logPageOffset.value - logPageLimit.value);
+      void loadLogs();
+    }
+  }
+
   return {
     snapshot,
     connected,
@@ -318,6 +377,12 @@ export const useTraderStore = defineStore("trader", () => {
     pageLimit,
     pageOffset,
     statusFilter,
+    logsPage,
+    logsLoading,
+    logPageLimit,
+    logPageOffset,
+    logLevelFilter,
+    logQuery,
     proposals,
     positions,
     logs,
@@ -346,5 +411,10 @@ export const useTraderStore = defineStore("trader", () => {
     setStatusFilter,
     nextPage,
     prevPage,
+    loadLogs,
+    setLogLevelFilter,
+    setLogQuery,
+    logNextPage,
+    logPrevPage,
   };
 });

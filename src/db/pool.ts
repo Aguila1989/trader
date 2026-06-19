@@ -142,6 +142,22 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       ALTER TABLE dbo.Proposals ADD mark24hPrice DECIMAL(38,7) NULL;
     IF COL_LENGTH('dbo.Proposals', 'mark24hPnlPct') IS NULL
       ALTER TABLE dbo.Proposals ADD mark24hPnlPct FLOAT NULL;
+
+    IF OBJECT_ID('dbo.Logs', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Logs (
+        id       NVARCHAR(64)  NOT NULL CONSTRAINT PK_Logs PRIMARY KEY,
+        ts       DATETIME2(3)  NOT NULL,
+        level    NVARCHAR(16)  NOT NULL,
+        message  NVARCHAR(MAX) NOT NULL,
+        data     NVARCHAR(MAX) NULL,
+        network  NVARCHAR(16)  NOT NULL
+      );
+      CREATE INDEX IX_Logs_net_ts
+        ON dbo.Logs (network, ts DESC);
+      CREATE INDEX IX_Logs_net_level_ts
+        ON dbo.Logs (network, level, ts DESC);
+    END
   `);
 }
 

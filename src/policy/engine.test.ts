@@ -484,6 +484,143 @@ describe("reward/risk enforcement", () => {
   });
 });
 
+describe("maker-first (post_only) gating", () => {
+  // A non-crossing maker buy joins the bid: limit <= bestBid. A thin/wide ask
+  // book that would block a TAKER (book-walk sweep) must NOT block the maker,
+  // since a resting maker never sweeps the book.
+  const thinAskCtx: PolicyContext = {
+    bestBid: 0.49,
+    bestAsk: 0.5,
+    asks: [
+      { price: 0.5, amount: 1 },
+      { price: 0.51, amount: 20 },
+    ],
+    bids: [{ price: 0.49, amount: 20 }],
+  };
+
+  it("a post_only buy at the bid PASSES the book-walk that blocks the same taker", () => {
+    // Same order, same thin book: the taker is blocked by the sweep gate...
+    const taker = run(
+      { side: "buy", amount: "10", limitPrice: "0.49" },
+      { context: thinAskCtx },
+    );
+    expect(taker.allowed).toBe(false);
+    expect(taker.violations.join(" ")).toMatch(/sweep the book|cannot absorb/i);
+    // ...the maker (resting at the bid) is not - it never sweeps the book.
+    const maker = run(
+      { side: "buy", amount: "10", limitPrice: "0.49", postOnly: true },
+      { context: thinAskCtx },
+    );
+    expect(maker.allowed).toBe(true);
+    expect(maker.violations).toEqual([]);
+  });
+
+  it("a post_only entry PASSES when the spread exceeds the entry cap (a taker is blocked)", () => {
+    const wide: PolicyContext = { bestBid: 0.5, bestAsk: 0.5, spreadBps: 150 };
+    const taker = run({ side: "buy", limitPrice: "0.5" }, { context: wide });
+    expect(taker.allowed).toBe(false);
+    expect(taker.violations.join(" ")).toMatch(/spread .* exceeds entry cap/i);
+    const maker = run(
+      { side: "buy", limitPrice: "0.5", postOnly: true },
+      { context: wide },
+    );
+    expect(maker.allowed).toBe(true);
+  });
+
+  it("a post_only buy priced ABOVE the bid is BLOCKED by the crossing-maker guard", () => {
+    const res = run(
+      { side: "buy", limitPrice: "0.5", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/priced to cross the spread/i);
+  });
+
+  it("a post_only sell priced BELOW the ask is BLOCKED by the crossing-maker guard", () => {
+    const res = run(
+      { side: "sell", limitPrice: "0.49", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/priced to cross the spread/i);
+  });
+
+  it("makers are STILL blocked by the per-trade size cap", () => {
+    const res = run(
+      { side: "buy", quoteAsset: AQUA, amount: "30", limitPrice: "0.49", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/exceeds max per trade 10/);
+  });
+
+  it("makers are STILL blocked by the daily volume cap", () => {
+    const res = run(
+      { side: "buy", limitPrice: "0.49", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5 }, daily: { volume: 500 } },
+    );
+    expect(res.violations.join(" ")).toMatch(/daily volume past cap/i);
+  });
+
+  it("makers are STILL blocked by the daily loss halt", () => {
+    const res = run(
+      { side: "buy", limitPrice: "0.49", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5 }, daily: { realizedPnl: -25 } },
+    );
+    expect(res.violations.join(" ")).toMatch(/daily loss limit/i);
+  });
+
+  it("makers are STILL blocked by the minVolume24h liquidity gate", () => {
+    const res = run(
+      { side: "buy", limitPrice: "0.49", postOnly: true },
+      { context: { bestBid: 0.49, bestAsk: 0.5, baseVolume24h: 100 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/below the minimum/i);
+  });
+
+  it("makers are STILL aged out by the staleness gate (a stale resting level IS the risk)", () => {
+    const res = run(
+      {
+        side: "buy",
+        limitPrice: "0.49",
+        postOnly: true,
+        createdAt: new Date(NOW - 700_000).toISOString(),
+      },
+      { context: { bestBid: 0.49, bestAsk: 0.5 }, nowMs: NOW },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/old/i);
+  });
+
+  it("makers are STILL blocked by the cooldown", () => {
+    const res = run(
+      { side: "buy", limitPrice: "0.49", postOnly: true },
+      {
+        context: { bestBid: 0.49, bestAsk: 0.5 },
+        daily: { lastTradeAt: new Date(NOW - 10_000).toISOString() },
+        nowMs: NOW,
+      },
+    );
+    expect(res.violations.join(" ")).toMatch(/cooldown active/i);
+  });
+
+  it("reward/risk is STILL enforced for a maker", () => {
+    const res = run(
+      {
+        side: "buy",
+        limitPrice: "0.49",
+        postOnly: true,
+        targetPrice: "0.51", // reward 0.02 / risk 0.02 = 1.0 < 1.2
+        invalidationPrice: "0.47",
+      },
+      { context: { bestBid: 0.49, bestAsk: 0.5 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/reward\/risk/i);
+  });
+});
+
 describe("proposal staleness", () => {
   it("blocks execution of a proposal older than the max age", () => {
     const res = run(

@@ -33,7 +33,7 @@ async function main(): Promise<void> {
 
   try {
     await initDb(); // ensureDatabase (discrete path) + ensureSchema + migrations
-    console.log("✓ Schema is up to date (dbo.Proposals + indexes).");
+    console.log("✓ Schema is up to date (dbo.Proposals + dbo.Logs + indexes).");
   } catch (err) {
     console.error(`✗ Migration failed: ${(err as Error).message}`);
     await closeDb();

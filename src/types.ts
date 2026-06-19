@@ -31,6 +31,13 @@ export interface TradeProposal {
   amount: string;
   /** Limit price expressed as quote units per 1 base unit. */
   limitPrice: string;
+  /**
+   * Maker intent. When true the order is priced to REST at the touch (capture
+   * the spread) and never cross, and `limitPrice` is the worst-acceptable
+   * bound (a ceiling for a buy, a floor for a sell). When false/undefined the
+   * order may cross and fill as taker.
+   */
+  postOnly?: boolean;
   maxSlippageBps: number;
   reason: string;
   status: TradeStatus;
@@ -157,6 +164,14 @@ export interface PositionSummary {
 /** A page of persisted trades for the history table. */
 export interface TradesPage {
   rows: TradeProposal[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** A page of persisted log entries for the browsable history view. */
+export interface LogsPage {
+  rows: LogEntry[];
   total: number;
   limit: number;
   offset: number;

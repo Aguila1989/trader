@@ -8,6 +8,7 @@ import MarketPanel from "./components/MarketPanel.vue";
 import ProposalsPanel from "./components/ProposalsPanel.vue";
 import EvolutionCharts from "./components/EvolutionCharts.vue";
 import HistoryTable from "./components/HistoryTable.vue";
+import LogHistory from "./components/LogHistory.vue";
 import LogFeed from "./components/LogFeed.vue";
 
 const store = useTraderStore();
@@ -23,6 +24,7 @@ onMounted(() => void store.init());
     <ProposalsPanel />
     <EvolutionCharts />
     <HistoryTable />
+    <LogHistory />
     <LogFeed />
   </main>
   <footer class="foot">

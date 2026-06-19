@@ -14,11 +14,13 @@ import {
   type Fill,
 } from "./positions";
 import { getMarketSnapshot } from "../stellar/market";
+import { randomUUID } from "node:crypto";
 import type {
   DailyState,
   EvolutionPoint,
   LogEntry,
   LogLevel,
+  LogsPage,
   PositionSummary,
   Snapshot,
   TradeProposal,
@@ -121,6 +123,15 @@ class Store {
 
   /** Serializes DB writes so an insert always lands before its updates. */
   private writeChain: Promise<void> = Promise.resolve();
+  /**
+   * Re-entrancy guard for log persistence. A failed log-insert reports through
+   * store.log("error", ...) (via persist's catch), and log() in turn tries to
+   * persist THAT error log - so a DB that is failing every write would amplify
+   * one bad log into an unbounded queue of failing inserts. While set, log()
+   * skips persistence: the persistence-failure log is emitted live but never
+   * itself written to the DB.
+   */
+  private persistingLog = false;
 
   private persist(op: () => Promise<void>): void {
     if (!dbReady()) return;
@@ -193,6 +204,26 @@ class Store {
     this.logs.unshift(entry);
     if (this.logs.length > MAX_LOGS) this.logs.length = MAX_LOGS;
     this.emit("log", entry);
+    // Persist best-effort so logs survive a restart. CRITICAL re-entrancy guard:
+    // persist's shared catch reports a write failure THROUGH this.log("error",...),
+    // and that error log would itself try to persist - so a DB failing every
+    // write would amplify one bad insert into an unbounded queue of failing
+    // inserts. We therefore handle a log-insert failure HERE (console.error,
+    // never rethrown) so it never reaches persist's catch and never routes back
+    // through store.log. The persistingLog flag additionally drops any log
+    // emitted while we are mid-handling, as belt-and-suspenders.
+    if (!this.persistingLog) {
+      const id = randomUUID();
+      this.persist(async () => {
+        try {
+          await repo.insertLog(entry, id);
+        } catch (err) {
+          this.persistingLog = true;
+          console.error(`Log persistence failed: ${(err as Error).message}`);
+          this.persistingLog = false;
+        }
+      });
+    }
   }
 
   addProposal(p: TradeProposal): void {
@@ -341,6 +372,33 @@ class Store {
     const filtered = opts.status
       ? this.proposals.filter((p) => p.status === opts.status)
       : this.proposals;
+    return {
+      rows: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+    };
+  }
+
+  /** Paginated, filterable log history. SQL Server when connected, else memory. */
+  async getLogsPage(opts: {
+    limit: number;
+    offset: number;
+    level?: string;
+    q?: string;
+    since?: string;
+  }): Promise<LogsPage> {
+    if (dbReady()) return repo.listLogs(opts);
+    const limit = Math.min(Math.max(opts.limit, 1), 500);
+    const offset = Math.max(opts.offset, 0);
+    const q = opts.q ? opts.q.toLowerCase() : undefined;
+    // this.logs is already newest-first, matching the DB's ORDER BY ts DESC.
+    const filtered = this.logs.filter((l) => {
+      if (opts.level && l.level !== opts.level) return false;
+      if (q && !l.message.toLowerCase().includes(q)) return false;
+      if (opts.since && l.ts < opts.since) return false;
+      return true;
+    });
     return {
       rows: filtered.slice(offset, offset + limit),
       total: filtered.length,

@@ -26,6 +26,9 @@ export interface ProposedTrade {
   quoteAsset: string;
   amount: string;
   limitPrice: string;
+  /** Maker intent: when true (the default), the order rests at the touch to
+   *  capture the spread and never crosses; when false it crosses as a taker. */
+  postOnly?: boolean;
   maxSlippageBps: number;
   reason: string;
   confidence?: TradeConfidence;
@@ -135,7 +138,9 @@ Hard rules:
 - The backend also blocks entries when the spread exceeds ${config.limits.maxEntrySpreadBps}bps or 24h volume is under ${config.limits.minVolume24h} - don't waste proposals on illiquid books.
 - Check your open offers first: don't duplicate an order you already have resting, and account for capital already committed.
 - A "Your trading so far" summary may precede the request: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
-- You don't have to cross the spread: for mean-reversion entries you may work a PATIENT limit order at your level (better entry, no taker cost). The backend auto-cancels resting offers after ${config.limits.maxOfferAgeMinutes} minutes, so only place one when the level is close.
+- MAKER-FIRST: DEFAULT to a resting (maker) limit order. Set post_only=true and price limit_price AT your level - the bid for a buy, the ask for a sell. The backend prices a post_only order at the live touch and never crosses, uses your limit_price as the worst-acceptable bound, and auto-cancels unfilled offers after ${config.limits.maxOfferAgeMinutes} minutes - so only rest when your level is CLOSE to the touch. This captures the spread instead of paying it. Set post_only=false to CROSS and fill immediately (taker) ONLY when you need the fill now (e.g. a breakout you fear will run).
+- target_price and invalidation_price still bracket the entry for ANY order type (maker or taker).
+- A maker order may rest unfilled or fill only partially - size so a partial fill is still a coherent position, and do NOT count resting (unfilled) quantity as open exposure.
 - The hard gates (spread, volume, slippage, reward/risk, exposure caps) ARE the quality bar. When a setup clears it, take it at an honest size and confidence rather than standing flat by default; abstain only when nothing qualifies. Capital preservation still beats a marginal trade.
 
 Be concise: explain your reasoning in 2-4 sentences.`;
@@ -198,6 +203,23 @@ export async function analyze(
     if (proposals.length > 0) break;
   }
 
+  // Never end a no-trade in silence: if the model proposed nothing AND left no
+  // commentary, ask it once - plainly, text only - WHY it is standing aside, so
+  // the operator never has to guess whether the bot is stuck or just patient.
+  if (proposals.length === 0 && !reasoning.trim()) {
+    messages.push({
+      role: "user",
+      content: `You did not propose a trade on ${baseAsset}/${quoteAsset}. In ONE or TWO sentences, state plainly WHY you are not trading it right now - reference the concrete data: the regime, RSI/rangePos, the spread, your ${baseAsset.split(":")[0]} vs ${quoteAsset.split(":")[0]} balances, or risk. Answer in plain text; do not call any tool.`,
+    });
+    const turn = await provider.run({
+      system: SYSTEM,
+      tools: [],
+      messages,
+      maxReplyTokens: 256,
+    });
+    if (turn.text) reasoning = turn.text.trim();
+  }
+
   return {
     reasoning: reasoning || "(no commentary)",
     proposals,
@@ -223,7 +245,9 @@ Hard rules:
 - Your balances and open (resting) offers are listed above; don't duplicate an order you already have working, and account for capital already committed.
 - A "Your trading so far" summary may precede the data: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
 - Call get_account_balances to refresh holdings/offers and ground sizing. Before proposing on a pair, call get_price_history for its candles and get_market for deeper orderbook detail. Don't chase a parabolic 24hΔ or a thin, wide-spread book.
-- You don't have to cross the spread: for mean-reversion entries you may work a PATIENT limit order at your level (e.g. a resting buy near range support, or inside the spread on a tight book) - better entry, no taker cost. The backend auto-cancels resting offers after ${config.limits.maxOfferAgeMinutes} minutes, so only place one when the level is close.
+- MAKER-FIRST: DEFAULT to a resting (maker) limit order. Set post_only=true and price limit_price AT your level - the bid for a buy, the ask for a sell (e.g. a resting buy near range support, or inside the spread on a tight book). The backend prices a post_only order at the live touch and never crosses, uses your limit_price as the worst-acceptable bound, and auto-cancels unfilled offers after ${config.limits.maxOfferAgeMinutes} minutes - so only rest when your level is CLOSE to the touch. This captures the spread instead of paying it. Set post_only=false to CROSS and fill immediately (taker) ONLY when you need the fill now (e.g. a breakout you fear will run).
+- target_price and invalidation_price still bracket the entry for ANY order type (maker or taker).
+- A maker order may rest unfilled or fill only partially - size so a partial fill is still a coherent position, and do NOT count resting (unfilled) quantity as open exposure.
 - The hard gates (spread, volume, slippage, reward/risk, exposure caps) ARE the quality bar. When a setup clears it, take it at an honest size and confidence rather than standing flat by default; abstain only when nothing qualifies. Capital preservation still beats a marginal trade.
 
 Be concise: summarize your reasoning in 2-5 sentences, then make any proposals.`;
@@ -364,7 +388,7 @@ async function runTool(
       ]);
       return {
         content: JSON.stringify({ balances, openOffers }),
-        trace: `get_account_balances -> ${balances.length} balance(s), ${openOffers.length} open offer(s)`,
+        trace: `get_account_balances -> ${balances.filter((b) => Number(b.balance) > 0).length} funded / ${balances.length} trustline(s), ${openOffers.length} open offer(s)`,
       };
     }
     if (name === TOOL_MARKET) {
@@ -422,7 +446,8 @@ async function runTool(
   }
 }
 
-function parseProposal(input: unknown): ProposedTrade | null {
+/** Exported for unit testing the fail-safe post_only / field parsing. */
+export function parseProposal(input: unknown): ProposedTrade | null {
   const o = input as Record<string, unknown>;
   const side: TradeSide | null =
     o.side === "buy" || o.side === "sell" ? o.side : null;
@@ -442,6 +467,10 @@ function parseProposal(input: unknown): ProposedTrade | null {
     o.confidence === "low" || o.confidence === "medium" || o.confidence === "high"
       ? o.confidence
       : undefined;
+  // Fail-safe to MAKER: a model that omits post_only gets the cheaper/safer
+  // resting path that captures the spread; only an explicit false opts into
+  // crossing the spread as a taker.
+  const postOnly = o.post_only === false ? false : true;
   const optNum = (v: unknown): string | undefined => {
     if (v == null) return undefined;
     const s = String(v).trim();
@@ -454,6 +483,7 @@ function parseProposal(input: unknown): ProposedTrade | null {
     quoteAsset: safe(quote),
     amount: String(o.amount ?? ""),
     limitPrice: String(o.limit_price ?? ""),
+    postOnly,
     maxSlippageBps: Number(o.max_slippage_bps ?? 0),
     reason: String(o.reason ?? ""),
     confidence,

@@ -5,11 +5,13 @@ import { aiModel, aiProviderId } from "../ai";
 import { checkPolicy, isRiskReducing } from "../policy/engine";
 import {
   bookLevelsBase,
+  getBalances,
   getMarketSnapshot,
   getOpenOffers,
   type MarketSnapshot,
 } from "../stellar/market";
 import { walkBook } from "../stellar/indicators";
+import { canonicalAsset } from "../stellar/assets";
 import { buildOfferTransaction } from "../stellar/builder";
 import { preflightCheck } from "../stellar/preflight";
 import {
@@ -19,6 +21,7 @@ import {
   type OfferResultLike,
 } from "../stellar/signer";
 import { setXlmRate } from "./positions";
+import { explainNoEntry, briefNoEntry, type NoEntryInput } from "./explain";
 import {
   analyze,
   analyzeChain,
@@ -64,12 +67,58 @@ export interface ScanOutcome extends AnalysisOutcome {
   scanned: number;
 }
 
+/**
+ * Warn when the wallet can only trade ONE direction on a pair because it holds
+ * none of one leg: with no quote currency it can only SELL the base (nothing to
+ * buy with); with no base it can only BUY. Best-effort and silent without a
+ * configured account - it never blocks analysis.
+ */
+async function logWalletFit(base: string, quote: string): Promise<void> {
+  const pub = signerPublicKey();
+  if (!pub) return;
+  let balances: Awaited<ReturnType<typeof getBalances>>;
+  try {
+    balances = await getBalances(pub);
+  } catch {
+    return;
+  }
+  const held = (spec: string): boolean => {
+    let canon: string;
+    try {
+      canon = canonicalAsset(spec);
+    } catch {
+      return false;
+    }
+    return balances.some((b) => {
+      try {
+        return canonicalAsset(b.asset) === canon && Number(b.balance) > 0;
+      } catch {
+        return false;
+      }
+    });
+  };
+  const baseCode = base.split(":")[0];
+  const quoteCode = quote.split(":")[0];
+  if (held(base) && !held(quote)) {
+    store.log(
+      "warn",
+      `Wallet holds ${baseCode} but no ${quoteCode}: on ${baseCode}/${quoteCode} the bot can only SELL ${baseCode} - it can't BUY without ${quoteCode} to spend. Hold some ${quoteCode} to enable buy entries.`,
+    );
+  } else if (!held(base) && held(quote)) {
+    store.log(
+      "warn",
+      `Wallet holds ${quoteCode} but no ${baseCode}: on ${baseCode}/${quoteCode} the bot can only BUY ${baseCode}, not SELL.`,
+    );
+  }
+}
+
 /** Ask the AI to look at a market, then route any proposals through policy. */
 export async function runAnalysis(
   baseAsset: string,
   quoteAsset: string,
 ): Promise<AnalysisOutcome> {
   store.log("ai", `Analyzing ${baseAsset}/${quoteAsset}...`);
+  await logWalletFit(baseAsset, quoteAsset);
   const result = await analyze(baseAsset, quoteAsset, tradingMemory());
   for (const t of result.toolTrace) store.log("info", `tool: ${t}`);
   store.log("ai", result.reasoning);
@@ -77,6 +126,12 @@ export async function runAnalysis(
   const created: TradeProposal[] = [];
   if (result.proposals.length === 0) {
     store.log("ai", "AI proposed no trade.");
+    try {
+      const snap = await getMarketSnapshot(baseAsset, quoteAsset, 8);
+      store.log("info", `Why no entry: ${explainNoEntry(snapToNoEntry(snap), noEntryGates)}`);
+    } catch {
+      // Transparency is best-effort; never let it break the analysis result.
+    }
   }
   for (const p of result.proposals) {
     created.push(await intake(p));
@@ -98,6 +153,28 @@ function feedXlmRate(snap: MarketSnapshot): void {
   if (mid == null || !(mid > 0)) return;
   if (snap.base === "XLM") setXlmRate(snap.quote, 1 / mid);
   else if (snap.quote === "XLM") setXlmRate(snap.base, mid);
+}
+
+/** Liquidity-gate limits the no-trade explainer reports against. */
+const noEntryGates = {
+  maxEntrySpreadBps: config.limits.maxEntrySpreadBps,
+  minVolume24h: config.limits.minVolume24h,
+};
+
+/** Map a live market snapshot to the no-entry explainer's input shape. */
+function snapToNoEntry(snap: MarketSnapshot): NoEntryInput {
+  const label =
+    snap.base === "XLM"
+      ? `XLM/${snap.quote.split(":")[0]}`
+      : `${snap.base.split(":")[0]}/${snap.quote.split(":")[0]}`;
+  return {
+    label,
+    regime: snap.stats.regime ?? null,
+    rsi14: snap.stats.rsi14 ?? null,
+    rangePos: snap.stats.rangePos ?? null,
+    spreadBps: snap.spreadBps ?? null,
+    baseVolume24h: snap.stats.baseVolume24h ?? null,
+  };
 }
 
 /**
@@ -157,45 +234,70 @@ export async function runChainScan(): Promise<ScanOutcome> {
     };
   }
 
-  // Visibility: list the scanned markets that fail the ENTRY gates, so it's
-  // clear from the log why the analyst skips them (it is told entries there
-  // would be blocked, so it doesn't waste tool calls or proposals on them).
-  const gated = markets
-    .map((m) => {
-      const reasons: string[] = [];
-      if (
-        config.limits.maxEntrySpreadBps > 0 &&
-        m.spreadBps != null &&
-        m.spreadBps > config.limits.maxEntrySpreadBps
-      ) {
-        reasons.push(`spread ${m.spreadBps.toFixed(0)}bps`);
-      }
-      const vol = m.stats.baseVolume24h;
-      if (config.limits.minVolume24h > 0 && vol != null && vol < config.limits.minVolume24h) {
-        reasons.push(`vol24h ${Number(vol.toFixed(1))}`);
-      }
-      const label =
-        m.base === "XLM"
-          ? m.quote.split(":")[0]
-          : `${m.base.split(":")[0]}/${m.quote.split(":")[0]}`;
-      return reasons.length > 0 ? `${label} (${reasons.join(", ")})` : null;
-    })
-    .filter((s): s is string => s !== null);
-  if (gated.length > 0) {
+  // Split into TRADEABLE (clears the entry gates) and GATED (spread too wide or
+  // 24h volume too thin). A gated book is a poor venue for a taker AND, in
+  // practice, for a maker too (you'd only fill on a big adverse move, and the
+  // thin ones may never fill). Only the tradeable set goes to the analyst, so
+  // the scan reflects real opportunity instead of overselling the whole curated
+  // universe - the rest are named in the log, not hidden.
+  const gatedLabels: string[] = [];
+  const tradeable: MarketSnapshot[] = [];
+  for (const m of markets) {
+    const reasons: string[] = [];
+    if (
+      config.limits.maxEntrySpreadBps > 0 &&
+      m.spreadBps != null &&
+      m.spreadBps > config.limits.maxEntrySpreadBps
+    ) {
+      reasons.push(`spread ${m.spreadBps.toFixed(0)}bps`);
+    }
+    const vol = m.stats.baseVolume24h;
+    if (config.limits.minVolume24h > 0 && vol != null && vol < config.limits.minVolume24h) {
+      reasons.push(`vol24h ${Number(vol.toFixed(1))}`);
+    }
+    const label =
+      m.base === "XLM"
+        ? m.quote.split(":")[0]
+        : `${m.base.split(":")[0]}/${m.quote.split(":")[0]}`;
+    if (reasons.length > 0) gatedLabels.push(`${label} (${reasons.join(", ")})`);
+    else tradeable.push(m);
+  }
+  if (gatedLabels.length > 0) {
     store.log(
       "info",
-      `Entry gates: ${gated.join("; ")} fail MAX_ENTRY_SPREAD_BPS/MIN_VOLUME_24H - entries there would be blocked, so the analyst is told to skip them.`,
+      `Excluded ${gatedLabels.length} market(s) - too wide/thin to trade, not shown to the analyst: ${gatedLabels.join("; ")}.`,
     );
   }
 
-  store.log("ai", `Analyzing ${markets.length} scanned market(s)...`);
-  const result = await analyzeChain(markets, tradingMemory());
+  if (tradeable.length === 0) {
+    store.log(
+      "warn",
+      `No tradeable markets this scan: all ${markets.length} failed the spread/volume gates. Nothing to analyze.`,
+    );
+    return {
+      reasoning: "No tradeable markets after entry gates.",
+      proposals: [],
+      scanned: markets.length,
+    };
+  }
+
+  store.log(
+    "ai",
+    `Analyzing ${tradeable.length} tradeable market(s) (of ${markets.length} scanned)...`,
+  );
+  const result = await analyzeChain(tradeable, tradingMemory());
   for (const t of result.toolTrace) store.log("info", `tool: ${t}`);
   store.log("ai", result.reasoning);
 
   const created: TradeProposal[] = [];
   if (result.proposals.length === 0) {
     store.log("ai", "AI proposed no trade from the scan.");
+    store.log(
+      "info",
+      `No setup in the ${tradeable.length} tradeable book(s): ${tradeable
+        .map((m) => briefNoEntry(snapToNoEntry(m)))
+        .join("; ")}.`,
+    );
   }
   for (const p of result.proposals) {
     created.push(await intake(p));
@@ -205,6 +307,40 @@ export async function runChainScan(): Promise<ScanOutcome> {
     proposals: created,
     scanned: markets.length,
   };
+}
+
+/**
+ * MAKER-FIRST repricing: a post_only proposal is priced to REST at the live
+ * touch (capture the spread) rather than cross it. Overwrite the stored
+ * limitPrice with the joined-touch price so the builder, the ledger fallback
+ * (reconcile/recordIncrementalFill book at this limit), the dashboard AND the
+ * policy's non-crossing-maker gate all see the actual resting price. Run before
+ * EVERY policy check (intake AND execution), so a maker the analyst priced
+ * slightly off - or a bid that drifted since the analyst's snapshot - is never
+ * false-blocked as a crossing taker. No-op for taker orders; if the touch is
+ * missing we do NOT reprice (the policy crossing-maker check is the backstop).
+ */
+function repriceMaker(
+  id: string,
+  p: TradeProposal,
+  context: PolicyContext,
+): TradeProposal {
+  if (!p.postOnly) return p;
+  const maker = makerLimitPrice(
+    p.side,
+    context.bestBid,
+    context.bestAsk,
+    Number(p.limitPrice) || 0,
+    config.limits.makerTickBps,
+  );
+  if (maker && maker !== p.limitPrice) {
+    store.log(
+      "info",
+      `Repriced maker ${p.side} ${p.limitPrice} -> joined ${p.side === "buy" ? "bid" : "ask"} ${maker} (${p.baseAsset}/${p.quoteAsset}).`,
+    );
+    return store.updateProposal(id, { limitPrice: maker }) ?? p;
+  }
+  return p;
 }
 
 async function intake(
@@ -221,6 +357,7 @@ async function intake(
     quoteAsset: p.quoteAsset,
     amount: p.amount,
     limitPrice: p.limitPrice,
+    postOnly: p.postOnly,
     maxSlippageBps: p.maxSlippageBps,
     reason: p.reason,
     status: "proposed",
@@ -244,9 +381,14 @@ async function intake(
       `${p.confidence ? ` (${p.confidence} confidence)` : ""}`,
   );
 
+  const context = await marketContext(p.baseAsset, p.quoteAsset);
+  // Reprice a post_only maker to the live touch BEFORE the gate, so it isn't
+  // false-blocked as a crossing taker on a stale/imprecise analyst limit (it is
+  // repriced again at execution against the freshest book).
+  const priced = repriceMaker(proposal.id, proposal, context);
   const policy = checkPolicy({
-    proposal,
-    context: await marketContext(p.baseAsset, p.quoteAsset),
+    proposal: priced,
+    context,
     daily: store.getDaily(),
     killSwitch: store.killSwitch,
     nowMs: Date.now(),
@@ -413,7 +555,7 @@ function execute(id: string, auto: boolean): Promise<void> {
 
 /** Build, sign and submit. Re-runs policy at execution time as a final gate. */
 async function executeInner(id: string, auto: boolean): Promise<void> {
-  const p = store.getProposal(id);
+  let p = store.getProposal(id);
   if (!p) return;
 
   // Idempotency: approve() and autoApprove() check status BEFORE acquiring the
@@ -462,6 +604,12 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
 
   // One market read, shared by the policy gate and the paper-fill simulation.
   const context = await marketContext(p.baseAsset, p.quoteAsset);
+
+  // MAKER-FIRST repricing before the execution policy gate (shared with intake;
+  // see repriceMaker). Re-joins the freshest touch in case the bid/ask moved
+  // since intake.
+  p = repriceMaker(id, p, context);
+
   const policy = checkPolicy({
     proposal: p,
     context,
@@ -622,15 +770,64 @@ export interface PaperFill {
 }
 
 /**
+ * Price a MAKER (post_only) order to REST at the live touch instead of crossing
+ * it, so it CAPTURES the spread rather than paying it. Pure (no Horizon, no
+ * store) so it is unit-testable.
+ *
+ *  - BUY:  join the bid (tickBps=0), or step `tickBps` BELOW it (a more passive
+ *          resting price, deeper in the queue). Never priced ABOVE the bid
+ *          (that would cross) and never worse - higher - than the analyst's
+ *          worst-acceptable limit. So: min(joinPrice, analystLimit), then
+ *          clamped to <= bestBid.
+ *  - SELL: mirror at the ask: join it, or step `tickBps` ABOVE it; never below
+ *          the ask, never below the analyst's floor. max(joinPrice,
+ *          analystLimit), clamped to >= bestAsk.
+ *
+ * tickBps steps INSIDE (more passive); the clamp guarantees the price never
+ * moves PAST the touch, so a post_only order always rests and never crosses.
+ *
+ * Returns null when the relevant touch (bid for a buy, ask for a sell) is
+ * missing - the caller then leaves the analyst's limit untouched.
+ */
+export function makerLimitPrice(
+  side: TradeProposal["side"],
+  bestBid: number | undefined,
+  bestAsk: number | undefined,
+  analystLimit: number,
+  tickBps: number,
+): string | null {
+  const step = Math.max(0, tickBps) / 10_000;
+  if (side === "buy") {
+    if (!(bestBid != null && bestBid > 0)) return null;
+    // Step BELOW the bid (a more passive buy); clamp <= bid so it never crosses.
+    const joinPrice = bestBid * (1 - step);
+    // Respect the analyst's worst-acceptable bound (a ceiling for a buy), then
+    // re-clamp to the bid so neither the bound nor a 0 tick can push us across.
+    const priced = Math.min(joinPrice, analystLimit > 0 ? analystLimit : joinPrice);
+    return String(round7(Math.min(priced, bestBid)));
+  }
+  if (!(bestAsk != null && bestAsk > 0)) return null;
+  // Step ABOVE the ask (a more passive sell); floor at the ask so it never crosses.
+  const joinPrice = bestAsk * (1 + step);
+  const priced = Math.max(joinPrice, analystLimit > 0 ? analystLimit : joinPrice);
+  return String(round7(Math.max(priced, bestAsk)));
+}
+
+/**
  * Simulate a marketable fill against the LIVE order book for paper trading.
  *
  * It walks the real depth (the same walkBook the policy engine uses), so the
  * simulated price reflects the spread AND the size impact of crossing the book
  * - exactly the friction a flat-cost backtest can't see, and exactly what
- * decides whether a thin-token "edge" is real or an aggregation artifact. No
- * limit bound: a paper entry is taken marketably (the policy engine already
- * rejected sizes the book can't absorb within slippage), so this fills the size
- * at the honest VWAP. Returns null when there is no book to fill against.
+ * decides whether a thin-token "edge" is real or an aggregation artifact.
+ *
+ * A TAKER proposal (post_only falsy) is taken marketably with NO limit bound:
+ * the policy engine already rejected sizes the book can't absorb within
+ * slippage, so it fills the size at the honest VWAP. A MAKER (post_only)
+ * proposal passes its (repriced) limitPrice as the walkBook bound, so the paper
+ * fill matches live: only the marketable portion at/inside the touch fills and
+ * the rest rests (a buy resting at the bid fills 0 against the asks until the
+ * market comes to it). Returns null when there is no book to fill against.
  *
  * Pure (no Horizon, no store) so it is unit-testable like reconcileOfferFill.
  */
@@ -641,7 +838,10 @@ export function simulatePaperFill(
   const levels = p.side === "buy" ? context.asks : context.bids;
   const amount = Number(p.amount) || 0;
   if (!levels || levels.length === 0 || !(amount > 0)) return null;
-  const walk = walkBook(levels, amount, p.side);
+  // Gate the limit-omission on !postOnly so paper matches live: a maker only
+  // fills the marketable portion bounded by its resting price.
+  const bound = p.postOnly ? Number(p.limitPrice) || undefined : undefined;
+  const walk = walkBook(levels, amount, p.side, bound);
   if (!(walk.fillableBase > 0) || walk.vwap == null) return null;
   return {
     filledBase: round7(Math.min(walk.fillableBase, amount)),

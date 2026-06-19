@@ -5,6 +5,9 @@ import { dbReady, getPool } from "./pool";
 import { computeEvolution, type Fill } from "../trading/positions";
 import type {
   EvolutionPoint,
+  LogEntry,
+  LogLevel,
+  LogsPage,
   TradeProposal,
   TradeSide,
   TradeStatus,
@@ -373,5 +376,117 @@ export async function sumTodaySubmitted(): Promise<{
     volume: Number(row?.volume ?? 0),
     count: Number(row?.count ?? 0),
     lastTradeAt: row?.last ? toIso(row.last) : null,
+  };
+}
+
+/** Raw log row shape as returned by SQL Server. */
+interface LogRow {
+  id: string;
+  ts: Date | string;
+  level: string;
+  message: string;
+  data: string | null;
+}
+
+const VALID_LOG_LEVELS = new Set<LogLevel>([
+  "info",
+  "warn",
+  "error",
+  "trade",
+  "ai",
+]);
+
+function rowToLogEntry(r: LogRow): LogEntry {
+  const entry: LogEntry = {
+    ts: toIso(r.ts),
+    level: r.level as LogLevel,
+    message: r.message,
+  };
+  if (r.data != null) {
+    try {
+      entry.data = JSON.parse(r.data) as unknown;
+    } catch {
+      // Keep the raw string when it isn't valid JSON rather than dropping it.
+      entry.data = r.data;
+    }
+  }
+  return entry;
+}
+
+/** Insert a single log entry (idempotent on the app-generated id). */
+export async function insertLog(entry: LogEntry, id: string): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), id)
+    .input("ts", sql.DateTime2, new Date(entry.ts))
+    .input("level", sql.NVarChar(16), entry.level)
+    .input("message", sql.NVarChar(sql.MAX), entry.message)
+    .input(
+      "data",
+      sql.NVarChar(sql.MAX),
+      entry.data !== undefined ? JSON.stringify(entry.data) : null,
+    )
+    .input("network", sql.NVarChar(16), config.network)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.Logs WHERE id = @id)
+       INSERT INTO dbo.Logs (id, ts, level, message, data, network)
+       VALUES (@id, @ts, @level, @message, @data, @network);`,
+    );
+}
+
+/** Paginated, filterable log history for the browsable history view. */
+export async function listLogs(opts: {
+  limit: number;
+  offset: number;
+  level?: string;
+  q?: string;
+  since?: string;
+}): Promise<LogsPage> {
+  const limit = Math.min(Math.max(opts.limit, 1), 500);
+  const offset = Math.max(opts.offset, 0);
+  const level =
+    opts.level && VALID_LOG_LEVELS.has(opts.level as LogLevel)
+      ? opts.level
+      : undefined;
+  if (!dbReady()) return { rows: [], total: 0, limit, offset };
+
+  const conditions = ["network = @net"];
+  if (level) conditions.push("level = @level");
+  if (opts.q) conditions.push("message LIKE @q");
+  if (opts.since) conditions.push("ts >= @since");
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const rowsReq = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("limit", sql.Int, limit)
+    .input("offset", sql.Int, offset);
+  if (level) rowsReq.input("level", sql.NVarChar(16), level);
+  // Bind the search term PERCENT-WRAPPED as a parameter (never string-concatenated
+  // into the SQL) so it stays an injection-safe LIKE pattern.
+  if (opts.q) rowsReq.input("q", sql.NVarChar(sql.MAX), `%${opts.q}%`);
+  if (opts.since) rowsReq.input("since", sql.DateTime2, new Date(opts.since));
+  const rowsRes = await rowsReq.query<LogRow>(
+    `SELECT id, ts, level, message, data
+       FROM dbo.Logs
+       ${where}
+      ORDER BY ts DESC
+      OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
+  );
+
+  const countReq = getPool().request().input("net", sql.NVarChar(16), config.network);
+  if (level) countReq.input("level", sql.NVarChar(16), level);
+  if (opts.q) countReq.input("q", sql.NVarChar(sql.MAX), `%${opts.q}%`);
+  if (opts.since) countReq.input("since", sql.DateTime2, new Date(opts.since));
+  const countRes = await countReq.query<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM dbo.Logs ${where};`,
+  );
+
+  return {
+    rows: rowsRes.recordset.map(rowToLogEntry),
+    total: countRes.recordset[0]?.total ?? 0,
+    limit,
+    offset,
   };
 }

@@ -7,6 +7,16 @@ const store = useTraderStore();
 const base = ref("XLM");
 const quote = ref("");
 
+// Only funded balances are worth showing; a Stellar account keeps a zero-amount
+// line for every trustline, so the raw list is mostly empty rows. Show what's
+// actually held, and note how many empty trustlines are hidden.
+const fundedBalances = computed(() =>
+  store.balances.filter((b) => Number(b.balance) > 0),
+);
+const emptyTrustlines = computed(
+  () => store.balances.length - fundedBalances.value.length,
+);
+
 const change24h = computed(() => store.market?.stats?.change24hPct ?? null);
 const change24hText = computed(() => {
   const c = change24h.value;
@@ -140,14 +150,17 @@ function ask(): void {
 
       <h3>Balances</h3>
       <ul class="levels">
-        <li v-if="store.balances.length === 0" class="muted-row">
-          <span class="muted">(none)</span>
+        <li v-if="fundedBalances.length === 0" class="muted-row">
+          <span class="muted">(none funded)</span>
         </li>
-        <li v-for="b in store.balances" :key="b.asset">
+        <li v-for="b in fundedBalances" :key="b.asset">
           <span class="px">{{ b.asset }}</span>
           <span class="amt">{{ fmtNum(b.balance) }}</span>
         </li>
       </ul>
+      <p v-if="emptyTrustlines > 0" class="muted empty-tl">
+        + {{ emptyTrustlines }} empty trustline{{ emptyTrustlines === 1 ? "" : "s" }}
+      </p>
 
       <h3>Risk limits</h3>
       <ul class="limits">

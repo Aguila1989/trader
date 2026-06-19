@@ -115,6 +115,14 @@ class SnapCache {
 
 /* ------------------------------------------------------------------ *
  * 1. Resting-offer reconciliation + stale-offer cancellation
+ *
+ * MAKER-FIRST: with post_only the EXPECTED case, a resting offer is the normal
+ * outcome of an entry, not a fallback - most entries are priced to rest at the
+ * touch and capture the spread, so they sit on the book until the market comes
+ * to them. recordIncrementalFill books later fills at the proposal's
+ * limitPrice, which the orchestrator already overwrote with the actual resting
+ * (repriced) maker price before submit - so the ledger books at the price the
+ * offer truly rests at, not the analyst's original worst-acceptable bound.
  * ------------------------------------------------------------------ */
 
 /** Base units still open on-chain for a tracked proposal's offer. The on-chain
