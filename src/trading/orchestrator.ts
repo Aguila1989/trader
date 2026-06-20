@@ -566,6 +566,72 @@ export async function submitSystemProposal(
   return intake(p, { provider: source, model: "" });
 }
 
+export interface ManualOrderInput {
+  baseAsset: string;
+  quoteAsset: string;
+  side: TradeSide;
+  amount: string;
+  limitPrice: string;
+  maxSlippageBps?: number;
+  /** Optional bracket: if both are given, the reward/risk gate applies and the
+   *  position monitor will manage a stop from the invalidation level. */
+  targetPrice?: string;
+  invalidationPrice?: string;
+}
+
+/**
+ * Place a MANUAL limit order from the dashboard. It skips the AI auto-approve /
+ * conviction routing (you placing it IS the approval) but runs the EXACT same
+ * execution path as every other trade: the full policy engine (kill switch,
+ * whitelist, per-trade size cap, slippage / price-deviation, daily volume/trade/
+ * loss caps, exposure, cooldown), the pre-sign preflight, the live-arm switch,
+ * and the serial execution lock. Your exact limit price is used as-is (no maker
+ * repricing): price it inside the spread to rest as a maker, or through it to
+ * cross as a taker. With no target/invalidation the reward/risk gate is skipped
+ * and the monitor won't auto-manage a stop; pass them to get both.
+ *
+ * Returns the resulting proposal: "submitted" (filled or resting), "blocked"
+ * with policyViolations, "pending_approval" when live trading is OFF, or a
+ * paper fill in paper mode.
+ */
+export async function placeManualOrder(
+  input: ManualOrderInput,
+): Promise<TradeProposal> {
+  const now = new Date().toISOString();
+  const proposal: TradeProposal = {
+    id: randomUUID(),
+    createdAt: now,
+    updatedAt: now,
+    side: input.side,
+    baseAsset: input.baseAsset,
+    quoteAsset: input.quoteAsset,
+    amount: input.amount,
+    limitPrice: input.limitPrice,
+    postOnly: false, // manual: honour the operator's exact price, no repricing
+    maxSlippageBps: input.maxSlippageBps ?? config.limits.maxSlippageBps,
+    reason: "Manual order placed from the dashboard.",
+    status: "proposed",
+    policyViolations: [],
+    provider: "manual",
+    model: "",
+    confidence: "high",
+    targetPrice: input.targetPrice,
+    invalidationPrice: input.invalidationPrice,
+    paper: store.paperTrading || undefined,
+  };
+  store.addProposal(proposal);
+  store.log(
+    "trade",
+    `Manual order ${shortId(proposal.id)}: ${input.side} ${input.amount} ` +
+      `${input.baseAsset.split(":")[0]} @ ${input.limitPrice} ${input.quoteAsset.split(":")[0]}` +
+      `${store.paperTrading ? " (paper)" : ""}.`,
+  );
+  // Attended (auto=false): the human placed it, so it runs the same gates an
+  // approved proposal does, minus the AI conviction/auto-approve routing.
+  await execute(proposal.id, false);
+  return store.getProposal(proposal.id) ?? proposal;
+}
+
 export async function approve(id: string): Promise<TradeProposal | undefined> {
   const p = store.getProposal(id);
   if (!p) return undefined;

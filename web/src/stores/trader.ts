@@ -7,6 +7,7 @@ import type {
   EvolutionPoint,
   LogEntry,
   LogsPage,
+  ManualOrderInput,
   MarketSnapshot,
   Snapshot,
   TradeProposal,
@@ -27,6 +28,10 @@ export const useTraderStore = defineStore("trader", () => {
   const analyzing = ref(false);
   const scanning = ref(false);
   const balances = ref<Balance[]>([]);
+
+  // --- manual order placement ---
+  const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
+  const placingOrder = ref(false);
 
   // --- evolution charts + history table ---
   const evolution = ref<EvolutionPoint[]>([]);
@@ -212,6 +217,22 @@ export const useTraderStore = defineStore("trader", () => {
     await api.reject(id);
   }
 
+  // Place a manual limit order. Goes through the SAME risk gates as
+  // AI-proposed trades, so it can come back blocked/failed; the returned
+  // proposal (or { error }) is stashed in lastOrder for the UI to surface.
+  async function placeOrder(
+    input: ManualOrderInput,
+  ): Promise<TradeProposal & { error?: string }> {
+    placingOrder.value = true;
+    try {
+      const proposal = await api.placeOrder(input);
+      lastOrder.value = proposal;
+      return proposal;
+    } finally {
+      placingOrder.value = false;
+    }
+  }
+
   // --- market + analysis ---
   async function refreshMarket(base: string, quote: string): Promise<void> {
     marketError.value = "";
@@ -371,6 +392,8 @@ export const useTraderStore = defineStore("trader", () => {
     analyzing,
     scanning,
     balances,
+    lastOrder,
+    placingOrder,
     evolution,
     tradesPage,
     tradesLoading,
@@ -402,6 +425,7 @@ export const useTraderStore = defineStore("trader", () => {
     switchProvider,
     approve,
     reject,
+    placeOrder,
     refreshMarket,
     analyze,
     scanChain,
