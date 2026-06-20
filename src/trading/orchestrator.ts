@@ -26,6 +26,7 @@ import {
   briefNoEntry,
   baselineCall,
   divergenceNote,
+  isFundable,
   type NoEntryInput,
 } from "./explain";
 import {
@@ -74,21 +75,21 @@ export interface ScanOutcome extends AnalysisOutcome {
 }
 
 /**
- * Warn when the wallet can only trade ONE direction on a pair because it holds
- * none of one leg: with no quote currency it can only SELL the base (nothing to
- * buy with); with no base it can only BUY. Best-effort and silent without a
- * configured account - it never blocks analysis.
+ * Build a "does the wallet hold a usable (>0) amount of this asset?" predicate
+ * from live balances, or null when there is no configured account / the fetch
+ * fails (the caller then treats fundability as unknown). One Horizon read,
+ * shared by the wallet-fit warning and the divergence fundability check.
  */
-async function logWalletFit(base: string, quote: string): Promise<void> {
+async function walletHeld(): Promise<((spec: string) => boolean) | null> {
   const pub = signerPublicKey();
-  if (!pub) return;
+  if (!pub) return null;
   let balances: Awaited<ReturnType<typeof getBalances>>;
   try {
     balances = await getBalances(pub);
   } catch {
-    return;
+    return null;
   }
-  const held = (spec: string): boolean => {
+  return (spec: string): boolean => {
     let canon: string;
     try {
       canon = canonicalAsset(spec);
@@ -103,6 +104,18 @@ async function logWalletFit(base: string, quote: string): Promise<void> {
       }
     });
   };
+}
+
+/**
+ * Warn when the wallet can only trade ONE direction on a pair: with no quote
+ * currency it can only SELL the base (nothing to buy with); with no base it can
+ * only BUY. `held` is the predicate from walletHeld().
+ */
+function logWalletFit(
+  base: string,
+  quote: string,
+  held: (spec: string) => boolean,
+): void {
   const baseCode = base.split(":")[0];
   const quoteCode = quote.split(":")[0];
   if (held(base) && !held(quote)) {
@@ -124,7 +137,8 @@ export async function runAnalysis(
   quoteAsset: string,
 ): Promise<AnalysisOutcome> {
   store.log("ai", `Analyzing ${baseAsset}/${quoteAsset}...`);
-  await logWalletFit(baseAsset, quoteAsset);
+  const held = await walletHeld();
+  if (held) logWalletFit(baseAsset, quoteAsset, held);
   const result = await analyze(baseAsset, quoteAsset, tradingMemory());
   for (const t of result.toolTrace) store.log("info", `tool: ${t}`);
   store.log("ai", result.reasoning);
@@ -135,15 +149,17 @@ export async function runAnalysis(
   }
   // Rulebook check (+ the why-no-entry reason when the AI passed), from one
   // snapshot: surfaces where the AI diverged from the deterministic playbook -
-  // e.g. a range-high sell the rules would take but the AI skipped.
+  // e.g. a range-high sell the rules would take but the AI skipped. A skip the
+  // wallet couldn't have funded is tagged PHANTOM rather than a real miss.
   try {
     const snap = await getMarketSnapshot(baseAsset, quoteAsset, 8);
     const aiSide = result.proposals[0]?.side ?? null;
-    const check = divergenceNote(
-      snapLabel(snap),
-      baselineCall(snap.stats, snap.stats.lastPrice ?? midOf(snap)),
-      aiSide,
-    );
+    const baseline = baselineCall(snap.stats, snap.stats.lastPrice ?? midOf(snap));
+    const fundable =
+      held && baseline.side
+        ? isFundable(baseline.side, snap.base, snap.quote, held)
+        : undefined;
+    const check = divergenceNote(snapLabel(snap), baseline, aiSide, fundable);
     if (check) store.log("info", `Rulebook check - ${check.note}`);
     if (result.proposals.length === 0) {
       store.log("info", `Why no entry: ${explainNoEntry(snapToNoEntry(snap), noEntryGates)}`);
@@ -343,29 +359,43 @@ export async function runChainScan(): Promise<ScanOutcome> {
   }
 
   // Rulebook divergences across the tradeable markets: where the AI's judgment
-  // differed from what the deterministic playbook would do (esp. skipped signals).
+  // differed from the deterministic playbook. A skip the wallet couldn't fund is
+  // tagged PHANTOM and reported separately, so the "real misses" count isn't
+  // inflated by signals the wallet could never have taken.
+  const held = await walletHeld();
   const proposedSide = new Map<string, TradeSide>();
   for (const p of result.proposals) {
     proposedSide.set(pairKey(p.baseAsset, p.quoteAsset), p.side);
   }
-  const divergences = tradeable
-    .map((m) =>
-      divergenceNote(
+  const checks = tradeable
+    .map((m) => {
+      const baseline = baselineCall(m.stats, m.stats.lastPrice ?? midOf(m));
+      const fundable =
+        held && baseline.side
+          ? isFundable(baseline.side, m.base, m.quote, held)
+          : undefined;
+      return divergenceNote(
         snapLabel(m),
-        baselineCall(m.stats, m.stats.lastPrice ?? midOf(m)),
+        baseline,
         proposedSide.get(pairKey(m.base, m.quote)) ?? null,
-      ),
-    )
+        fundable,
+      );
+    })
     .filter((c): c is NonNullable<typeof c> => c != null && c.diverged);
-  if (divergences.length > 0) {
+  const real = checks.filter((c) => !c.phantom);
+  const phantomTail =
+    checks.length - real.length > 0
+      ? ` (+ ${checks.length - real.length} phantom, unfundable)`
+      : "";
+  if (real.length > 0) {
     store.log(
       "info",
-      `Rulebook divergences (${divergences.length}): ${divergences.map((d) => d.note).join(" | ")}`,
+      `Rulebook divergences - ${real.length} REAL${phantomTail}: ${real.map((d) => d.note).join(" | ")}`,
     );
   } else {
     store.log(
       "info",
-      `Rulebook check: AI matched the playbook on all ${tradeable.length} tradeable market(s).`,
+      `Rulebook check: AI matched the playbook on all fundable opportunities across ${tradeable.length} tradeable market(s)${phantomTail}.`,
     );
   }
 

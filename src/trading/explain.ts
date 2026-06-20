@@ -130,39 +130,70 @@ export function baselineCall(
 export interface DivergenceCheck {
   /** True when the rulebook and the AI disagree - the interesting case. */
   diverged: boolean;
+  /**
+   * True when the rulebook would trade but the WALLET can't fund that side, so
+   * the AI's pass is correct-by-constraint, not a real missed opportunity.
+   * These are noise in the divergence count and should be reported separately.
+   */
+  phantom: boolean;
   note: string;
+}
+
+/**
+ * Can the wallet fund the rulebook's side of this pair? Buying BASE spends QUOTE
+ * (need QUOTE); selling BASE gives up BASE (need BASE). `held(spec)` reports
+ * whether the wallet holds a usable (>0) amount of an asset.
+ */
+export function isFundable(
+  side: TradeSide,
+  base: string,
+  quote: string,
+  held: (assetSpec: string) => boolean,
+): boolean {
+  return side === "buy" ? held(quote) : held(base);
 }
 
 /**
  * Compare the rulebook's call to what the AI actually did on a market. Returns
  * null when both stand aside (a non-event). The headline divergence is
- * "rulebook would trade, AI passed" - a signal the AI skipped.
+ * "rulebook would trade, AI passed" - a signal the AI skipped. When `fundable`
+ * is false, that skip is tagged PHANTOM (the wallet couldn't have taken it
+ * anyway), so it can be filtered out of the real misses. `fundable` undefined =
+ * unknown (treated as a real divergence, so a possible miss is never hidden).
  */
 export function divergenceNote(
   label: string,
   baseline: BaselineCall,
   aiSide: TradeSide | null,
+  fundable?: boolean,
 ): DivergenceCheck | null {
   const rule = baseline.side ? baseline.side.toUpperCase() : "stand aside";
   const ai = aiSide ? aiSide.toUpperCase() : "passed";
   if (baseline.side === null && aiSide === null) return null;
   if (baseline.side === aiSide) {
-    return { diverged: false, note: `${label}: rulebook ${rule}, AI ${ai} - agree.` };
+    return {
+      diverged: false,
+      phantom: false,
+      note: `${label}: rulebook ${rule}, AI ${ai} - agree.`,
+    };
   }
   if (baseline.side !== null && aiSide === null) {
-    return {
-      diverged: true,
-      note: `${label}: rulebook ${rule}, AI passed -> DIVERGENCE - AI skipped a signal the rules would take (${baseline.reason}).`,
-    };
+    const phantom = fundable === false;
+    const tail = phantom
+      ? `PHANTOM - rulebook ${rule} but the wallet can't fund it; passing was correct-by-constraint, not a real miss.`
+      : `DIVERGENCE - AI skipped a signal the rules would take (${baseline.reason}).`;
+    return { diverged: true, phantom, note: `${label}: rulebook ${rule}, AI passed -> ${tail}` };
   }
   if (baseline.side === null && aiSide !== null) {
     return {
       diverged: true,
+      phantom: false,
       note: `${label}: rulebook stand aside, AI ${ai} -> DIVERGENCE - AI took a trade the rules wouldn't.`,
     };
   }
   return {
     diverged: true,
+    phantom: false,
     note: `${label}: rulebook ${rule}, AI ${ai} -> DIVERGENCE - opposite sides.`,
   };
 }

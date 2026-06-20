@@ -4,6 +4,7 @@ import {
   briefNoEntry,
   baselineCall,
   divergenceNote,
+  isFundable,
   type NoEntryInput,
   type GateLimits,
 } from "./explain";
@@ -140,5 +141,37 @@ describe("divergenceNote (rulebook vs AI)", () => {
     const c = divergenceNote("XLM/USDC", { side: "sell", reason: "x" }, "buy");
     expect(c?.diverged).toBe(true);
     expect(c?.note).toMatch(/opposite sides/);
+  });
+});
+
+describe("isFundable", () => {
+  const holdsUsdcOnly = (s: string) => s === "USDC";
+  const holdsXlmOnly = (s: string) => s === "XLM";
+  it("buy needs the quote currency", () => {
+    expect(isFundable("buy", "XLM", "USDC", holdsUsdcOnly)).toBe(true);
+    expect(isFundable("buy", "XLM", "USDC", holdsXlmOnly)).toBe(false);
+  });
+  it("sell needs the base asset", () => {
+    expect(isFundable("sell", "XLM", "USDC", holdsXlmOnly)).toBe(true);
+    expect(isFundable("sell", "XLM", "USDC", holdsUsdcOnly)).toBe(false);
+  });
+});
+
+describe("divergenceNote - phantom (fundability) tagging", () => {
+  it("tags an unfundable skipped signal as PHANTOM, not a real miss", () => {
+    const c = divergenceNote("XLM/USDC", { side: "buy", reason: "range low" }, null, false);
+    expect(c?.diverged).toBe(true);
+    expect(c?.phantom).toBe(true);
+    expect(c?.note).toMatch(/PHANTOM/);
+  });
+  it("keeps a fundable skipped signal as a real divergence", () => {
+    const c = divergenceNote("XLM/USDC", { side: "buy", reason: "range low" }, null, true);
+    expect(c?.diverged).toBe(true);
+    expect(c?.phantom).toBe(false);
+    expect(c?.note).toMatch(/skipped a signal/);
+  });
+  it("treats unknown fundability as a real (non-phantom) divergence", () => {
+    const c = divergenceNote("XLM/USDC", { side: "buy", reason: "range low" }, null);
+    expect(c?.phantom).toBe(false);
   });
 });
