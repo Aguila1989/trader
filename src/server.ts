@@ -13,6 +13,7 @@ import {
   approve,
   autoApprove,
   reject,
+  placeManualOrder,
 } from "./trading/orchestrator";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
@@ -220,6 +221,60 @@ app.post("/api/scan", async (_req, res) => {
     res.json(await runChainScan());
   } catch (err) {
     store.log("error", `Chain scan failed: ${(err as Error).message}`);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Place a MANUAL limit order. Runs the SAME policy + preflight + live-arm gates
+// as any trade (it just skips the AI auto-approve/conviction routing). Returns
+// the resulting proposal (submitted / blocked+violations / pending_approval).
+app.post("/api/order", async (req, res) => {
+  const b = req.body ?? {};
+  const baseAsset = String(b.base ?? "").trim();
+  const quoteAsset = String(b.quote ?? "").trim();
+  const side = b.side === "buy" || b.side === "sell" ? b.side : null;
+  const amount = String(b.amount ?? "").trim();
+  const limitPrice = String(b.limitPrice ?? b.limit_price ?? "").trim();
+  if (!baseAsset || !quoteAsset) {
+    res.status(400).json({ error: "base and quote are required" });
+    return;
+  }
+  if (!side) {
+    res.status(400).json({ error: "side must be 'buy' or 'sell'" });
+    return;
+  }
+  if (!(Number(amount) > 0)) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  if (!(Number(limitPrice) > 0)) {
+    res.status(400).json({ error: "limitPrice must be a positive number" });
+    return;
+  }
+  const maxSlippageBps = Number.isFinite(Number(b.maxSlippageBps))
+    ? Number(b.maxSlippageBps)
+    : undefined;
+  const targetPrice =
+    b.targetPrice != null && Number(b.targetPrice) > 0 ? String(b.targetPrice) : undefined;
+  const invalidationPrice =
+    b.invalidationPrice != null && Number(b.invalidationPrice) > 0
+      ? String(b.invalidationPrice)
+      : undefined;
+  try {
+    res.json(
+      await placeManualOrder({
+        baseAsset,
+        quoteAsset,
+        side,
+        amount,
+        limitPrice,
+        maxSlippageBps,
+        targetPrice,
+        invalidationPrice,
+      }),
+    );
+  } catch (err) {
+    store.log("error", `Manual order failed: ${(err as Error).message}`);
     res.status(500).json({ error: (err as Error).message });
   }
 });

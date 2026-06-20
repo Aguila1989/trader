@@ -34,6 +34,19 @@ export interface TradeProposal {
   filledPrice?: string;
 }
 
+/** A manual limit order placed from the dashboard (POST /api/order). The
+ * resulting proposal goes through the same risk gates as AI-proposed trades. */
+export interface ManualOrderInput {
+  base: string;
+  quote: string;
+  side: TradeSide;
+  amount: string;
+  limitPrice: string;
+  maxSlippageBps?: number;
+  targetPrice?: string;
+  invalidationPrice?: string;
+}
+
 export type LogLevel = "info" | "warn" | "error" | "trade" | "ai";
 
 export interface LogEntry {

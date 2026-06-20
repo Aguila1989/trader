@@ -2,6 +2,7 @@ import type {
   Balance,
   EvolutionPoint,
   LogsPage,
+  ManualOrderInput,
   MarketSnapshot,
   Snapshot,
   TradeProposal,
@@ -106,6 +107,8 @@ export const api = {
       proposals?: TradeProposal[];
       error?: string;
     }>("/api/scan"),
+  placeOrder: (input: ManualOrderInput) =>
+    postJSON<TradeProposal & { error?: string }>("/api/order", input),
   approve: (id: string) =>
     postJSON<TradeProposal>(`/api/approve/${encodeURIComponent(id)}`),
   reject: (id: string) =>
