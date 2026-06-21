@@ -459,7 +459,8 @@ app.get("/api/trades.csv", async (_req, res) => {
       const page = await store.getTradesPage({ limit: pageSize, offset });
       total = page.total;
       for (const p of page.rows) {
-        lines.push(cols.map((c) => csvCell((p as Record<string, unknown>)[c])).join(","));
+        const row = p as unknown as Record<string, unknown>;
+        lines.push(cols.map((c) => csvCell(row[c])).join(","));
       }
       if (page.rows.length < pageSize) break;
       offset += pageSize;
