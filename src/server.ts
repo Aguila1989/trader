@@ -15,9 +15,22 @@ import {
   reject,
   placeManualOrder,
 } from "./trading/orchestrator";
+import { stopLossService, StopLossError } from "./trading/stopLossService";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
-import { getBalances, getMarketSnapshot } from "./stellar/market";
+import {
+  startLiquidityScanner,
+  stopLiquidityScanner,
+  getLiquidityRecommendations,
+} from "./trading/liquidityScanner";
+import {
+  getBalances,
+  getMarketSnapshot,
+  getOrderbook,
+  getTradeAggregations,
+  resolveBestQuote,
+} from "./stellar/market";
+import { highTierSpecs } from "./stellar/universe";
 import { signerPublicKey } from "./stellar/signer";
 import { initDb, closeDb, dbReady } from "./db/pool";
 
@@ -143,6 +156,54 @@ app.get("/api/market", async (req, res) => {
   }
 });
 
+// Lean order book for the token detail page (one Horizon call, for the 30s
+// auto-refresh). `quote` is optional: when omitted it is AUTO-RESOLVED to the
+// market with liquidity (XLM preferred, else a blue-chip stablecoin), and the
+// resolved quote is echoed back so the client polls the same book + candles.
+const QUOTE_CANDIDATES = ["XLM", ...highTierSpecs()];
+app.get("/api/orderbook", async (req, res) => {
+  const base = String(req.query.base ?? "XLM").trim() || "XLM";
+  const quoteParam = String(req.query.quote ?? "").trim();
+  try {
+    const quote = quoteParam || (await resolveBestQuote(base, QUOTE_CANDIDATES));
+    res.json(await getOrderbook(base, quote, 20));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// OHLC candles for the price graph. resolution is validated against Horizon's
+// allowed set; limit is clamped to [1, 365] (getTradeAggregations pages beyond
+// Horizon's 200/page cap for the year view).
+const ALLOWED_RESOLUTIONS = new Set([
+  60_000, 300_000, 900_000, 3_600_000, 86_400_000, 604_800_000,
+]);
+app.get("/api/candles", async (req, res) => {
+  const base = String(req.query.base ?? "XLM").trim() || "XLM";
+  const quote = String(req.query.quote ?? "").trim();
+  if (!quote) {
+    res.status(400).json({ error: "quote is required" });
+    return;
+  }
+  const resolution = Number(req.query.resolution ?? 3_600_000);
+  if (!ALLOWED_RESOLUTIONS.has(resolution)) {
+    res.status(400).json({
+      error:
+        "resolution must be one of 60000, 300000, 900000, 3600000, 86400000, 604800000",
+    });
+    return;
+  }
+  const limitRaw = Number(req.query.limit ?? 168);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(Math.trunc(limitRaw), 1), 365)
+    : 168;
+  try {
+    res.json(await getTradeAggregations(base, quote, resolution, limit));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
 // Persisted trade history (paginated) for the table view.
 app.get("/api/trades", async (req, res) => {
   const limit = Number(req.query.limit ?? 50);
@@ -187,6 +248,25 @@ app.get("/api/logs", async (req, res) => {
 app.get("/api/evolution", async (_req, res) => {
   try {
     res.json(await store.getEvolution());
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Liquidity scanner output: current top-N recommendations (also on the SSE
+// 'state' event) + the persisted history window for charts. Observe-only.
+app.get("/api/liquidity", async (req, res) => {
+  const since = req.query.since
+    ? String(req.query.since)
+    : new Date(
+        Date.now() - config.liquidityRetentionDays * 86_400_000,
+      ).toISOString();
+  const asset = req.query.asset ? String(req.query.asset) : undefined;
+  try {
+    res.json({
+      recs: getLiquidityRecommendations(),
+      history: await store.getLiquidityHistory({ since, asset }),
+    });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -275,6 +355,92 @@ app.post("/api/order", async (req, res) => {
     );
   } catch (err) {
     store.log("error", `Manual order failed: ${(err as Error).message}`);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// --- Stop-loss management -------------------------------------------------
+// Create a MANUAL stop loss. The service validates trigger vs market (below for
+// a long, above for a short) and the independent monitor enforces it.
+app.post("/api/stoploss", async (req, res) => {
+  const b = req.body ?? {};
+  const base = String(b.base ?? "").trim();
+  const quote = String(b.quote ?? "").trim();
+  const triggerPrice = String(b.triggerPrice ?? b.trigger_price ?? "").trim();
+  const sellAll = b.sellAll === true || b.sell_all === true;
+  const quantityToSell =
+    b.quantityToSell != null
+      ? String(b.quantityToSell).trim()
+      : b.quantity != null
+        ? String(b.quantity).trim()
+        : undefined;
+  const notes = b.notes != null ? String(b.notes) : undefined;
+  if (!base || !quote) {
+    res.status(400).json({ error: "base and quote are required" });
+    return;
+  }
+  if (!(Number(triggerPrice) > 0)) {
+    res.status(400).json({ error: "triggerPrice must be a positive number" });
+    return;
+  }
+  try {
+    const stop = await stopLossService.setStopLoss({
+      baseAsset: base,
+      quoteAsset: quote,
+      triggerPrice,
+      sellAll,
+      quantityToSell: sellAll ? undefined : quantityToSell,
+      setBy: "manual",
+      notes,
+    });
+    res.json(stop);
+  } catch (err) {
+    if (err instanceof StopLossError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Active stop losses (optionally filtered to a pair).
+app.get("/api/stoploss", (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  res.json(stopLossService.getActiveStopLosses(base, quote));
+});
+
+// Paginated audit trail for a pair (the collapsible section on the detail page).
+// Registered before the :id route so "audit" is never read as an id.
+app.get("/api/stoploss/audit", async (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  const limit = Number(req.query.limit ?? 50);
+  const offset = Number(req.query.offset ?? 0);
+  try {
+    res.json(
+      await store.getStopLossAuditPage({
+        base,
+        quote,
+        limit: Number.isFinite(limit) ? limit : 50,
+        offset: Number.isFinite(offset) ? offset : 0,
+      }),
+    );
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Cancel a stop loss (the user can cancel an AI-set stop too).
+app.post("/api/stoploss/:id/cancel", (req, res) => {
+  const reason = req.body?.reason ? String(req.body.reason) : undefined;
+  try {
+    res.json(stopLossService.cancelStopLoss(req.params.id, "manual", reason));
+  } catch (err) {
+    if (err instanceof StopLossError) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
     res.status(500).json({ error: (err as Error).message });
   }
 });
@@ -461,6 +627,7 @@ async function start(): Promise<void> {
     }
     startAutoPilot();
     startMonitor();
+    startLiquidityScanner();
     // Opt-in: arm live trading at startup instead of booting read-only. Goes
     // through setLiveTrading so it still refuses without a signing key or with
     // the monitor off; logs loudly so an armed boot is never silent.
@@ -510,6 +677,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     stopAutoPilot();
     stopMonitor();
+    stopLiquidityScanner();
     void closeDb().finally(() => process.exit(0));
   });
 }

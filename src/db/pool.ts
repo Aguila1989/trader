@@ -158,6 +158,79 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_Logs_net_level_ts
         ON dbo.Logs (network, level, ts DESC);
     END
+
+    -- Hourly liquidity-scanner snapshots (observe-only; one row per asset per
+    -- tick within that tick's top-N). Ranked by XLM-pair SDEX volume.
+    IF OBJECT_ID('dbo.LiquiditySnapshots', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.LiquiditySnapshots (
+        id             NVARCHAR(64)  NOT NULL CONSTRAINT PK_LiquiditySnapshots PRIMARY KEY,
+        ts             DATETIME2(3)  NOT NULL,
+        network        NVARCHAR(16)  NOT NULL,
+        asset          NVARCHAR(120) NOT NULL,
+        assetCode      NVARCHAR(32)  NOT NULL,
+        assetIssuer    NVARCHAR(64)  NOT NULL,
+        quoteAsset     NVARCHAR(120) NOT NULL,
+        rankPos        INT           NOT NULL,
+        baseVolume24h  DECIMAL(38,7) NULL,
+        numTrades24h   INT           NULL,
+        spreadBps      FLOAT         NULL,
+        bestBid        DECIMAL(38,7) NULL,
+        bestAsk        DECIMAL(38,7) NULL
+      );
+      CREATE INDEX IX_LiquiditySnapshots_net_asset_ts
+        ON dbo.LiquiditySnapshots (network, asset, ts DESC);
+      CREATE INDEX IX_LiquiditySnapshots_net_ts
+        ON dbo.LiquiditySnapshots (network, ts DESC);
+    END
+
+    -- First-class stop-loss orders (manual + AI). The monitor consults the
+    -- ACTIVE rows for a position's trigger; the close still flows through the
+    -- existing policy-gated proposeStopClose path. Never deleted - status only.
+    IF OBJECT_ID('dbo.StopLosses', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.StopLosses (
+        id                NVARCHAR(64)  NOT NULL CONSTRAINT PK_StopLosses PRIMARY KEY,
+        createdAt         DATETIME2(3)  NOT NULL,
+        updatedAt         DATETIME2(3)  NOT NULL,
+        network           NVARCHAR(16)  NOT NULL,
+        baseAsset         NVARCHAR(120) NOT NULL,
+        quoteAsset        NVARCHAR(120) NOT NULL,
+        triggerPrice      DECIMAL(38,7) NOT NULL,
+        sellAll           BIT           NOT NULL,
+        quantityToSell    DECIMAL(38,7) NULL,
+        setBy             NVARCHAR(8)   NOT NULL,
+        status            NVARCHAR(16)  NOT NULL,
+        notes             NVARCHAR(MAX) NULL,
+        triggeredAt       DATETIME2(3)  NULL,
+        triggerProposalId NVARCHAR(64)  NULL,
+        attemptCount      INT           NOT NULL CONSTRAINT DF_StopLosses_attempt DEFAULT 0,
+        lastError         NVARCHAR(MAX) NULL
+      );
+      CREATE INDEX IX_StopLosses_net_status_pair
+        ON dbo.StopLosses (network, status, baseAsset, quoteAsset);
+    END
+
+    -- Immutable stop-loss audit trail (create/update/trigger/cancel/...).
+    IF OBJECT_ID('dbo.StopLossAudit', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.StopLossAudit (
+        id           NVARCHAR(64)  NOT NULL CONSTRAINT PK_StopLossAudit PRIMARY KEY,
+        ts           DATETIME2(3)  NOT NULL,
+        network      NVARCHAR(16)  NOT NULL,
+        stopLossId   NVARCHAR(64)  NOT NULL,
+        baseAsset    NVARCHAR(120) NOT NULL,
+        quoteAsset   NVARCHAR(120) NOT NULL,
+        action       NVARCHAR(16)  NOT NULL,
+        field        NVARCHAR(40)  NULL,
+        oldValue     NVARCHAR(200) NULL,
+        newValue     NVARCHAR(200) NULL,
+        initiator    NVARCHAR(16)  NOT NULL,
+        note         NVARCHAR(MAX) NULL
+      );
+      CREATE INDEX IX_StopLossAudit_net_pair_ts
+        ON dbo.StopLossAudit (network, baseAsset, quoteAsset, ts DESC);
+    END
   `);
 }
 

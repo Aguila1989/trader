@@ -18,6 +18,7 @@ import {
   runExclusive,
   submitSystemProposal,
 } from "./orchestrator";
+import { stopLossService } from "./stopLossService";
 import type { ProposedTrade } from "../claude/agent";
 import type { PositionSummary, TradeProposal } from "../types";
 
@@ -79,6 +80,10 @@ const warnedOffers = new Set<string>();
  *  liquidity gap can't make store.unrealizedPnl spring toward 0 and loosen the
  *  MAX_DAILY_LOSS halt + size taper. Cleared when the book goes flat. */
 const lastMark = new Map<string, number>();
+/** StopLoss ids seen live against an OPEN position this session. Lets a flat
+ *  pair be reconciled (triggered / expired) WITHOUT auto-expiring a preemptive
+ *  stop that has never had a position to protect. */
+const stopSeenWithPosition = new Set<string>();
 
 function round7(n: number): number {
   return Number(n.toFixed(7));
@@ -378,15 +383,22 @@ async function proposeStopClose(
   snap: MarketSnapshot,
   movePct: number,
   invalidation?: number,
-): Promise<void> {
+  sizeCapBase?: number,
+): Promise<TradeProposal | null> {
   const now = Date.now();
   const last = stopAttempts.get(pos.pair) ?? 0;
-  if (now - last < STOP_RETRY_MS) return;
-  if (hasActiveClose(pos)) return;
+  if (now - last < STOP_RETRY_MS) return null;
+  if (hasActiveClose(pos)) return null;
   // Close only what no live resting stop already covers (a partially-filled
-  // earlier close keeps working its remainder on the book).
-  const uncovered = round7(Math.abs(pos.netQty) - restingCloseRemainder(pos));
-  if (uncovered <= EPS) return;
+  // earlier close keeps working its remainder on the book). When an explicit
+  // StopLoss specifies a quantity, clamp to it - but NEVER above the uncovered
+  // net, so the close can only SHRINK the position (a cross-zero flip is not
+  // risk-reducing and would open opposite exposure).
+  let uncovered = round7(Math.abs(pos.netQty) - restingCloseRemainder(pos));
+  if (sizeCapBase != null && sizeCapBase > 0) {
+    uncovered = round7(Math.min(uncovered, sizeCapBase));
+  }
+  if (uncovered <= EPS) return null;
   stopAttempts.set(pos.pair, now);
 
   // Cross the touch deliberately (half the slippage budget) so the close
@@ -395,7 +407,7 @@ async function proposeStopClose(
   const margin = (config.limits.maxSlippageBps / 10_000) * 0.5;
   const closingLong = pos.netQty > 0;
   const ref = closingLong ? snap.bestBid : snap.bestAsk;
-  if (ref == null || !(ref > 0)) return;
+  if (ref == null || !(ref > 0)) return null;
   const limit = closingLong ? ref * (1 - margin) : ref * (1 + margin);
 
   const trigger =
@@ -418,7 +430,7 @@ async function proposeStopClose(
     "warn",
     `Stop-loss triggered on ${pos.pair}: ${trigger} - proposing close.`,
   );
-  await submitSystemProposal(trade, "monitor");
+  return submitSystemProposal(trade, "monitor");
 }
 
 async function markPositions(snaps: SnapCache): Promise<void> {
@@ -471,24 +483,106 @@ async function markPositions(snaps: SnapCache): Promise<void> {
       pos.netQty > 0
         ? ((mid - pos.avgPrice) / pos.avgPrice) * 100
         : ((pos.avgPrice - mid) / pos.avgPrice) * 100;
-    // Two stop triggers: the analyst's own invalidation level (the risk the
-    // reward/risk gate validated), and the fixed % stop as the hard backstop.
-    const invalidation = statedInvalidation(pos);
-    const invalidated =
-      invalidation != null &&
-      (pos.netQty > 0 ? mid <= invalidation : mid >= invalidation);
+
+    // ONE effective trigger per tick, in precedence order:
+    //   1. an explicit (manual/AI) StopLoss record - the most protective wins
+    //      (conflict-resolved by the service), authoritative when present;
+    //   2. else the analyst's stated invalidation_price (the legacy stop);
+    //   3. plus STOP_LOSS_PCT as an independent hard backstop.
+    // All three funnel into the SINGLE proposeStopClose path so a position can
+    // never have two closes fired against it in one tick.
+    const activeStop = stopLossService.resolveActiveStop(pos);
+    // Remember any stop that is now live against an OPEN position, so the
+    // reconcile pass can later mark it triggered/expired (and never expire a
+    // preemptive stop that never had a position).
+    for (const s of store.getActiveStopLosses(pos.base, pos.quote)) {
+      stopSeenWithPosition.add(s.id);
+    }
+    const effectiveTrigger = activeStop
+      ? Number(activeStop.triggerPrice)
+      : statedInvalidation(pos);
+    const triggered =
+      effectiveTrigger != null &&
+      effectiveTrigger > 0 &&
+      (pos.netQty > 0 ? mid <= effectiveTrigger : mid >= effectiveTrigger);
     const pctBreached =
       config.limits.stopLossPct > 0 && movePct <= -config.limits.stopLossPct;
-    if (snap && (invalidated || pctBreached)) {
-      await proposeStopClose(
+    if (snap && (triggered || pctBreached)) {
+      // Size from the explicit stop ONLY when it is the trigger that fired; the
+      // fixed-% backstop always closes the whole uncovered net.
+      const sizeCap =
+        activeStop && triggered && !activeStop.sellAll && activeStop.quantityToSell
+          ? Number(activeStop.quantityToSell)
+          : undefined;
+      const proposal = await proposeStopClose(
         pos,
         snap,
         movePct,
-        invalidated ? (invalidation as number) : undefined,
+        triggered && effectiveTrigger != null ? effectiveTrigger : undefined,
+        sizeCap,
       );
+      // Link the close so reconcile only marks the stop "triggered" once the
+      // position actually reaches flat (never on a mere submit that may rest).
+      if (proposal && activeStop && triggered) {
+        stopLossService.linkTrigger(activeStop, proposal.id);
+      }
     }
   }
   store.setUnrealizedPnl(round7(total));
+}
+
+/* ------------------------------------------------------------------ *
+ * 2b. Stop-loss lifecycle reconciliation
+ *
+ * Runs AFTER markPositions fired any breached closes. Transitions active stops:
+ *  - position flat + our linked close submitted -> TRIGGERED (confirmed exit);
+ *  - position flat + closed by another path      -> EXPIRED (the stop is moot);
+ *  - position open + a linked close failed/blocked -> count a failed attempt
+ *    (clears the link so the next breach retries; alerts at the retry budget).
+ * Only stops seen live against a position are auto-resolved, so a preemptive
+ * stop with no position is never expired out from under the operator.
+ * ------------------------------------------------------------------ */
+
+function reconcileStopLosses(): void {
+  const positions = store.getPositions();
+  const netFor = (base: string, quote: string): number =>
+    positions.find((p) => p.base === base && p.quote === quote)?.netQty ?? 0;
+
+  for (const stop of store.getActiveStopLosses()) {
+    const net = netFor(stop.baseAsset, stop.quoteAsset);
+    const linked = stop.triggerProposalId
+      ? store.getProposal(stop.triggerProposalId)
+      : undefined;
+
+    if (Math.abs(net) > EPS) {
+      // Still open: a terminally-failed close counts as an attempt (retry next breach).
+      if (linked && (linked.status === "failed" || linked.status === "blocked")) {
+        stopLossService.noteFailedAttempt(stop, linked.error ?? `close ${linked.status}`);
+      }
+      continue;
+    }
+
+    // Position is flat. Don't touch a stop that never protected a position.
+    if (!stopSeenWithPosition.has(stop.id)) continue;
+    // A close still in flight: decide on a later tick.
+    if (
+      linked &&
+      (linked.status === "submitting" ||
+        linked.status === "proposed" ||
+        linked.status === "pending_approval")
+    ) {
+      continue;
+    }
+    if (linked && linked.status === "submitted") {
+      stopLossService.markTriggered(stop, linked.id);
+    } else {
+      stopLossService.markExpired(
+        stop,
+        linked ? `close ${linked.status}` : "position closed by another path",
+      );
+    }
+    stopSeenWithPosition.delete(stop.id);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -654,6 +748,12 @@ async function runOnce(): Promise<void> {
     await markPositions(snaps).catch((err) =>
       store.log("error", `Monitor mark-to-market failed: ${(err as Error).message}`),
     );
+    // Sync, but guard so a reconcile bug can't wedge the loop.
+    try {
+      reconcileStopLosses();
+    } catch (err) {
+      store.log("error", `Stop-loss reconcile failed: ${(err as Error).message}`);
+    }
     await outcomeMarks(snaps).catch((err) =>
       store.log("error", `Monitor outcome marks failed: ${(err as Error).message}`),
     );

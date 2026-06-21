@@ -5,9 +5,15 @@ import { dbReady, getPool } from "./pool";
 import { computeEvolution, type Fill } from "../trading/positions";
 import type {
   EvolutionPoint,
+  LiquiditySnapshotRow,
   LogEntry,
   LogLevel,
   LogsPage,
+  StopLoss,
+  StopLossAuditPage,
+  StopLossAuditRow,
+  StopLossSetBy,
+  StopLossStatus,
   TradeProposal,
   TradeSide,
   TradeStatus,
@@ -485,6 +491,337 @@ export async function listLogs(opts: {
 
   return {
     rows: rowsRes.recordset.map(rowToLogEntry),
+    total: countRes.recordset[0]?.total ?? 0,
+    limit,
+    offset,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Liquidity-scanner snapshots (observe-only). Same dbReady-guard +
+ * idempotent-insert + Raw*Row/rowTo* shape as the proposal/log helpers.
+ * NOTE: the SQL column is `rankPos` (RANK is a reserved T-SQL keyword);
+ * the domain field is `rank`.
+ * ------------------------------------------------------------------ */
+
+interface RawLiquidityRow {
+  ts: Date | string;
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  quoteAsset: string;
+  rankPos: number;
+  baseVolume24h: number | null;
+  numTrades24h: number | null;
+  spreadBps: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+}
+
+function rowToLiquidity(r: RawLiquidityRow): LiquiditySnapshotRow {
+  return {
+    ts: toIso(r.ts),
+    asset: r.asset,
+    assetCode: r.assetCode,
+    assetIssuer: r.assetIssuer,
+    quoteAsset: r.quoteAsset,
+    rank: Number(r.rankPos) || 0,
+    baseVolume24h: r.baseVolume24h != null ? Number(r.baseVolume24h) : null,
+    numTrades24h: r.numTrades24h != null ? Number(r.numTrades24h) : null,
+    spreadBps: r.spreadBps != null ? Number(r.spreadBps) : null,
+    bestBid: r.bestBid != null ? Number(r.bestBid) : null,
+    bestAsk: r.bestAsk != null ? Number(r.bestAsk) : null,
+  };
+}
+
+/** Insert one hourly liquidity observation (idempotent on the app-generated id). */
+export async function insertLiquiditySnapshot(
+  row: LiquiditySnapshotRow,
+  id: string,
+): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), id)
+    .input("ts", sql.DateTime2, new Date(row.ts))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("asset", sql.NVarChar(120), row.asset)
+    .input("assetCode", sql.NVarChar(32), row.assetCode)
+    .input("assetIssuer", sql.NVarChar(64), row.assetIssuer)
+    .input("quoteAsset", sql.NVarChar(120), row.quoteAsset)
+    .input("rankPos", sql.Int, row.rank)
+    .input("baseVolume24h", sql.Decimal(38, 7), row.baseVolume24h)
+    .input("numTrades24h", sql.Int, row.numTrades24h)
+    .input("spreadBps", sql.Float, row.spreadBps)
+    .input("bestBid", sql.Decimal(38, 7), row.bestBid)
+    .input("bestAsk", sql.Decimal(38, 7), row.bestAsk)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.LiquiditySnapshots WHERE id = @id)
+       INSERT INTO dbo.LiquiditySnapshots
+         (id, ts, network, asset, assetCode, assetIssuer, quoteAsset, rankPos,
+          baseVolume24h, numTrades24h, spreadBps, bestBid, bestAsk)
+       VALUES
+         (@id, @ts, @network, @asset, @assetCode, @assetIssuer, @quoteAsset, @rankPos,
+          @baseVolume24h, @numTrades24h, @spreadBps, @bestBid, @bestAsk);`,
+    );
+}
+
+/** Liquidity history for the analyzer / detail view. Windowed by `since`. */
+export async function listLiquiditySnapshots(opts: {
+  since?: string;
+  asset?: string;
+  limit?: number;
+}): Promise<LiquiditySnapshotRow[]> {
+  if (!dbReady()) return [];
+  const limit = Math.min(Math.max(opts.limit ?? 10_000, 1), 50_000);
+  const conditions = ["network = @net"];
+  if (opts.asset) conditions.push("asset = @asset");
+  if (opts.since) conditions.push("ts >= @since");
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("limit", sql.Int, limit);
+  if (opts.asset) req.input("asset", sql.NVarChar(120), opts.asset);
+  if (opts.since) req.input("since", sql.DateTime2, new Date(opts.since));
+  const res = await req.query<RawLiquidityRow>(
+    `SELECT TOP (@limit) ts, asset, assetCode, assetIssuer, quoteAsset, rankPos,
+            baseVolume24h, numTrades24h, spreadBps, bestBid, bestAsk
+       FROM dbo.LiquiditySnapshots
+       ${where}
+      ORDER BY ts DESC;`,
+  );
+  return res.recordset.map(rowToLiquidity);
+}
+
+/* ------------------------------------------------------------------ *
+ * Stop-loss orders + audit trail. Rows are NEVER deleted (status-only
+ * transitions), so the upsert-on-0-rows fallback can never resurrect a
+ * cancelled stop as active: the re-insert carries the object's CURRENT
+ * status, and hydration loads only status='active'.
+ * ------------------------------------------------------------------ */
+
+interface RawStopLossRow {
+  id: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  baseAsset: string;
+  quoteAsset: string;
+  triggerPrice: number;
+  sellAll: boolean;
+  quantityToSell: number | null;
+  setBy: string;
+  status: string;
+  notes: string | null;
+  triggeredAt: Date | string | null;
+  triggerProposalId: string | null;
+  attemptCount: number;
+  lastError: string | null;
+}
+
+function rowToStopLoss(r: RawStopLossRow): StopLoss {
+  return {
+    id: r.id,
+    createdAt: toIso(r.createdAt),
+    updatedAt: toIso(r.updatedAt),
+    baseAsset: r.baseAsset,
+    quoteAsset: r.quoteAsset,
+    triggerPrice: String(r.triggerPrice),
+    sellAll: Boolean(r.sellAll),
+    setBy: r.setBy as StopLossSetBy,
+    status: r.status as StopLossStatus,
+    attemptCount: Number(r.attemptCount) || 0,
+    ...(r.quantityToSell != null ? { quantityToSell: String(r.quantityToSell) } : {}),
+    ...(r.notes ? { notes: r.notes } : {}),
+    ...(r.triggeredAt ? { triggeredAt: toIso(r.triggeredAt) } : {}),
+    ...(r.triggerProposalId ? { triggerProposalId: r.triggerProposalId } : {}),
+    ...(r.lastError ? { lastError: r.lastError } : {}),
+  };
+}
+
+const STOPLOSS_COLS = `id, createdAt, updatedAt, baseAsset, quoteAsset, triggerPrice,
+  sellAll, quantityToSell, setBy, status, notes, triggeredAt, triggerProposalId,
+  attemptCount, lastError`;
+
+function bindStopLoss(req: sql.Request, s: StopLoss): sql.Request {
+  return req
+    .input("id", sql.NVarChar(64), s.id)
+    .input("createdAt", sql.DateTime2, new Date(s.createdAt))
+    .input("updatedAt", sql.DateTime2, new Date(s.updatedAt))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("baseAsset", sql.NVarChar(120), s.baseAsset)
+    .input("quoteAsset", sql.NVarChar(120), s.quoteAsset)
+    .input("triggerPrice", sql.Decimal(38, 7), Number(s.triggerPrice))
+    .input("sellAll", sql.Bit, s.sellAll)
+    .input(
+      "quantityToSell",
+      sql.Decimal(38, 7),
+      s.quantityToSell != null ? Number(s.quantityToSell) : null,
+    )
+    .input("setBy", sql.NVarChar(8), s.setBy)
+    .input("status", sql.NVarChar(16), s.status)
+    .input("notes", sql.NVarChar(sql.MAX), s.notes ?? null)
+    .input("triggeredAt", sql.DateTime2, s.triggeredAt ? new Date(s.triggeredAt) : null)
+    .input("triggerProposalId", sql.NVarChar(64), s.triggerProposalId ?? null)
+    .input("attemptCount", sql.Int, s.attemptCount)
+    .input("lastError", sql.NVarChar(sql.MAX), s.lastError ?? null);
+}
+
+/** Insert a brand-new stop loss (idempotent on id). */
+export async function insertStopLoss(s: StopLoss): Promise<void> {
+  if (!dbReady()) return;
+  await bindStopLoss(getPool().request(), s).query(
+    `IF NOT EXISTS (SELECT 1 FROM dbo.StopLosses WHERE id = @id)
+     INSERT INTO dbo.StopLosses
+       (id, createdAt, updatedAt, network, baseAsset, quoteAsset, triggerPrice,
+        sellAll, quantityToSell, setBy, status, notes, triggeredAt,
+        triggerProposalId, attemptCount, lastError)
+     VALUES
+       (@id, @createdAt, @updatedAt, @network, @baseAsset, @quoteAsset, @triggerPrice,
+        @sellAll, @quantityToSell, @setBy, @status, @notes, @triggeredAt,
+        @triggerProposalId, @attemptCount, @lastError);`,
+  );
+}
+
+/** Persist mutable fields. Upsert fallback re-inserts the CURRENT object (its
+ *  real status) if the row is missing - so a lost insert is recovered without
+ *  ever resurrecting a terminal stop as active. */
+export async function updateStopLoss(s: StopLoss): Promise<void> {
+  if (!dbReady()) return;
+  const result = await bindStopLoss(getPool().request(), s).query(
+    `UPDATE dbo.StopLosses
+        SET updatedAt = @updatedAt,
+            triggerPrice = @triggerPrice,
+            sellAll = @sellAll,
+            quantityToSell = @quantityToSell,
+            status = @status,
+            notes = @notes,
+            triggeredAt = @triggeredAt,
+            triggerProposalId = @triggerProposalId,
+            attemptCount = @attemptCount,
+            lastError = @lastError
+      WHERE id = @id;`,
+  );
+  if ((result.rowsAffected?.[0] ?? 0) === 0) {
+    await insertStopLoss(s);
+  }
+}
+
+/** Active stop losses for the current network (loaded on boot for the monitor). */
+export async function listActiveStopLosses(): Promise<StopLoss[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .query<RawStopLossRow>(
+      `SELECT ${STOPLOSS_COLS}
+         FROM dbo.StopLosses
+        WHERE network = @net AND status = 'active'
+        ORDER BY createdAt DESC;`,
+    );
+  return res.recordset.map(rowToStopLoss);
+}
+
+/** Raw audit row shape as returned by SQL Server. */
+interface RawAuditRow {
+  id: string;
+  ts: Date | string;
+  stopLossId: string;
+  baseAsset: string;
+  quoteAsset: string;
+  action: string;
+  field: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  initiator: string;
+  note: string | null;
+}
+
+function rowToAudit(r: RawAuditRow): StopLossAuditRow {
+  return {
+    id: r.id,
+    ts: toIso(r.ts),
+    stopLossId: r.stopLossId,
+    baseAsset: r.baseAsset,
+    quoteAsset: r.quoteAsset,
+    action: r.action as StopLossAuditRow["action"],
+    initiator: r.initiator as StopLossAuditRow["initiator"],
+    ...(r.field ? { field: r.field } : {}),
+    ...(r.oldValue != null ? { oldValue: r.oldValue } : {}),
+    ...(r.newValue != null ? { newValue: r.newValue } : {}),
+    ...(r.note ? { note: r.note } : {}),
+  };
+}
+
+/** Append an immutable audit row (idempotent on id). */
+export async function insertStopLossAudit(a: StopLossAuditRow): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), a.id)
+    .input("ts", sql.DateTime2, new Date(a.ts))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("stopLossId", sql.NVarChar(64), a.stopLossId)
+    .input("baseAsset", sql.NVarChar(120), a.baseAsset)
+    .input("quoteAsset", sql.NVarChar(120), a.quoteAsset)
+    .input("action", sql.NVarChar(16), a.action)
+    .input("field", sql.NVarChar(40), a.field ?? null)
+    .input("oldValue", sql.NVarChar(200), a.oldValue ?? null)
+    .input("newValue", sql.NVarChar(200), a.newValue ?? null)
+    .input("initiator", sql.NVarChar(16), a.initiator)
+    .input("note", sql.NVarChar(sql.MAX), a.note ?? null)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.StopLossAudit WHERE id = @id)
+       INSERT INTO dbo.StopLossAudit
+         (id, ts, network, stopLossId, baseAsset, quoteAsset, action, field,
+          oldValue, newValue, initiator, note)
+       VALUES
+         (@id, @ts, @network, @stopLossId, @baseAsset, @quoteAsset, @action, @field,
+          @oldValue, @newValue, @initiator, @note);`,
+    );
+}
+
+/** Paginated audit history for a pair (collapsible section on the detail page). */
+export async function listStopLossAudit(opts: {
+  base?: string;
+  quote?: string;
+  limit: number;
+  offset: number;
+}): Promise<StopLossAuditPage> {
+  const limit = Math.min(Math.max(opts.limit, 1), 500);
+  const offset = Math.max(opts.offset, 0);
+  if (!dbReady()) return { rows: [], total: 0, limit, offset };
+
+  const conditions = ["network = @net"];
+  if (opts.base) conditions.push("baseAsset = @base");
+  if (opts.quote) conditions.push("quoteAsset = @quote");
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const rowsReq = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("limit", sql.Int, limit)
+    .input("offset", sql.Int, offset);
+  if (opts.base) rowsReq.input("base", sql.NVarChar(120), opts.base);
+  if (opts.quote) rowsReq.input("quote", sql.NVarChar(120), opts.quote);
+  const rowsRes = await rowsReq.query<RawAuditRow>(
+    `SELECT id, ts, stopLossId, baseAsset, quoteAsset, action, field,
+            oldValue, newValue, initiator, note
+       FROM dbo.StopLossAudit
+       ${where}
+      ORDER BY ts DESC
+      OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
+  );
+
+  const countReq = getPool().request().input("net", sql.NVarChar(16), config.network);
+  if (opts.base) countReq.input("base", sql.NVarChar(120), opts.base);
+  if (opts.quote) countReq.input("quote", sql.NVarChar(120), opts.quote);
+  const countRes = await countReq.query<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM dbo.StopLossAudit ${where};`,
+  );
+
+  return {
+    rows: rowsRes.recordset.map(rowToAudit),
     total: countRes.recordset[0]?.total ?? 0,
     limit,
     offset,

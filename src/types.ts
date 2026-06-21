@@ -70,6 +70,20 @@ export interface TradeProposal {
    * PnL ledger on replay. In-memory only.
    */
   paper?: boolean;
+  /**
+   * WHO initiated this order (the SetBy-style initiator flag the policy engine
+   * splits enforcement on):
+   *  - "manual": placed by the user from the dashboard - EXEMPT from the
+   *    per-trade SIZE cap (the user chooses their own size). All other gates
+   *    (kill switch, whitelist, slippage, daily/exposure/loss caps, preflight)
+   *    still apply.
+   *  - "ai": an AI-proposed trade - the per-trade size cap is enforced.
+   *  - "system": a backend-generated order (e.g. a monitor stop-loss close) -
+   *    treated like AI for the size cap (risk-reducing closes are exempt anyway).
+   * Runtime field: it gates a LIVE policy decision and is not persisted (a
+   * historical row replayed on boot is never re-checked for the size cap).
+   */
+  initiator?: "manual" | "ai" | "system";
   /** AI provider id that produced this proposal ("anthropic", "openai",
    *  "monitor" for system-generated stop-loss closes, ...). */
   provider?: string;
@@ -161,6 +175,127 @@ export interface PositionSummary {
   avgPrice: number;
 }
 
+/* ------------------------------------------------------------------ *
+ * Stop-loss management (manual + AI-controlled). The EXIT engine lives
+ * in trading/monitor.ts; these are the first-class, persisted records the
+ * monitor consults for a position's trigger. Decimal-ish fields are STRINGS
+ * (same convention as TradeProposal.amount/limitPrice), DECIMAL(38,7) in SQL.
+ * ------------------------------------------------------------------ */
+
+export type StopLossSetBy = "manual" | "ai";
+/** active = armed; triggered = its close fully executed; cancelled = withdrawn;
+ *  expired = its position closed by another path so the stop is moot. */
+export type StopLossStatus = "active" | "triggered" | "cancelled" | "expired";
+
+export interface StopLoss {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  /** "XLM" (native) or "CODE:ISSUER" - matches PositionSummary.base/.quote. */
+  baseAsset: string;
+  quoteAsset: string;
+  /**
+   * Trigger price as quote units per 1 base unit. DIRECTION-AWARE: for a LONG
+   * (netQty > 0) the close fires when mark <= triggerPrice; for a SHORT
+   * (netQty < 0) it fires when mark >= triggerPrice (mirrors monitor.ts).
+   */
+  triggerPrice: string;
+  /** true = close the entire UNCOVERED net position at trigger time. */
+  sellAll: boolean;
+  /** Base units to close when sellAll is false (clamped to uncovered net). */
+  quantityToSell?: string;
+  setBy: StopLossSetBy;
+  status: StopLossStatus;
+  /** AI: entry price + reasoning; manual: optional user annotation. */
+  notes?: string;
+  triggeredAt?: string;
+  /** Proposal id of the [stop-loss] close that fired this stop. */
+  triggerProposalId?: string;
+  /** Consecutive sell-failure count for the bounded-retry/backoff rule. */
+  attemptCount: number;
+  /** Last sell-failure message (for the UI "cannot fire" surfacing). */
+  lastError?: string;
+}
+
+export type StopLossAuditAction =
+  | "create"
+  | "update"
+  | "trigger"
+  | "cancel"
+  | "expire"
+  | "trigger_failed";
+
+export type StopLossInitiator = "manual" | "ai" | "monitor";
+
+/** One immutable audit row: who changed what on a stop loss, and when. */
+export interface StopLossAuditRow {
+  id: string;
+  ts: string;
+  stopLossId: string;
+  baseAsset: string;
+  quoteAsset: string;
+  action: StopLossAuditAction;
+  /** The field that changed (e.g. "triggerPrice", "status"), when applicable. */
+  field?: string;
+  oldValue?: string;
+  newValue?: string;
+  initiator: StopLossInitiator;
+  note?: string;
+}
+
+export interface StopLossAuditPage {
+  rows: StopLossAuditRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/* ------------------------------------------------------------------ *
+ * Liquidity scanner (observe-only). Hourly top-N liquid Stellar assets
+ * ranked by XLM-pair SDEX volume, with trend analysis. NEVER trades.
+ * ------------------------------------------------------------------ */
+
+export type RankTrend = "improving" | "declining" | "stable";
+export type VolumeTrend = "growing" | "shrinking" | "stable";
+
+/** One persisted hourly observation: one asset within a tick's top-N. */
+export interface LiquiditySnapshotRow {
+  ts: string;
+  /** Canonical "CODE:ISSUER". */
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  /** The ranking quote leg (XLM). */
+  quoteAsset: string;
+  /** 1..N position within this tick's top-N. */
+  rank: number;
+  /** 24h base-asset volume from Horizon trade aggregations (the liquidity signal). */
+  baseVolume24h: number | null;
+  numTrades24h: number | null;
+  spreadBps: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+}
+
+/** Current top-N entry + trend analysis for the dashboard / GetLiquidityRecommendations. */
+export interface LiquidityRec {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  rank: number;
+  baseVolume24h: number | null;
+  numTrades24h: number | null;
+  spreadBps: number | null;
+  /** Trend fields are present only once >= MIN_SNAPSHOTS history exists. */
+  avgRank?: number;
+  rankTrend?: RankTrend;
+  /** % of hourly checks over the trailing 7d in which the asset appeared in top-N. */
+  consistencyPct?: number;
+  volumeTrend?: VolumeTrend;
+  /** worth-watching: >=70% appearance over 7d AND volume not shrinking AND not whitelisted. */
+  recommended: boolean;
+}
+
 /** A page of persisted trades for the history table. */
 export interface TradesPage {
   rows: TradeProposal[];
@@ -234,4 +369,9 @@ export interface Snapshot {
   positions: PositionSummary[];
   proposals: TradeProposal[];
   logs: LogEntry[];
+  /** Active stop-loss orders (manual + AI). Small list, replaced on each push. */
+  stopLosses: StopLoss[];
+  /** Current top-N liquid assets + trend (observe-only scanner). Top-N only -
+   *  the long history is served by GET /api/liquidity, never on the SSE wire. */
+  liquidityRecs: LiquidityRec[];
 }
