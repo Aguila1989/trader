@@ -24,11 +24,20 @@ const change24hText = computed(() => {
   return c == null ? "-" : `${c >= 0 ? "+" : ""}${c.toFixed(2)}%`;
 });
 
+// Clickable token universe (the whitelist, minus XLM which is the quote leg).
+const tokens = computed(() =>
+  (store.limits?.assetWhitelist ?? []).filter(
+    (a) => a.toUpperCase() !== "XLM" && a.toLowerCase() !== "native",
+  ),
+);
+function tokenCode(spec: string): string {
+  return spec.split(":")[0] || spec;
+}
+
 const limitRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
   return [
-    ["Whitelist", l.assetWhitelist.join(", ") || "-"],
     ["Max / trade (std)", fmtNum(l.maxAmountPerTrade)],
     ["Max / trade (high tier)", fmtNum(l.maxAmountPerTradeHigh)],
     ["Max daily volume", fmtNum(l.maxDailyVolume)],
@@ -336,10 +345,25 @@ async function placeOrder(): Promise<void> {
         </p>
 
         <p class="muted order-hint">
-          Manual orders go through the same risk gates as the bot - notably the
-          per-trade size cap - so a large order may come back
-          "Blocked: ... exceeds ... cap". That's expected: split it or raise the cap.
+          Manual orders are NOT limited by the per-trade size cap - size them as
+          you like. They still pass the other gates (slippage, daily volume/loss,
+          exposure caps, kill switch), so a very large order may still be blocked
+          by one of those.
         </p>
+      </div>
+
+      <h3>Tokens</h3>
+      <div class="token-list">
+        <button
+          v-for="t in tokens"
+          :key="t"
+          class="btn token-chip"
+          :title="t"
+          @click="store.openToken(t)"
+        >
+          {{ tokenCode(t) }}
+        </button>
+        <span v-if="tokens.length === 0" class="muted">(none)</span>
       </div>
 
       <h3>Risk limits</h3>
@@ -419,5 +443,14 @@ async function placeOrder(): Promise<void> {
 .order-hint {
   font-size: 11px;
   margin: 0;
+}
+.token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.token-chip {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 </style>

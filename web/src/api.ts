@@ -1,10 +1,14 @@
 import type {
   Balance,
+  Candle,
   EvolutionPoint,
   LogsPage,
   ManualOrderInput,
   MarketSnapshot,
+  OrderbookSnapshot,
   Snapshot,
+  StopLoss,
+  StopLossAuditPage,
   TradeProposal,
   TradesPage,
 } from "./types";
@@ -95,6 +99,23 @@ export const api = {
     getJSON<MarketSnapshot & { error?: string }>(
       `/api/market?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
     ),
+  // Token detail page. `quote` omitted => backend auto-resolves the best market.
+  orderbook: (base: string, quote?: string) => {
+    const q = new URLSearchParams({ base });
+    if (quote) q.set("quote", quote);
+    return getJSON<OrderbookSnapshot & { error?: string }>(
+      `/api/orderbook?${q.toString()}`,
+    );
+  },
+  candles: (base: string, quote: string, resolution: number, limit: number) => {
+    const q = new URLSearchParams({
+      base,
+      quote,
+      resolution: String(resolution),
+      limit: String(limit),
+    });
+    return getJSON<Candle[]>(`/api/candles?${q.toString()}`);
+  },
   analyze: (base: string, quote: string) =>
     postJSON<{ reasoning?: string; error?: string }>("/api/analyze", {
       base,
@@ -129,4 +150,32 @@ export const api = {
       "/api/provider",
       { id },
     ),
+  stopLosses: (base?: string, quote?: string) => {
+    const q = new URLSearchParams();
+    if (base) q.set("base", base);
+    if (quote) q.set("quote", quote);
+    const qs = q.toString();
+    return getJSON<StopLoss[]>(`/api/stoploss${qs ? `?${qs}` : ""}`);
+  },
+  setStopLoss: (body: {
+    base: string;
+    quote: string;
+    triggerPrice: string;
+    sellAll?: boolean;
+    quantityToSell?: string;
+    notes?: string;
+  }) => postJSON<StopLoss & { error?: string }>("/api/stoploss", body),
+  cancelStopLoss: (id: string) =>
+    postJSON<StopLoss & { error?: string }>(
+      `/api/stoploss/${encodeURIComponent(id)}/cancel`,
+    ),
+  stopLossAudit: (base: string, quote: string, limit = 50, offset = 0) => {
+    const q = new URLSearchParams({
+      base,
+      quote,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    return getJSON<StopLossAuditPage>(`/api/stoploss/audit?${q.toString()}`);
+  },
 };

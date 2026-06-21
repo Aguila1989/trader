@@ -3,16 +3,27 @@ import { computed, ref } from "vue";
 import { api, withToken } from "../api";
 import type {
   Balance,
+  Candle,
   DailyState,
   EvolutionPoint,
   LogEntry,
   LogsPage,
   ManualOrderInput,
   MarketSnapshot,
+  OrderbookSnapshot,
   Snapshot,
+  StopLossAuditPage,
   TradeProposal,
   TradesPage,
 } from "../types";
+
+type Timeframe = "hour" | "day" | "week" | "year";
+const TIMEFRAMES: Record<Timeframe, { resolution: number; limit: number }> = {
+  hour: { resolution: 3_600_000, limit: 24 },
+  day: { resolution: 86_400_000, limit: 30 },
+  week: { resolution: 604_800_000, limit: 52 },
+  year: { resolution: 86_400_000, limit: 365 },
+};
 
 const MAX_LOGS = 200;
 
@@ -41,6 +52,20 @@ export const useTraderStore = defineStore("trader", () => {
   const pageOffset = ref(0);
   const statusFilter = ref("");
 
+  // --- token detail view (Feature 2) ---
+  // Kept in SEPARATE refs (NOT inside `snapshot`, which is clobbered wholesale
+  // on every SSE 'state' push) so a state update never wipes the open view.
+  const selectedToken = ref<string | null>(null);
+  const selectedQuote = ref<string>("XLM");
+  const tokenBook = ref<OrderbookSnapshot | null>(null);
+  const tokenCandles = ref<Candle[]>([]);
+  const tokenTimeframe = ref<Timeframe>("day");
+  const tokenLoading = ref(false);
+  const tokenError = ref("");
+  // Stop-loss panel state for the detail view.
+  const stopLossError = ref("");
+  const stopLossAudit = ref<StopLossAuditPage | null>(null);
+
   // --- persisted, browsable log history ---
   const logsPage = ref<LogsPage | null>(null);
   const logsLoading = ref(false);
@@ -52,6 +77,9 @@ export const useTraderStore = defineStore("trader", () => {
   // --- derived view-model ---
   const proposals = computed(() => snapshot.value?.proposals ?? []);
   const positions = computed(() => snapshot.value?.positions ?? []);
+  const liquidityRecs = computed(() => snapshot.value?.liquidityRecs ?? []);
+  // Active stops live in the snapshot (replaced wholesale on each 'state' push).
+  const stopLosses = computed(() => snapshot.value?.stopLosses ?? []);
   const logs = computed(() => snapshot.value?.logs ?? []);
   const daily = computed(() => snapshot.value?.daily ?? null);
   const limits = computed(() => snapshot.value?.limits ?? null);
@@ -64,6 +92,8 @@ export const useTraderStore = defineStore("trader", () => {
   const canGoLive = computed(() => snapshot.value?.secretConfigured ?? false);
   /** Effective read-only: no key OR not armed. Gates the approve buttons. */
   const isReadOnly = computed(() => snapshot.value?.readOnly ?? true);
+  /** Kill switch engaged (blocks all trading, including stop-loss exits). */
+  const killSwitch = computed(() => snapshot.value?.killSwitch ?? false);
 
   const modeLabel = computed(() => {
     const s = snapshot.value;
@@ -285,6 +315,106 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  // --- token detail view ---
+  // Navigate into a token's detail view. `asset` is the full "CODE:ISSUER".
+  function openToken(asset: string): void {
+    selectedToken.value = asset;
+    selectedQuote.value = "XLM";
+    tokenBook.value = null;
+    tokenCandles.value = [];
+    tokenError.value = "";
+    void loadTokenBook();
+  }
+
+  // Back to the dashboard (backs the "← Back" button).
+  function closeToken(): void {
+    selectedToken.value = null;
+  }
+
+  // Load the order book. The FIRST load (no book yet) sends no quote so the
+  // backend auto-resolves the best market; later 30s polls reuse the resolved
+  // quote. When the resolved quote changes, (re)load the candles to match.
+  async function loadTokenBook(): Promise<void> {
+    const base = selectedToken.value;
+    if (!base) return;
+    tokenLoading.value = true;
+    try {
+      const useQuote = tokenBook.value ? selectedQuote.value : undefined;
+      const ob = await api.orderbook(base, useQuote);
+      if (ob.error) {
+        tokenError.value = ob.error;
+        return;
+      }
+      tokenBook.value = ob;
+      tokenError.value = "";
+      if (ob.quote && ob.quote !== selectedQuote.value) {
+        selectedQuote.value = ob.quote;
+        void loadTokenCandles();
+      } else if (tokenCandles.value.length === 0) {
+        void loadTokenCandles();
+      }
+    } catch (err) {
+      tokenError.value = (err as Error).message;
+    } finally {
+      tokenLoading.value = false;
+    }
+  }
+
+  async function loadTokenCandles(): Promise<void> {
+    const base = selectedToken.value;
+    if (!base) return;
+    const tf = TIMEFRAMES[tokenTimeframe.value];
+    try {
+      tokenCandles.value = await api.candles(
+        base,
+        selectedQuote.value,
+        tf.resolution,
+        tf.limit,
+      );
+    } catch {
+      tokenCandles.value = [];
+    }
+  }
+
+  function setTokenTimeframe(tf: Timeframe): void {
+    tokenTimeframe.value = tf;
+    void loadTokenCandles();
+  }
+
+  // --- stop-loss management (token detail) ---
+  // The active list updates via the SSE 'state' push; we just refresh the audit.
+  async function setStopLoss(body: {
+    base: string;
+    quote: string;
+    triggerPrice: string;
+    sellAll?: boolean;
+    quantityToSell?: string;
+    notes?: string;
+  }): Promise<boolean> {
+    stopLossError.value = "";
+    const r = await api.setStopLoss(body);
+    if (r.error) {
+      stopLossError.value = r.error;
+      return false;
+    }
+    void loadStopLossAudit(body.base, body.quote);
+    return true;
+  }
+
+  async function cancelStopLoss(id: string): Promise<void> {
+    const base = selectedToken.value;
+    await api.cancelStopLoss(id);
+    if (base) void loadStopLossAudit(base, selectedQuote.value);
+  }
+
+  async function loadStopLossAudit(base: string, quote: string): Promise<void> {
+    try {
+      stopLossAudit.value = await api.stopLossAudit(base, quote);
+    } catch {
+      /* leave previous audit data */
+    }
+  }
+
   // --- data loads ---
   async function loadBalances(): Promise<void> {
     try {
@@ -406,8 +536,19 @@ export const useTraderStore = defineStore("trader", () => {
     logPageOffset,
     logLevelFilter,
     logQuery,
+    selectedToken,
+    selectedQuote,
+    tokenBook,
+    tokenCandles,
+    tokenTimeframe,
+    tokenLoading,
+    tokenError,
+    stopLossError,
+    stopLossAudit,
     proposals,
     positions,
+    liquidityRecs,
+    stopLosses,
     logs,
     daily,
     limits,
@@ -415,6 +556,7 @@ export const useTraderStore = defineStore("trader", () => {
     isLive,
     canGoLive,
     isReadOnly,
+    killSwitch,
     modeLabel,
     isPaper,
     init,
@@ -429,6 +571,14 @@ export const useTraderStore = defineStore("trader", () => {
     refreshMarket,
     analyze,
     scanChain,
+    openToken,
+    closeToken,
+    loadTokenBook,
+    loadTokenCandles,
+    setTokenTimeframe,
+    setStopLoss,
+    cancelStopLoss,
+    loadStopLossAudit,
     loadBalances,
     loadEvolution,
     loadTrades,

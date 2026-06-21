@@ -4,6 +4,15 @@ export const TOOL_BALANCES = "get_account_balances";
 export const TOOL_MARKET = "get_market";
 export const TOOL_HISTORY = "get_price_history";
 export const TOOL_PROPOSE = "propose_stellar_trade";
+export const TOOL_SET_STOP = "set_stop_loss";
+export const TOOL_UPDATE_STOP = "update_stop_loss";
+export const TOOL_CANCEL_STOP = "cancel_stop_loss";
+
+/** Shared pair fields for the stop-loss tools. */
+const STOP_PAIR_PROPS = {
+  base_asset: { type: "string", description: 'The position\'s base asset: "XLM" or "CODE:ISSUER".' },
+  quote_asset: { type: "string", description: 'The position\'s quote asset: "XLM" or "CODE:ISSUER".' },
+} as const;
 
 // Provider-neutral tool schemas. Each provider (Anthropic / OpenAI-compatible)
 // translates these to its own wire format; Anthropic also adds prompt-cache
@@ -125,6 +134,66 @@ export const tradingTools: AiTool[] = [
         "target_price",
         "invalidation_price",
       ],
+    },
+  },
+  {
+    name: TOOL_SET_STOP,
+    description:
+      "Set a STOP LOSS on a position you have ENTERED, so it is protected even when you are idle. An INDEPENDENT backend monitor checks the price every minute and executes the close (through the same risk policy) if the stop is breached - it fires whether or not you are running. For a LONG the stop_price must be BELOW the current price; for a SHORT, ABOVE. Put your entry price and reasoning in notes. Use update_stop_loss to TRAIL it as the trade moves your way.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...STOP_PAIR_PROPS,
+        stop_price: {
+          type: "string",
+          description:
+            "Trigger price (quote units per 1 base unit). The position closes when the market reaches it.",
+        },
+        sell_all: {
+          type: "boolean",
+          description:
+            "true (default) closes the whole position at trigger; false closes only `quantity`.",
+        },
+        quantity: {
+          type: "string",
+          description: "Base units to close when sell_all is false.",
+        },
+        notes: {
+          type: "string",
+          description: "Why you set it / entry price (stored on the audit trail).",
+        },
+      },
+      required: ["base_asset", "quote_asset", "stop_price"],
+    },
+  },
+  {
+    name: TOOL_UPDATE_STOP,
+    description:
+      "TRAIL (tighten) the stop loss on a position as it moves in your favour. TRAIL-ONLY: for a LONG the new stop_price may only move UP (never down); for a SHORT only DOWN. The backend rejects a move that would loosen protection. Updates the stop you previously set on this pair.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...STOP_PAIR_PROPS,
+        stop_price: {
+          type: "string",
+          description: "New trigger price. Must be more protective than the current one.",
+        },
+        notes: { type: "string", description: "Why you are trailing it." },
+      },
+      required: ["base_asset", "quote_asset", "stop_price"],
+    },
+  },
+  {
+    name: TOOL_CANCEL_STOP,
+    description:
+      "Cancel the stop loss you set on a pair - call this when you intentionally exit or invalidate the thesis yourself, so a stale stop does not later fire on a position you no longer hold. Only cancels stops YOU (the AI) set; a user's manual stop is left untouched.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...STOP_PAIR_PROPS,
+        notes: { type: "string", description: "Why you are cancelling it." },
+      },
+      required: ["base_asset", "quote_asset"],
     },
   },
 ];
