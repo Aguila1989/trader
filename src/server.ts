@@ -436,6 +436,83 @@ app.get("/api/trades", async (req, res) => {
   }
 });
 
+// Full trade history as CSV (download). Cells are escaped against CSV/formula
+// injection; pages through the store up to a safety cap.
+function csvCell(v: unknown): string {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@]/.test(s)) s = `'${s}`; // neutralize spreadsheet formula injection
+  if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+app.get("/api/trades.csv", async (_req, res) => {
+  const cols = [
+    "createdAt", "submittedAt", "side", "baseAsset", "quoteAsset", "amount",
+    "limitPrice", "filledAmount", "filledPrice", "status", "initiator",
+    "provider", "model", "reason", "txHash",
+  ] as const;
+  try {
+    const lines: string[] = [cols.join(",")];
+    const pageSize = 500;
+    let offset = 0;
+    let total = Infinity;
+    while (offset < total && offset < 50_000) {
+      const page = await store.getTradesPage({ limit: pageSize, offset });
+      total = page.total;
+      for (const p of page.rows) {
+        lines.push(cols.map((c) => csvCell((p as Record<string, unknown>)[c])).join(","));
+      }
+      if (page.rows.length < pageSize) break;
+      offset += pageSize;
+    }
+    res.set({
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": "attachment; filename=trades.csv",
+    });
+    res.send(lines.join("\r\n"));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Portfolio: funded balances valued in XLM-equivalent (for the allocation view).
+app.get("/api/portfolio", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json({ holdings: [], totalXlm: 0 });
+    return;
+  }
+  try {
+    const balances = await getBalances(pub);
+    const funded = balances.filter(
+      (b) => Number(b.balance) > 0 && !b.asset.startsWith("LP:"),
+    );
+    const holdings = await Promise.all(
+      funded.map(async (b) => {
+        if (b.asset === "XLM") {
+          return { asset: b.asset, balance: b.balance, xlmValue: Number(b.balance) };
+        }
+        try {
+          // XLM/asset book prices the asset in units-per-XLM, so an asset
+          // balance is worth balance/mid XLM.
+          const ob = await getOrderbook("XLM", b.asset, 1);
+          const mid =
+            ob.bestBid != null && ob.bestAsk != null
+              ? (ob.bestBid + ob.bestAsk) / 2
+              : (ob.bestBid ?? ob.bestAsk);
+          const value = mid && mid > 0 ? Number((Number(b.balance) / mid).toFixed(7)) : null;
+          return { asset: b.asset, balance: b.balance, xlmValue: value };
+        } catch {
+          return { asset: b.asset, balance: b.balance, xlmValue: null };
+        }
+      }),
+    );
+    const totalXlm = holdings.reduce((s, h) => s + (h.xlmValue ?? 0), 0);
+    res.json({ holdings, totalXlm: Number(totalXlm.toFixed(7)) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
 // Persisted, browsable log history (paginated + filterable by level/text/time).
 app.get("/api/logs", async (req, res) => {
   const limit = Number(req.query.limit ?? 50);

@@ -1,9 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useTraderStore } from "../stores/trader";
+import { withToken } from "../api";
 import { fmtNum, dateTimeStr, shortKey } from "../format";
 
 const store = useTraderStore();
+
+// Download the full trade history as CSV. The token rides as a query param
+// (same mechanism the SSE stream uses) so the attachment download authenticates.
+function exportCsv(): void {
+  const a = document.createElement("a");
+  a.href = withToken("/api/trades.csv");
+  a.download = "trades.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
 
 const STATUSES = [
   "",
@@ -53,6 +65,9 @@ function statusText(s: string): string {
           @click="store.nextPage()"
         >
           Next
+        </button>
+        <button class="btn" :disabled="total === 0" title="Download all trades as CSV" @click="exportCsv">
+          Export CSV
         </button>
       </div>
     </div>
