@@ -200,6 +200,14 @@ export interface Balance {
   balance: string;
 }
 
+export interface TrustlineInfo {
+  asset: string;
+  code: string;
+  issuer: string;
+  balance: string;
+  limit: string;
+}
+
 export type StopLossSetBy = "manual" | "ai";
 export type StopLossStatus = "active" | "triggered" | "cancelled" | "expired";
 

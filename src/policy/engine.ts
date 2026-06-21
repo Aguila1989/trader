@@ -145,14 +145,19 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
     }
     // Daily volume is XLM-normalized (store.recordSubmittedTrade books it that
     // way) so both sides of this comparison share one unit across pairs.
-    const notional = amount > 0 && price > 0 ? xlmNotional(baseC, quoteC, amount, price) : 0;
-    if (notional > 0 && daily.volume + notional > limits.maxDailyVolume) {
-      violations.push(
-        `Trade would push daily volume past cap ${limits.maxDailyVolume} (XLM-equivalent).`,
-      );
+    // MANUAL orders bypass the daily VOLUME cap (the user trades any amount);
+    // the daily LOSS halt below and the per-trade-count cap above still apply.
+    if (!manualInitiated) {
+      const notional = amount > 0 && price > 0 ? xlmNotional(baseC, quoteC, amount, price) : 0;
+      if (notional > 0 && daily.volume + notional > limits.maxDailyVolume) {
+        violations.push(
+          `Trade would push daily volume past cap ${limits.maxDailyVolume} (XLM-equivalent).`,
+        );
+      }
     }
     // Loss halt counts realized PLUS the unrealized LOSS side of open marks -
     // otherwise ten open positions all deep red would never trip the limit.
+    // NOT bypassed for manual: it is a circuit breaker, not a size cap.
     const unrealizedLoss = Math.min(0, inp.unrealizedPnl ?? 0);
     const effectivePnl = daily.realizedPnl + unrealizedLoss;
     if (effectivePnl <= -Math.abs(limits.maxDailyLoss)) {
@@ -284,7 +289,9 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   // 7. Exposure caps (risk-increasing only): daily VOLUME bounds activity, not
   //    accumulation - within it the bot could still pile up one big directional
   //    book. Cap the net position per pair and the XLM-equivalent total.
-  if (!riskReducing && amount > 0 && price > 0) {
+  //    MANUAL orders bypass the exposure caps too (the user sizes their own
+  //    book); the kill switch, whitelist, slippage and daily-loss halt still apply.
+  if (!riskReducing && !manualInitiated && amount > 0 && price > 0) {
     const pairCap = baseCap * Math.max(1, limits.pairExposureMultiplier);
     if (Math.abs(newNet) > pairCap + EPS) {
       violations.push(

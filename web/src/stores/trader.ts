@@ -15,6 +15,7 @@ import type {
   StopLossAuditPage,
   TradeProposal,
   TradesPage,
+  TrustlineInfo,
 } from "../types";
 
 type Timeframe = "hour" | "day" | "week" | "year";
@@ -39,6 +40,8 @@ export const useTraderStore = defineStore("trader", () => {
   const analyzing = ref(false);
   const scanning = ref(false);
   const balances = ref<Balance[]>([]);
+  const trustlines = ref<TrustlineInfo[]>([]);
+  const trustlineError = ref("");
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -109,6 +112,7 @@ export const useTraderStore = defineStore("trader", () => {
       /* backend may not be up yet; SSE will fill in */
     }
     void loadBalances();
+    void loadTrustlines();
     void loadEvolution();
     void loadTrades();
     void loadLogs();
@@ -424,6 +428,48 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  // --- trustlines ---
+  async function loadTrustlines(): Promise<void> {
+    try {
+      trustlines.value = await api.trustlines();
+    } catch {
+      /* leave previous data */
+    }
+  }
+
+  async function addTrustline(body: {
+    asset?: string;
+    code?: string;
+    issuer?: string;
+    homeDomain?: string;
+  }): Promise<boolean> {
+    trustlineError.value = "";
+    const r = await api.addTrustline(body);
+    if (r.error) {
+      trustlineError.value = r.error;
+      return false;
+    }
+    await loadTrustlines();
+    void loadBalances();
+    return true;
+  }
+
+  async function removeTrustline(body: {
+    asset?: string;
+    code?: string;
+    issuer?: string;
+  }): Promise<boolean> {
+    trustlineError.value = "";
+    const r = await api.removeTrustline(body);
+    if (r.error) {
+      trustlineError.value = r.error;
+      return false;
+    }
+    await loadTrustlines();
+    void loadBalances();
+    return true;
+  }
+
   async function loadEvolution(): Promise<void> {
     try {
       evolution.value = await api.evolution();
@@ -579,6 +625,11 @@ export const useTraderStore = defineStore("trader", () => {
     setStopLoss,
     cancelStopLoss,
     loadStopLossAudit,
+    trustlines,
+    trustlineError,
+    loadTrustlines,
+    addTrustline,
+    removeTrustline,
     loadBalances,
     loadEvolution,
     loadTrades,

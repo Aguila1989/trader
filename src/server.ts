@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Response } from "express";
 import { existsSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -14,8 +14,15 @@ import {
   autoApprove,
   reject,
   placeManualOrder,
+  runExclusive,
 } from "./trading/orchestrator";
 import { stopLossService, StopLossError } from "./trading/stopLossService";
+import {
+  getTrustlines,
+  changeTrustline,
+  resolveIssuerByDomain,
+} from "./stellar/trustlineOps";
+import { canonicalAsset } from "./stellar/assets";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
 import {
@@ -137,6 +144,107 @@ app.get("/api/balances", async (_req, res) => {
   }
   try {
     res.json(await getBalances(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * Shared gate for non-trade on-chain account ops (trustlines, payments,
+ * claimable-balance claims). Writes go out only with a signing key, the kill
+ * switch released, and live trading armed - the same "no on-chain submit unless
+ * armed" invariant the trade path enforces. Returns false (and writes the
+ * response) when blocked.
+ */
+function ensureCanSubmit(res: Response): boolean {
+  if (isReadOnly) {
+    res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
+    return false;
+  }
+  if (store.killSwitch) {
+    res.status(400).json({ error: "Kill switch is active - all on-chain actions are halted." });
+    return false;
+  }
+  if (!store.liveTrading) {
+    res.status(400).json({
+      error: "Live trading is OFF - arm it on the dashboard before signing on-chain actions.",
+    });
+    return false;
+  }
+  return true;
+}
+
+// Current non-native trustlines (asset, balance, limit). Read-only.
+app.get("/api/trustlines", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json([]);
+    return;
+  }
+  try {
+    res.json(await getTrustlines(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Add a trustline by {asset:"CODE:ISSUER"} or {code, issuer} or {code, homeDomain}.
+app.post("/api/trustlines", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const assetSpec = String(b.asset ?? "").trim();
+  const code = String(b.code ?? "").trim();
+  let issuer = String(b.issuer ?? "").trim();
+  const domain = String(b.homeDomain ?? b.domain ?? "").trim();
+  try {
+    let spec = assetSpec;
+    if (!spec) {
+      if (!code) {
+        res.status(400).json({ error: "asset, or code (+ issuer/homeDomain), is required" });
+        return;
+      }
+      if (!issuer && domain) issuer = await resolveIssuerByDomain(code, domain);
+      if (!issuer) {
+        res.status(400).json({ error: "issuer or homeDomain is required" });
+        return;
+      }
+      spec = `${code}:${issuer}`;
+    }
+    const result = await runExclusive(() => changeTrustline(spec, { remove: false }));
+    store.log("trade", `Trustline added: ${result.asset} (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Remove (zero-limit) a trustline; refuses when a balance is still held.
+app.post("/api/trustlines/remove", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const assetSpec = String(b.asset ?? "").trim();
+  const code = String(b.code ?? "").trim();
+  const issuer = String(b.issuer ?? "").trim();
+  const spec = assetSpec || (code && issuer ? `${code}:${issuer}` : "");
+  if (!spec) {
+    res.status(400).json({ error: "asset (or code + issuer) is required" });
+    return;
+  }
+  try {
+    const pub = signerPublicKey();
+    if (pub) {
+      const canon = canonicalAsset(spec).toUpperCase();
+      const line = (await getTrustlines(pub)).find((l) => l.asset.toUpperCase() === canon);
+      if (line && Number(line.balance) > 0) {
+        res.status(400).json({
+          error: `Cannot remove the ${line.code} trustline: balance is ${line.balance}. Sell or transfer it to zero first.`,
+        });
+        return;
+      }
+    }
+    const result = await runExclusive(() => changeTrustline(spec, { remove: true }));
+    store.log("trade", `Trustline removed: ${result.asset} (tx ${result.hash}).`);
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
