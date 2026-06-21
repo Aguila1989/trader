@@ -345,10 +345,10 @@ async function placeOrder(): Promise<void> {
         </p>
 
         <p class="muted order-hint">
-          Manual orders are NOT limited by the per-trade size cap - size them as
-          you like. They still pass the other gates (slippage, daily volume/loss,
-          exposure caps, kill switch), so a very large order may still be blocked
-          by one of those.
+          Manual orders bypass the size, daily-volume and exposure caps - trade
+          any amount. They're still subject to the safety gates (slippage,
+          daily-loss halt, kill switch, sufficient funds), so an order can still
+          be blocked by one of those.
         </p>
       </div>
 

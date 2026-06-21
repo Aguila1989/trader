@@ -197,13 +197,32 @@ describe("checkPolicy", () => {
     expect(res.violations.join(" ")).toMatch(/declared slippage/i);
   });
 
-  it("a manual order is still bound by the SEPARATE daily-volume cap", () => {
+  it("EXEMPTS a manual order from the daily-volume AND exposure caps", () => {
+    // 5000 XLM blows past the size cap (50), the daily-volume cap (500, already
+    // 450 used) and the exposure caps - all bypassed for a manual order.
     const res = run(
-      { quoteAsset: USDC, amount: "120", initiator: "manual" },
+      { quoteAsset: USDC, amount: "5000", initiator: "manual" },
       { daily: { volume: 450 } },
     );
+    expect(res.allowed).toBe(true);
+  });
+
+  it("a manual order is STILL halted by the daily-loss circuit breaker", () => {
+    const res = run(
+      { quoteAsset: USDC, amount: "120", initiator: "manual" },
+      { daily: { realizedPnl: -25 } },
+    );
     expect(res.allowed).toBe(false);
-    expect(res.violations.join(" ")).toMatch(/daily volume/i);
+    expect(res.violations.join(" ")).toMatch(/daily loss limit/i);
+  });
+
+  it("a manual order is STILL blocked by the kill switch", () => {
+    const res = run(
+      { quoteAsset: USDC, amount: "120", initiator: "manual" },
+      { killSwitch: true },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/kill switch/i);
   });
 
   it("blocks at the daily trade-count cap", () => {

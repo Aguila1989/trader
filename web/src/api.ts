@@ -11,6 +11,7 @@ import type {
   StopLossAuditPage,
   TradeProposal,
   TradesPage,
+  TrustlineInfo,
 } from "./types";
 
 // All requests are same-origin: in dev Vite proxies /api -> :3000, in prod
@@ -178,4 +179,16 @@ export const api = {
     });
     return getJSON<StopLossAuditPage>(`/api/stoploss/audit?${q.toString()}`);
   },
+  trustlines: () => getJSON<TrustlineInfo[]>("/api/trustlines"),
+  addTrustline: (body: {
+    asset?: string;
+    code?: string;
+    issuer?: string;
+    homeDomain?: string;
+  }) => postJSON<{ hash?: string; asset?: string; error?: string }>("/api/trustlines", body),
+  removeTrustline: (body: { asset?: string; code?: string; issuer?: string }) =>
+    postJSON<{ hash?: string; asset?: string; error?: string }>(
+      "/api/trustlines/remove",
+      body,
+    ),
 };
