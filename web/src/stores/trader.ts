@@ -4,6 +4,7 @@ import { api, withToken } from "../api";
 import type {
   Balance,
   Candle,
+  ClaimableBalanceInfo,
   DailyState,
   EvolutionPoint,
   LogEntry,
@@ -13,6 +14,7 @@ import type {
   OrderbookSnapshot,
   Snapshot,
   StopLossAuditPage,
+  SwapQuote,
   TradeProposal,
   TradesPage,
   TrustlineInfo,
@@ -42,6 +44,10 @@ export const useTraderStore = defineStore("trader", () => {
   const balances = ref<Balance[]>([]);
   const trustlines = ref<TrustlineInfo[]>([]);
   const trustlineError = ref("");
+  // --- wallet (send / swap / claimable) ---
+  const claimables = ref<ClaimableBalanceInfo[]>([]);
+  const walletError = ref("");
+  const swapQuoteResult = ref<SwapQuote | null>(null);
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -113,6 +119,7 @@ export const useTraderStore = defineStore("trader", () => {
     }
     void loadBalances();
     void loadTrustlines();
+    void loadClaimables();
     void loadEvolution();
     void loadTrades();
     void loadLogs();
@@ -470,6 +477,81 @@ export const useTraderStore = defineStore("trader", () => {
     return true;
   }
 
+  // --- wallet: send / swap / claimable ---
+  async function loadClaimables(): Promise<void> {
+    try {
+      claimables.value = await api.claimables();
+    } catch {
+      /* leave previous data */
+    }
+  }
+
+  async function pay(body: {
+    destination: string;
+    asset: string;
+    amount: string;
+    memo?: string;
+  }): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.pay(body);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    void loadBalances();
+    return true;
+  }
+
+  async function getSwapQuote(
+    send: string,
+    dest: string,
+    amount: string,
+  ): Promise<SwapQuote | null> {
+    walletError.value = "";
+    try {
+      const q = await api.swapQuote(send, dest, amount);
+      if (q.error) {
+        walletError.value = q.error;
+        swapQuoteResult.value = null;
+      } else {
+        swapQuoteResult.value = q;
+      }
+    } catch (err) {
+      walletError.value = (err as Error).message;
+      swapQuoteResult.value = null;
+    }
+    return swapQuoteResult.value;
+  }
+
+  async function executeSwap(body: {
+    sendAsset: string;
+    sendAmount: string;
+    destAsset: string;
+    slippageBps?: number;
+  }): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.swap(body);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    swapQuoteResult.value = null;
+    void loadBalances();
+    return true;
+  }
+
+  async function claim(id: string): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.claimBalance(id);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    await loadClaimables();
+    void loadBalances();
+    return true;
+  }
+
   async function loadEvolution(): Promise<void> {
     try {
       evolution.value = await api.evolution();
@@ -630,6 +712,14 @@ export const useTraderStore = defineStore("trader", () => {
     loadTrustlines,
     addTrustline,
     removeTrustline,
+    claimables,
+    walletError,
+    swapQuoteResult,
+    loadClaimables,
+    pay,
+    getSwapQuote,
+    executeSwap,
+    claim,
     loadBalances,
     loadEvolution,
     loadTrades,

@@ -208,6 +208,22 @@ export interface TrustlineInfo {
   limit: string;
 }
 
+export interface ClaimableBalanceInfo {
+  id: string;
+  asset: string;
+  amount: string;
+  sponsor?: string;
+}
+
+export interface SwapQuote {
+  sendAsset: string;
+  sendAmount: string;
+  destAsset: string;
+  destAmount: string;
+  path: string[];
+  error?: string;
+}
+
 export type StopLossSetBy = "manual" | "ai";
 export type StopLossStatus = "active" | "triggered" | "cancelled" | "expired";
 

@@ -4,6 +4,7 @@ import { useTraderStore } from "./stores/trader";
 import TopBar from "./components/TopBar.vue";
 import StatsPanel from "./components/StatsPanel.vue";
 import PositionsPanel from "./components/PositionsPanel.vue";
+import WalletPanel from "./components/WalletPanel.vue";
 import TrustlinesPanel from "./components/TrustlinesPanel.vue";
 import MarketPanel from "./components/MarketPanel.vue";
 import ProposalsPanel from "./components/ProposalsPanel.vue";
@@ -25,6 +26,7 @@ onMounted(() => void store.init());
   <main v-if="!store.selectedToken">
     <StatsPanel />
     <PositionsPanel />
+    <WalletPanel />
     <TrustlinesPanel />
     <MarketPanel />
     <ProposalsPanel />
