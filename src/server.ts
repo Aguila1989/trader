@@ -22,6 +22,8 @@ import {
   changeTrustline,
   resolveIssuerByDomain,
 } from "./stellar/trustlineOps";
+import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
+import { listClaimableBalances, claimBalance } from "./stellar/claimable";
 import { canonicalAsset } from "./stellar/assets";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
@@ -244,6 +246,110 @@ app.post("/api/trustlines/remove", async (req, res) => {
     }
     const result = await runExclusive(() => changeTrustline(spec, { remove: true }));
     store.log("trade", `Trustline removed: ${result.asset} (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// --- Payments / swaps / claimable balances --------------------------------
+// Send a payment (same-asset) to a G... address or a federation address.
+app.post("/api/pay", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const destination = String(b.destination ?? "").trim();
+  const asset = String(b.asset ?? "").trim() || "XLM";
+  const amount = String(b.amount ?? "").trim();
+  const memo = b.memo != null ? String(b.memo) : undefined;
+  if (!destination) {
+    res.status(400).json({ error: "destination is required" });
+    return;
+  }
+  if (!(Number(amount) > 0)) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  try {
+    const result = await runExclusive(() =>
+      sendPayment({ destination, asset, amount, memo }),
+    );
+    store.log(
+      "trade",
+      `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Quote a strict-send swap (read-only).
+app.get("/api/swap/quote", async (req, res) => {
+  const send = String(req.query.send ?? "").trim();
+  const dest = String(req.query.dest ?? "").trim();
+  const amount = String(req.query.amount ?? "").trim();
+  if (!send || !dest || !(Number(amount) > 0)) {
+    res.status(400).json({ error: "send, dest and a positive amount are required" });
+    return;
+  }
+  try {
+    res.json((await quoteSwap(send, amount, dest)) ?? { error: "No swap path found." });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Execute a strict-send swap (path payment to self, slippage-bounded).
+app.post("/api/swap", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const sendAsset = String(b.sendAsset ?? "").trim();
+  const destAsset = String(b.destAsset ?? "").trim();
+  const sendAmount = String(b.sendAmount ?? "").trim();
+  const slippageBps = Number.isFinite(Number(b.slippageBps))
+    ? Number(b.slippageBps)
+    : undefined;
+  if (!sendAsset || !destAsset) {
+    res.status(400).json({ error: "sendAsset and destAsset are required" });
+    return;
+  }
+  if (!(Number(sendAmount) > 0)) {
+    res.status(400).json({ error: "sendAmount must be a positive number" });
+    return;
+  }
+  try {
+    const result = await runExclusive(() =>
+      swap({ sendAsset, sendAmount, destAsset, slippageBps }),
+    );
+    store.log(
+      "trade",
+      `Swap: ${sendAmount} ${sendAsset.split(":")[0]} -> ${destAsset.split(":")[0]} (min ${result.destMin}, tx ${result.hash}).`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Claimable balances ("pending payments") for the account.
+app.get("/api/claimable", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json([]);
+    return;
+  }
+  try {
+    res.json(await listClaimableBalances(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/claimable/:id/claim", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  try {
+    const result = await runExclusive(() => claimBalance(req.params.id));
+    store.log("trade", `Claimed balance ${req.params.id.slice(0, 12)} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });

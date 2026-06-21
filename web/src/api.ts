@@ -1,6 +1,7 @@
 import type {
   Balance,
   Candle,
+  ClaimableBalanceInfo,
   EvolutionPoint,
   LogsPage,
   ManualOrderInput,
@@ -9,6 +10,7 @@ import type {
   Snapshot,
   StopLoss,
   StopLossAuditPage,
+  SwapQuote,
   TradeProposal,
   TradesPage,
   TrustlineInfo,
@@ -179,6 +181,27 @@ export const api = {
     });
     return getJSON<StopLossAuditPage>(`/api/stoploss/audit?${q.toString()}`);
   },
+  pay: (body: { destination: string; asset: string; amount: string; memo?: string }) =>
+    postJSON<{ hash?: string; error?: string }>("/api/pay", body),
+  swapQuote: (send: string, dest: string, amount: string) => {
+    const q = new URLSearchParams({ send, dest, amount });
+    return getJSON<SwapQuote>(`/api/swap/quote?${q.toString()}`);
+  },
+  swap: (body: {
+    sendAsset: string;
+    sendAmount: string;
+    destAsset: string;
+    slippageBps?: number;
+  }) =>
+    postJSON<{ hash?: string; destMin?: string; quoted?: string; error?: string }>(
+      "/api/swap",
+      body,
+    ),
+  claimables: () => getJSON<ClaimableBalanceInfo[]>("/api/claimable"),
+  claimBalance: (id: string) =>
+    postJSON<{ hash?: string; error?: string }>(
+      `/api/claimable/${encodeURIComponent(id)}/claim`,
+    ),
   trustlines: () => getJSON<TrustlineInfo[]>("/api/trustlines"),
   addTrustline: (body: {
     asset?: string;
