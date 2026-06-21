@@ -445,7 +445,7 @@ function repriceMaker(
 
 async function intake(
   p: ProposedTrade,
-  meta?: { provider?: string; model?: string },
+  meta?: { provider?: string; model?: string; initiator?: TradeProposal["initiator"] },
 ): Promise<TradeProposal> {
   const now = new Date().toISOString();
   const proposal: TradeProposal = {
@@ -462,6 +462,9 @@ async function intake(
     reason: p.reason,
     status: "proposed",
     policyViolations: [],
+    // Everything through intake() is AI- or system-initiated; the per-trade size
+    // cap applies. Manual orders take the placeManualOrder() path instead.
+    initiator: meta?.initiator ?? "ai",
     // Attribution: WHO proposed this (provider + model) is stored on every
     // proposal so hit-rates can later be compared per model / per source.
     provider: meta?.provider ?? aiProviderId(),
@@ -563,7 +566,7 @@ export async function submitSystemProposal(
   p: ProposedTrade,
   source: string,
 ): Promise<TradeProposal> {
-  return intake(p, { provider: source, model: "" });
+  return intake(p, { provider: source, model: "", initiator: "system" });
 }
 
 export interface ManualOrderInput {
@@ -612,6 +615,9 @@ export async function placeManualOrder(
     reason: "Manual order placed from the dashboard.",
     status: "proposed",
     policyViolations: [],
+    // MANUAL: the user chooses their own size, so the per-trade SIZE cap is
+    // bypassed in checkPolicy. Every other risk gate still applies.
+    initiator: "manual",
     provider: "manual",
     model: "",
     confidence: "high",

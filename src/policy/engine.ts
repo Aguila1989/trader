@@ -105,22 +105,34 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
 
   // 3. Per-trade size cap (tier-aware), tapered as the daily loss budget burns.
   //    A risk-reducing trade may always be as large as the position it closes.
+  //
+  //    SPLIT BY INITIATOR (the SetBy-style flag on the proposal): a MANUAL order
+  //    placed by the user from the dashboard is EXEMPT from the per-trade SIZE
+  //    cap - the user chooses their own size. AI- and system-initiated orders
+  //    stay capped, unchanged. The cap is NOT removed globally: only the
+  //    confirmed-manual path bypasses it, and ONLY this size cap - every other
+  //    gate (kill switch, whitelist, slippage/deviation, daily volume + loss
+  //    caps, the exposure caps in section 7, staleness, cooldown, preflight)
+  //    still applies to a manual order.
   const baseCap = maxAmountForPair(proposal.baseAsset, proposal.quoteAsset);
-  const taper = lossTaper(
-    daily.realizedPnl,
-    inp.unrealizedPnl ?? 0,
-    limits.maxDailyLoss,
-  );
-  let cap = baseCap * taper;
-  if (riskReducing) cap = Math.max(cap, Math.abs(net));
-  if (amount > cap + EPS) {
-    violations.push(
-      taper < 1 && !riskReducing
-        ? `Amount ${amount} exceeds max per trade ${round7(cap)} (cap ${baseCap} tapered x${taper} - ${Math.round(
-            lossBudgetUsed(daily.realizedPnl, inp.unrealizedPnl ?? 0, limits.maxDailyLoss) * 100,
-          )}% of the daily loss budget is used).`
-        : `Amount ${amount} exceeds max per trade ${round7(cap)}.`,
+  const manualInitiated = proposal.initiator === "manual";
+  if (!manualInitiated) {
+    const taper = lossTaper(
+      daily.realizedPnl,
+      inp.unrealizedPnl ?? 0,
+      limits.maxDailyLoss,
     );
+    let cap = baseCap * taper;
+    if (riskReducing) cap = Math.max(cap, Math.abs(net));
+    if (amount > cap + EPS) {
+      violations.push(
+        taper < 1 && !riskReducing
+          ? `Amount ${amount} exceeds max per trade ${round7(cap)} (cap ${baseCap} tapered x${taper} - ${Math.round(
+              lossBudgetUsed(daily.realizedPnl, inp.unrealizedPnl ?? 0, limits.maxDailyLoss) * 100,
+            )}% of the daily loss budget is used).`
+          : `Amount ${amount} exceeds max per trade ${round7(cap)}.`,
+      );
+    }
   }
 
   // 4. Daily caps - skipped for risk-reducing trades (closing is what brings
