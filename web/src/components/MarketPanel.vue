@@ -124,6 +124,13 @@ const orderResult = computed(() => {
   }
 });
 
+// Tap a book level to prefill the order form: an ask is where you'd BUY, a bid
+// is where you'd SELL.
+function fillFromBook(price: string, side: "buy" | "sell"): void {
+  orderSide.value = side;
+  orderLimitPrice.value = price;
+}
+
 async function placeOrder(): Promise<void> {
   if (!orderValid.value || store.placingOrder) return;
   const input: ManualOrderInput = {

@@ -215,6 +215,18 @@ export interface ClaimableBalanceInfo {
   sponsor?: string;
 }
 
+export interface PortfolioHolding {
+  asset: string;
+  balance: string;
+  /** XLM-equivalent value, or null when the asset can't be priced. */
+  xlmValue: number | null;
+}
+
+export interface PortfolioResponse {
+  holdings: PortfolioHolding[];
+  totalXlm: number;
+}
+
 export interface SwapQuote {
   sendAsset: string;
   sendAmount: string;

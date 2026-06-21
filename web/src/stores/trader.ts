@@ -12,6 +12,7 @@ import type {
   ManualOrderInput,
   MarketSnapshot,
   OrderbookSnapshot,
+  PortfolioResponse,
   Snapshot,
   StopLossAuditPage,
   SwapQuote,
@@ -48,6 +49,7 @@ export const useTraderStore = defineStore("trader", () => {
   const claimables = ref<ClaimableBalanceInfo[]>([]);
   const walletError = ref("");
   const swapQuoteResult = ref<SwapQuote | null>(null);
+  const portfolio = ref<PortfolioResponse | null>(null);
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -120,6 +122,7 @@ export const useTraderStore = defineStore("trader", () => {
     void loadBalances();
     void loadTrustlines();
     void loadClaimables();
+    void loadPortfolio();
     void loadEvolution();
     void loadTrades();
     void loadLogs();
@@ -435,6 +438,14 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  async function loadPortfolio(): Promise<void> {
+    try {
+      portfolio.value = await api.portfolio();
+    } catch {
+      /* leave previous data */
+    }
+  }
+
   // --- trustlines ---
   async function loadTrustlines(): Promise<void> {
     try {
@@ -715,6 +726,8 @@ export const useTraderStore = defineStore("trader", () => {
     claimables,
     walletError,
     swapQuoteResult,
+    portfolio,
+    loadPortfolio,
     loadClaimables,
     pay,
     getSwapQuote,

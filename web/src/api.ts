@@ -7,6 +7,7 @@ import type {
   ManualOrderInput,
   MarketSnapshot,
   OrderbookSnapshot,
+  PortfolioResponse,
   Snapshot,
   StopLoss,
   StopLossAuditPage,
@@ -202,6 +203,7 @@ export const api = {
     postJSON<{ hash?: string; error?: string }>(
       `/api/claimable/${encodeURIComponent(id)}/claim`,
     ),
+  portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
   trustlines: () => getJSON<TrustlineInfo[]>("/api/trustlines"),
   addTrustline: (body: {
     asset?: string;
