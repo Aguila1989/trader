@@ -103,6 +103,14 @@ export interface Limits {
   maxDailyLoss: number;
   maxSlippageBps: number;
   cooldownSeconds: number;
+  maxEntrySpreadBps: number;
+  minVolume24h: number;
+  maxOpenExposure: number;
+  pairExposureMultiplier: number;
+  stopLossPct: number;
+  maxOfferAgeMinutes: number;
+  maxProposalAgeSeconds: number;
+  minRiskReward: number;
 }
 
 export interface Snapshot {
@@ -129,6 +137,8 @@ export interface Snapshot {
   aiProviders: { id: string; label: string; model: string; active: boolean }[];
   limits: Limits;
   daily: DailyState;
+  /** Mark-to-market PnL of open positions in XLM (from the monitor). */
+  unrealizedPnl: number;
   positions: PositionSummary[];
   proposals: TradeProposal[];
   logs: LogEntry[];

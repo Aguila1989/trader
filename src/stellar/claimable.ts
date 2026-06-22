@@ -1,6 +1,7 @@
-import { BASE_FEE, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { config } from "../config";
 import { horizon } from "./client";
+import { recommendedFee } from "./amounts";
 import { signAndSubmit } from "./signer";
 
 /** A claimable balance ("pending payment") addressed to the account. */
@@ -36,19 +37,18 @@ export async function listClaimableBalances(
   }));
 }
 
-function feeStr(): string {
-  return String(Math.max(Number(BASE_FEE), Math.floor(config.limits.maxFeeStroops)));
-}
-
 /** Claim a claimable balance by id. Requires a trustline for non-native assets
- *  (Horizon rejects the claim otherwise). */
+ *  (Horizon rejects the claim otherwise - the caller should pre-check). */
 export async function claimBalance(balanceId: string): Promise<{ hash: string }> {
+  if (!/^[0-9a-f]{72}$/i.test(balanceId.trim())) {
+    throw new Error("Invalid claimable balance id.");
+  }
   const account = await horizon.loadAccount(config.stellarPublic);
   const tx = new TransactionBuilder(account, {
-    fee: feeStr(),
+    fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,
   })
-    .addOperation(Operation.claimClaimableBalance({ balanceId }))
+    .addOperation(Operation.claimClaimableBalance({ balanceId: balanceId.trim() }))
     .setTimeout(120)
     .build();
   return signAndSubmit(tx);

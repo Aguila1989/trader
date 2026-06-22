@@ -9,7 +9,7 @@ import {
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
+import { fmtNum, assetCode as code } from "../format";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -31,9 +31,6 @@ const unpriced = computed(() =>
 );
 const totalXlm = computed(() => store.portfolio?.totalXlm ?? 0);
 
-function code(spec: string): string {
-  return spec.split(":")[0] || spec;
-}
 function pct(v: number | null): string {
   if (v == null || totalXlm.value <= 0) return "-";
   return `${((v / totalXlm.value) * 100).toFixed(1)}%`;

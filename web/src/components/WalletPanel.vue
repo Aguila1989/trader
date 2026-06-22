@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum, shortKey } from "../format";
+import { fmtNum, shortKey, assetCode as code } from "../format";
 
 const store = useTraderStore();
 
@@ -79,9 +79,6 @@ async function doSwap(): Promise<void> {
   }
 }
 
-function code(spec: string): string {
-  return spec.split(":")[0] || spec;
-}
 </script>
 
 <template>

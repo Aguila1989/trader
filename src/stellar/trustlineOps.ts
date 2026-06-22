@@ -1,12 +1,8 @@
-import {
-  BASE_FEE,
-  Operation,
-  StellarToml,
-  TransactionBuilder,
-} from "@stellar/stellar-sdk";
+import { Operation, StellarToml, TransactionBuilder } from "@stellar/stellar-sdk";
 import { config } from "../config";
 import { horizon } from "./client";
 import { parseAsset, assetToString, canonicalAsset } from "./assets";
+import { recommendedFee } from "./amounts";
 import { signAndSubmit } from "./signer";
 
 /**
@@ -73,12 +69,6 @@ export async function resolveIssuerByDomain(
   return match.issuer;
 }
 
-function feeStr(): string {
-  return String(
-    Math.max(Number(BASE_FEE), Math.floor(config.limits.maxFeeStroops)),
-  );
-}
-
 /**
  * Build, sign and submit a trustline change. `remove: true` sets a zero limit,
  * which CLOSES the trustline and frees the 0.5 XLM reserve - Horizon rejects it
@@ -95,7 +85,7 @@ export async function changeTrustline(
   }
   const account = await horizon.loadAccount(config.stellarPublic);
   const tx = new TransactionBuilder(account, {
-    fee: feeStr(),
+    fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,
   })
     .addOperation(

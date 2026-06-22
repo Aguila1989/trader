@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
+import { fmtNum, assetCode as code } from "../format";
 
 const store = useTraderStore();
 const base = ref("XLM");
@@ -26,9 +26,6 @@ async function add(): Promise<void> {
   }
 }
 
-function code(spec: string): string {
-  return spec.split(":")[0] || spec;
-}
 </script>
 
 <template>

@@ -1,5 +1,4 @@
 import {
-  BASE_FEE,
   Federation,
   Memo,
   Operation,
@@ -9,6 +8,7 @@ import {
 import { config } from "../config";
 import { horizon } from "./client";
 import { parseAsset, assetToString } from "./assets";
+import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
 
 /**
@@ -16,30 +16,80 @@ import { signAndSubmit } from "./signer";
  * through the server's ensureCanSubmit gate + the orchestrator's serial lock.
  */
 
-function feeStr(): string {
-  return String(Math.max(Number(BASE_FEE), Math.floor(config.limits.maxFeeStroops)));
+const G_ADDR = /^G[A-Z2-7]{55}$/; // ed25519 public key
+const M_ADDR = /^M[A-Z2-7]{68}$/; // muxed account
+
+/** A text memo truncated to MEMO_TEXT's 28-BYTE limit (not 28 UTF-16 chars, so
+ *  a multibyte string can't overflow and throw at build time). Trims whole
+ *  characters off the end until it fits, so the result is always valid UTF-8. */
+function textMemo(s: string): Memo {
+  let str = s.trim();
+  while (Buffer.byteLength(str, "utf8") > 28) str = str.slice(0, -1);
+  return Memo.text(str);
 }
 
-/** Clamp a value to a valid Stellar amount string (<= 7 decimals). */
-function amt7(v: string | number): string {
-  return Number(Number(v).toFixed(7)).toString();
+/** The memo a federation record DEMANDS (e.g. an exchange deposit tag), or the
+ *  operator's text memo when the record carries none. A federation memo is
+ *  authoritative: dropping it sends funds to a pooled account uncredited. */
+function memoFor(
+  rec: { memo_type?: string; memo?: string },
+  operatorMemo?: string,
+): Memo | undefined {
+  if (rec.memo != null && rec.memo !== "") {
+    switch (rec.memo_type) {
+      case "id":
+        return Memo.id(String(rec.memo));
+      case "hash":
+        return Memo.hash(Buffer.from(rec.memo, "base64"));
+      default:
+        return Memo.text(String(rec.memo));
+    }
+  }
+  return operatorMemo?.trim() ? textMemo(operatorMemo) : undefined;
 }
 
-/** Resolve a destination: a raw G... account id OR a federation address
- *  (name*domain, resolved via the domain's stellar.toml). */
-export async function resolveDestination(dest: string): Promise<string> {
+export interface ResolvedDestination {
+  accountId: string;
+  memo?: Memo;
+}
+
+/** Resolve a destination: a raw G.../M... account id, or a federation address
+ *  (name*domain). For a federation address the returned memo (if any) is the
+ *  one the recipient requires. */
+export async function resolveDestination(
+  dest: string,
+  operatorMemo?: string,
+): Promise<ResolvedDestination> {
   const d = dest.trim();
   if (d.includes("*")) {
     const rec = await Federation.Server.resolve(d);
     if (!rec.account_id) {
       throw new Error(`Federation address ${d} did not resolve to an account.`);
     }
-    return rec.account_id;
+    const memo = memoFor(rec, operatorMemo);
+    return { accountId: rec.account_id, ...(memo ? { memo } : {}) };
   }
-  if (!/^G[A-Z2-7]{55}$/.test(d)) {
-    throw new Error("Invalid destination: expected a G... address or name*domain.");
+  if (!G_ADDR.test(d) && !M_ADDR.test(d)) {
+    throw new Error("Invalid destination: expected a G.../M... address or name*domain.");
   }
-  return d;
+  return {
+    accountId: d,
+    ...(operatorMemo?.trim() ? { memo: textMemo(operatorMemo) } : {}),
+  };
+}
+
+async function buildSignSubmit(
+  op: Parameters<TransactionBuilder["addOperation"]>[0],
+  memo?: Memo,
+): Promise<{ hash: string }> {
+  const account = await horizon.loadAccount(config.stellarPublic);
+  const builder = new TransactionBuilder(account, {
+    fee: recommendedFee(),
+    networkPassphrase: config.networkPassphrase,
+  }).addOperation(op);
+  if (memo) builder.addMemo(memo);
+  const { hash } = await signAndSubmit(builder.setTimeout(120).build());
+  return { hash };
 }
 
 export interface SendPaymentInput {
@@ -51,15 +101,12 @@ export interface SendPaymentInput {
 
 export async function sendPayment(input: SendPaymentInput): Promise<{ hash: string }> {
   if (!(Number(input.amount) > 0)) throw new Error("Amount must be a positive number.");
-  const destination = await resolveDestination(input.destination);
+  const { accountId, memo } = await resolveDestination(input.destination, input.memo);
   const asset = parseAsset(input.asset);
-  const account = await horizon.loadAccount(config.stellarPublic);
-  const builder = new TransactionBuilder(account, {
-    fee: feeStr(),
-    networkPassphrase: config.networkPassphrase,
-  }).addOperation(Operation.payment({ destination, asset, amount: amt7(input.amount) }));
-  if (input.memo?.trim()) builder.addMemo(Memo.text(input.memo.trim().slice(0, 28)));
-  return signAndSubmit(builder.setTimeout(120).build());
+  return buildSignSubmit(
+    Operation.payment({ destination: accountId, asset, amount: formatAmount(input.amount) }),
+    memo,
+  );
 }
 
 export interface SwapQuote {
@@ -88,12 +135,14 @@ export async function quoteSwap(
   const sendAsset = parseAsset(sendSpec);
   const destAsset = parseAsset(destSpec);
   try {
-    const page = await horizon.strictSendPaths(sendAsset, amt7(sendAmount), [destAsset]).call();
+    const page = await horizon
+      .strictSendPaths(sendAsset, formatAmount(sendAmount), [destAsset])
+      .call();
     const best = page.records[0];
     if (!best) return null;
     return {
       sendAsset: assetToString(sendAsset),
-      sendAmount: amt7(sendAmount),
+      sendAmount: formatAmount(sendAmount),
       destAsset: assetToString(destAsset),
       destAmount: best.destination_amount,
       path: (best.path ?? []).map(pathSpecOf),
@@ -112,7 +161,8 @@ export interface SwapInput {
 
 /**
  * Execute a strict-send swap (path payment to self). A fresh quote sets destMin
- * = quoted * (1 - slippage) so the fill is bounded against adverse movement.
+ * = floor(quoted * (1 - slippage)) so the fill is bounded against adverse
+ * movement; rounding DOWN keeps the floor never looser than intended.
  */
 export async function swap(
   input: SwapInput,
@@ -120,27 +170,20 @@ export async function swap(
   const quote = await quoteSwap(input.sendAsset, input.sendAmount, input.destAsset);
   if (!quote) throw new Error("No swap path found for this pair/size.");
   const slip = Math.max(0, input.slippageBps ?? config.limits.maxSlippageBps) / 10_000;
-  const destMin = amt7(Number(quote.destAmount) * (1 - slip));
+  // Floor to 7dp so destMin is never rounded UP into a looser bound.
+  const destMin = formatAmount(Math.floor(Number(quote.destAmount) * (1 - slip) * 1e7) / 1e7);
   const sendAsset = parseAsset(input.sendAsset);
   const destAsset = parseAsset(input.destAsset);
   const path: Asset[] = quote.path.map((s) => parseAsset(s));
-  const account = await horizon.loadAccount(config.stellarPublic);
-  const tx = new TransactionBuilder(account, {
-    fee: feeStr(),
-    networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(
-      Operation.pathPaymentStrictSend({
-        sendAsset,
-        sendAmount: amt7(input.sendAmount),
-        destination: config.stellarPublic,
-        destAsset,
-        destMin,
-        path,
-      }),
-    )
-    .setTimeout(120)
-    .build();
-  const { hash } = await signAndSubmit(tx);
+  const { hash } = await buildSignSubmit(
+    Operation.pathPaymentStrictSend({
+      sendAsset,
+      sendAmount: formatAmount(input.sendAmount),
+      destination: config.stellarPublic,
+      destAsset,
+      destMin,
+      path,
+    }),
+  );
   return { hash, destMin, quoted: quote.destAmount };
 }
