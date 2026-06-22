@@ -136,6 +136,8 @@ export interface Snapshot {
   liquidityRecs: LiquidityRec[];
   /** Active stop-loss orders (manual + AI). */
   stopLosses: StopLoss[];
+  /** Active price alerts. */
+  priceAlerts: PriceAlert[];
 }
 
 export interface OrderbookLevel {
@@ -276,6 +278,22 @@ export interface StopLossAuditPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+export type AlertDirection = "above" | "below";
+export type AlertStatus = "active" | "triggered" | "cancelled";
+
+export interface PriceAlert {
+  id: string;
+  createdAt: string;
+  baseAsset: string;
+  quoteAsset: string;
+  direction: AlertDirection;
+  price: string;
+  status: AlertStatus;
+  note?: string;
+  triggeredAt?: string;
+  triggerPrice?: string;
 }
 
 export type RankTrend = "improving" | "declining" | "stable";

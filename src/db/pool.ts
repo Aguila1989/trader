@@ -211,6 +211,26 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         ON dbo.StopLosses (network, status, baseAsset, quoteAsset);
     END
 
+    -- Price alerts (observe-only): notify when a pair crosses a price.
+    IF OBJECT_ID('dbo.PriceAlerts', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.PriceAlerts (
+        id           NVARCHAR(64)  NOT NULL CONSTRAINT PK_PriceAlerts PRIMARY KEY,
+        createdAt    DATETIME2(3)  NOT NULL,
+        network      NVARCHAR(16)  NOT NULL,
+        baseAsset    NVARCHAR(120) NOT NULL,
+        quoteAsset   NVARCHAR(120) NOT NULL,
+        direction    NVARCHAR(8)   NOT NULL,
+        price        DECIMAL(38,7) NOT NULL,
+        status       NVARCHAR(16)  NOT NULL,
+        note         NVARCHAR(MAX) NULL,
+        triggeredAt  DATETIME2(3)  NULL,
+        triggerPrice DECIMAL(38,7) NULL
+      );
+      CREATE INDEX IX_PriceAlerts_net_status
+        ON dbo.PriceAlerts (network, status);
+    END
+
     -- Immutable stop-loss audit trail (create/update/trigger/cancel/...).
     IF OBJECT_ID('dbo.StopLossAudit', 'U') IS NULL
     BEGIN

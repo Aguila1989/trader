@@ -17,6 +17,7 @@ import {
   runExclusive,
 } from "./trading/orchestrator";
 import { stopLossService, StopLossError } from "./trading/stopLossService";
+import { priceAlertService, PriceAlertError } from "./trading/priceAlertService";
 import {
   getTrustlines,
   changeTrustline,
@@ -511,6 +512,56 @@ app.get("/api/portfolio", async (_req, res) => {
     res.json({ holdings, totalXlm: Number(totalXlm.toFixed(7)) });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// --- Price alerts (observe-only) ------------------------------------------
+app.get("/api/alerts", (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  res.json(priceAlertService.getActiveAlerts(base, quote));
+});
+app.post("/api/alerts", (req, res) => {
+  const b = req.body ?? {};
+  const base = String(b.base ?? "").trim();
+  const quote = String(b.quote ?? "").trim();
+  const direction =
+    b.direction === "above" || b.direction === "below" ? b.direction : null;
+  const price = String(b.price ?? "").trim();
+  const note = b.note != null ? String(b.note) : undefined;
+  if (!base || !quote) {
+    res.status(400).json({ error: "base and quote are required" });
+    return;
+  }
+  if (!direction) {
+    res.status(400).json({ error: "direction must be 'above' or 'below'" });
+    return;
+  }
+  if (!(Number(price) > 0)) {
+    res.status(400).json({ error: "price must be a positive number" });
+    return;
+  }
+  try {
+    res.json(
+      priceAlertService.setAlert({ baseAsset: base, quoteAsset: quote, direction, price, note }),
+    );
+  } catch (err) {
+    if (err instanceof PriceAlertError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+app.post("/api/alerts/:id/cancel", (req, res) => {
+  try {
+    res.json(priceAlertService.cancelAlert(req.params.id));
+  } catch (err) {
+    if (err instanceof PriceAlertError) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
