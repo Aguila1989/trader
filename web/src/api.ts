@@ -155,13 +155,6 @@ export const api = {
       "/api/provider",
       { id },
     ),
-  stopLosses: (base?: string, quote?: string) => {
-    const q = new URLSearchParams();
-    if (base) q.set("base", base);
-    if (quote) q.set("quote", quote);
-    const qs = q.toString();
-    return getJSON<StopLoss[]>(`/api/stoploss${qs ? `?${qs}` : ""}`);
-  },
   setStopLoss: (body: {
     base: string;
     quote: string;
@@ -205,7 +198,6 @@ export const api = {
       `/api/claimable/${encodeURIComponent(id)}/claim`,
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
-  alerts: () => getJSON<PriceAlert[]>("/api/alerts"),
   setAlert: (body: {
     base: string;
     quote: string;

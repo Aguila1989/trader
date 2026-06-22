@@ -13,6 +13,11 @@ export function shortKey(k: string | null | undefined): string {
   return k.length > 14 ? `${k.slice(0, 6)}...${k.slice(-6)}` : k;
 }
 
+/** Asset code from a "CODE:ISSUER" spec (or the spec itself for XLM/native). */
+export function assetCode(spec: string): string {
+  return spec.split(":")[0] || spec;
+}
+
 export function timeStr(iso: string | null | undefined): string {
   if (!iso) return "-";
   const d = new Date(iso);

@@ -348,9 +348,28 @@ app.get("/api/claimable", async (_req, res) => {
 
 app.post("/api/claimable/:id/claim", async (req, res) => {
   if (!ensureCanSubmit(res)) return;
+  const id = req.params.id;
   try {
-    const result = await runExclusive(() => claimBalance(req.params.id));
-    store.log("trade", `Claimed balance ${req.params.id.slice(0, 12)} (tx ${result.hash}).`);
+    // Pre-check so a claim of a token we don't trust doesn't burn a fee failing.
+    const pub = signerPublicKey();
+    if (pub) {
+      const cb = (await listClaimableBalances(pub)).find((c) => c.id === id);
+      if (!cb) {
+        res.status(404).json({ error: "claimable balance not found for this account" });
+        return;
+      }
+      if (cb.asset !== "XLM") {
+        const trusted = (await getTrustlines(pub)).some((t) => t.asset === cb.asset);
+        if (!trusted) {
+          res.status(400).json({
+            error: `Establish a ${cb.asset.split(":")[0]} trustline before claiming this balance.`,
+          });
+          return;
+        }
+      }
+    }
+    const result = await runExclusive(() => claimBalance(id));
+    store.log("trade", `Claimed balance ${id.slice(0, 12)} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
@@ -542,9 +561,22 @@ app.post("/api/alerts", (req, res) => {
     return;
   }
   try {
-    res.json(
-      priceAlertService.setAlert({ baseAsset: base, quoteAsset: quote, direction, price, note }),
-    );
+    const alert = priceAlertService.setAlert({
+      baseAsset: base,
+      quoteAsset: quote,
+      direction,
+      price,
+      note,
+    });
+    // Alerts are evaluated by the position monitor; if it's off they never fire.
+    if (config.monitorIntervalSeconds <= 0) {
+      const warning =
+        "Alert created, but the position monitor is OFF (POSITION_MONITOR_INTERVAL_SECONDS=0) so it will not be evaluated until the monitor is enabled.";
+      store.log("warn", warning);
+      res.json({ ...alert, warning });
+      return;
+    }
+    res.json(alert);
   } catch (err) {
     if (err instanceof PriceAlertError) {
       res.status(400).json({ error: err.message });

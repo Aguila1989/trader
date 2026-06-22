@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
+import { fmtNum, assetCode as tokenCode } from "../format";
 import type { ManualOrderInput } from "../types";
 
 const store = useTraderStore();
@@ -30,10 +30,6 @@ const tokens = computed(() =>
     (a) => a.toUpperCase() !== "XLM" && a.toLowerCase() !== "native",
   ),
 );
-function tokenCode(spec: string): string {
-  return spec.split(":")[0] || spec;
-}
-
 const limitRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
