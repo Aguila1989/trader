@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useTraderStore } from "../stores/trader";
+import { fmtNum } from "../format";
 
 const store = useTraderStore();
+
+// Live total wallet value — USDC when priceable, else the XLM-equivalent.
+const totalUsd = computed(() => store.portfolio?.totalUsd ?? null);
+const totalXlm = computed(() => store.portfolio?.totalXlm ?? null);
+const totalText = computed(() => {
+  if (totalUsd.value != null) return `${fmtNum(totalUsd.value, 2)} USDC`;
+  if (totalXlm.value != null) return `${fmtNum(totalXlm.value)} XLM`;
+  return "—";
+});
 
 const networkBadge = computed(() => {
   const net = store.snapshot?.network;
@@ -74,6 +84,14 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
       </span>
       <span class="badge" :class="store.snapshot?.dbConnected ? 'live' : ''">
         {{ store.snapshot?.dbConnected ? "db on" : "in-memory" }}
+      </span>
+      <span
+        v-if="store.portfolio"
+        class="value-pill"
+        :title="totalUsd != null ? `≈ ${fmtNum(totalXlm)} XLM` : 'Total wallet value'"
+      >
+        <span class="vp-k">Value</span>
+        <span class="vp-amt">{{ totalText }}</span>
       </span>
     </div>
 

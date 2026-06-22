@@ -3,8 +3,16 @@ import { computed } from "vue";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import type { RankTrend, VolumeTrend } from "../types";
+import InfoTip from "./InfoTip.vue";
 
 const store = useTraderStore();
+
+const TIPS = {
+  liquidity:
+    "A measure of how actively a token is traded. Higher liquidity means easier entry and exit without moving the price.",
+  spread:
+    "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
+};
 
 const recs = computed(() => store.liquidityRecs);
 
@@ -42,8 +50,12 @@ function trendClass(t?: string): string {
         <tr>
           <th>#</th>
           <th>Asset</th>
-          <th class="num">24h vol (XLM)</th>
-          <th class="num">Spread</th>
+          <th class="num">
+            24h vol (XLM)<InfoTip :text="TIPS.liquidity" label="Liquidity score" placement="right" />
+          </th>
+          <th class="num">
+            Spread<InfoTip :text="TIPS.spread" label="Spread" placement="right" />
+          </th>
           <th>Rank trend</th>
           <th>Volume</th>
           <th class="num">Consistency</th>

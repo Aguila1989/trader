@@ -19,6 +19,7 @@ import type {
   TradeProposal,
   TradesPage,
   TrustlineInfo,
+  UniverseToken,
 } from "../types";
 
 type Timeframe = "hour" | "day" | "week" | "year";
@@ -50,7 +51,11 @@ export const useTraderStore = defineStore("trader", () => {
   const walletError = ref("");
   const swapQuoteResult = ref<SwapQuote | null>(null);
   const portfolio = ref<PortfolioResponse | null>(null);
+  const portfolioLoading = ref(false);
   const alertError = ref("");
+
+  // --- tradeable token universe (drives the asset dropdowns) ---
+  const universe = ref<UniverseToken[]>([]);
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -108,6 +113,39 @@ export const useTraderStore = defineStore("trader", () => {
   /** Kill switch engaged (blocks all trading, including stop-loss exits). */
   const killSwitch = computed(() => snapshot.value?.killSwitch ?? false);
 
+  // --- token lookup helpers (shared by the asset dropdowns) ---
+  const universeBySpec = computed(() => {
+    const m = new Map<string, UniverseToken>();
+    for (const t of universe.value) m.set(t.spec.toUpperCase(), t);
+    return m;
+  });
+  /**
+   * Describe an asset spec for display. Returns the curated universe entry when
+   * known, else a bare {code, issuer} fallback (e.g. a held but unlisted asset).
+   */
+  function tokenFor(spec: string): UniverseToken {
+    const up = (spec ?? "").toUpperCase();
+    const found = universeBySpec.value.get(up);
+    if (found) return found;
+    if (up === "XLM" || up === "NATIVE") {
+      return { spec: "XLM", code: "XLM", issuer: null, name: "Lumens", domain: "stellar.org", tier: "high" };
+    }
+    const [code, issuer] = (spec ?? "").split(":");
+    return { spec, code: code || spec, issuer: issuer ?? null, name: "", domain: null, tier: null };
+  }
+  /** Funded holdings as token options (for "things you already hold" pickers). */
+  const heldTokens = computed<UniverseToken[]>(() =>
+    balances.value
+      .filter((b) => Number(b.balance) > 0 && !b.asset.startsWith("LP:"))
+      .map((b) => tokenFor(b.asset)),
+  );
+  /** Held balance for a spec as a number (0 when not held). Case-insensitive. */
+  function heldBalance(spec: string): number {
+    const up = (spec ?? "").toUpperCase();
+    const b = balances.value.find((x) => x.asset.toUpperCase() === up);
+    return b ? Number(b.balance) : 0;
+  }
+
   const modeLabel = computed(() => {
     const s = snapshot.value;
     if (!s) return "...";
@@ -121,6 +159,7 @@ export const useTraderStore = defineStore("trader", () => {
     } catch {
       /* backend may not be up yet; SSE will fill in */
     }
+    void loadUniverse();
     void loadBalances();
     void loadTrustlines();
     void loadClaimables();
@@ -457,11 +496,24 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  // Re-priced on demand and on a 60s timer from PortfolioPanel. Leaves the
+  // previous data in place on error so the UI never flashes empty mid-refresh.
   async function loadPortfolio(): Promise<void> {
+    portfolioLoading.value = true;
     try {
       portfolio.value = await api.portfolio();
     } catch {
       /* leave previous data */
+    } finally {
+      portfolioLoading.value = false;
+    }
+  }
+
+  async function loadUniverse(): Promise<void> {
+    try {
+      universe.value = (await api.universe()).tokens;
+    } catch {
+      /* leave previous data; dropdowns fall back to bare codes */
     }
   }
 
@@ -779,7 +831,13 @@ export const useTraderStore = defineStore("trader", () => {
     walletError,
     swapQuoteResult,
     portfolio,
+    portfolioLoading,
     loadPortfolio,
+    universe,
+    loadUniverse,
+    tokenFor,
+    heldTokens,
+    heldBalance,
     loadClaimables,
     pay,
     getSwapQuote,

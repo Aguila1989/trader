@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, assetCode as code } from "../format";
+import AssetSelect from "./AssetSelect.vue";
 
 const store = useTraderStore();
 const base = ref("XLM");
@@ -36,8 +37,17 @@ async function add(): Promise<void> {
       monitor each tick; grant notification permission for a desktop toast.
     </p>
     <div class="al-form">
-      <input v-model="base" class="al-input" placeholder="base (XLM)" />
-      <input v-model="quote" class="al-input wide" placeholder="quote (CODE:ISSUER)" />
+      <AssetSelect
+        v-model="base"
+        :options="store.universe"
+        aria-label="Alert base asset"
+      />
+      <AssetSelect
+        v-model="quote"
+        :options="store.universe"
+        placeholder="quote token"
+        aria-label="Alert quote asset"
+      />
       <select v-model="direction" class="al-input">
         <option value="above">above</option>
         <option value="below">below</option>
@@ -91,6 +101,10 @@ async function add(): Promise<void> {
 .al-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+.al-form .asset-select {
+  flex: 1 1 160px;
+  min-width: 130px;
 }
 .al-row {
   display: flex;

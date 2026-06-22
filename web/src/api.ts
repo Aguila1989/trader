@@ -16,6 +16,7 @@ import type {
   TradeProposal,
   TradesPage,
   TrustlineInfo,
+  UniverseResponse,
 } from "./types";
 
 // All requests are same-origin: in dev Vite proxies /api -> :3000, in prod
@@ -198,6 +199,7 @@ export const api = {
       `/api/claimable/${encodeURIComponent(id)}/claim`,
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
+  universe: () => getJSON<UniverseResponse>("/api/universe"),
   setAlert: (body: {
     base: string;
     quote: string;

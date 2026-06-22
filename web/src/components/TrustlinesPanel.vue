@@ -1,28 +1,29 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
+import AssetSelect from "./AssetSelect.vue";
 
 const store = useTraderStore();
-const code = ref("");
-const issuer = ref("");
-const homeDomain = ref("");
+const selected = ref("");
 const busy = ref(false);
 
+// Tokens you can still add: the curated/whitelisted universe minus XLM and
+// minus assets you already have a trustline for. Picking one supplies the
+// full CODE:ISSUER, so no manual issuer/home-domain entry is needed.
+const addable = computed(() => {
+  const have = new Set(store.trustlines.map((t) => t.asset.toUpperCase()));
+  return store.universe.filter(
+    (t) => t.spec.toUpperCase() !== "XLM" && !have.has(t.spec.toUpperCase()),
+  );
+});
+
 async function add(): Promise<void> {
-  if (busy.value || !code.value.trim()) return;
+  if (busy.value || !selected.value) return;
   busy.value = true;
   try {
-    const ok = await store.addTrustline({
-      code: code.value.trim(),
-      issuer: issuer.value.trim() || undefined,
-      homeDomain: homeDomain.value.trim() || undefined,
-    });
-    if (ok) {
-      code.value = "";
-      issuer.value = "";
-      homeDomain.value = "";
-    }
+    const ok = await store.addTrustline({ asset: selected.value });
+    if (ok) selected.value = "";
   } finally {
     busy.value = false;
   }
@@ -37,8 +38,8 @@ async function remove(asset: string): Promise<void> {
   <section class="panel">
     <h2>Trustlines</h2>
     <p class="muted tl-note">
-      Assets the wallet can hold. Add one (by issuer key, or just a code + home
-      domain) to trade or receive it; each add locks 0.5 XLM reserve.
+      Assets the wallet can hold. Pick a token to add its trustline so you can
+      trade or receive it; each add locks 0.5 XLM reserve.
       <span v-if="store.isReadOnly">Arm live trading to modify trustlines.</span>
     </p>
     <ul class="levels">
@@ -59,12 +60,15 @@ async function remove(asset: string): Promise<void> {
       </li>
     </ul>
     <div class="tl-form">
-      <input v-model="code" class="tl-input" placeholder="CODE (e.g. USDC)" />
-      <input v-model="issuer" class="tl-input" placeholder="issuer G... (optional)" />
-      <input v-model="homeDomain" class="tl-input" placeholder="or home domain (e.g. centre.io)" />
+      <AssetSelect
+        v-model="selected"
+        :options="addable"
+        placeholder="Pick a token to add"
+        aria-label="Trustline asset"
+      />
       <button
         class="btn primary"
-        :disabled="busy || store.isReadOnly || !code.trim()"
+        :disabled="busy || store.isReadOnly || !selected"
         @click="add"
       >
         {{ busy ? "Adding…" : "Add trustline" }}
@@ -94,18 +98,10 @@ async function remove(asset: string): Promise<void> {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+  align-items: center;
 }
-.tl-input {
-  flex: 1 1 140px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 7px 10px;
-  font-family: ui-monospace, monospace;
-}
-.tl-input:focus {
-  outline: none;
-  border-color: var(--accent);
+.tl-form .asset-select {
+  flex: 1 1 240px;
+  min-width: 180px;
 }
 </style>

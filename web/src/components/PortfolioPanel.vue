@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import { Doughnut } from "vue-chartjs";
 import {
   Chart as ChartJS,
@@ -9,7 +9,8 @@ import {
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum, assetCode as code } from "../format";
+import { fmtNum, timeStr } from "../format";
+import type { PortfolioHolding } from "../types";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -20,27 +21,94 @@ const PALETTE = [
   "#3bc9db", "#f06595", "#94d82d", "#ff922b", "#748ffc",
 ];
 
-// Priced holdings, largest first.
-const priced = computed(() =>
-  (store.portfolio?.holdings ?? [])
-    .filter((h) => h.xlmValue != null && h.xlmValue > 0)
-    .sort((a, b) => (b.xlmValue ?? 0) - (a.xlmValue ?? 0)),
-);
-const unpriced = computed(() =>
-  (store.portfolio?.holdings ?? []).filter((h) => h.xlmValue == null),
-);
+const totalUsd = computed(() => store.portfolio?.totalUsd ?? null);
 const totalXlm = computed(() => store.portfolio?.totalXlm ?? 0);
+const updatedAt = computed(() => store.portfolio?.updatedAt ?? null);
 
-function pct(v: number | null): string {
-  if (v == null || totalXlm.value <= 0) return "-";
-  return `${((v / totalXlm.value) * 100).toFixed(1)}%`;
+// Sizing/sorting basis: USDC value when known, else the XLM-equivalent.
+function val(h: PortfolioHolding): number | null {
+  return h.usdValue ?? h.xlmValue ?? null;
 }
 
+const priced = computed(() =>
+  (store.portfolio?.holdings ?? [])
+    .filter((h) => (val(h) ?? 0) > 0)
+    .sort((a, b) => (val(b) ?? 0) - (val(a) ?? 0)),
+);
+const unpriced = computed(() =>
+  (store.portfolio?.holdings ?? []).filter((h) => val(h) == null),
+);
+// Priced first (largest value), then any token we couldn't price.
+const rows = computed(() => [...priced.value, ...unpriced.value]);
+
+const totalForPct = computed(() =>
+  priced.value.reduce((s, h) => s + (val(h) ?? 0), 0),
+);
+function pct(h: PortfolioHolding): string {
+  const v = val(h);
+  if (v == null || totalForPct.value <= 0) return "-";
+  return `${((v / totalForPct.value) * 100).toFixed(1)}%`;
+}
+// The Price/Value columns are USDC-denominated, so they show a USDC figure or
+// the no-price fallback — never an XLM string under a "(USDC)" header. The
+// XLM-equivalent still surfaces in the prominent total ("≈ … XLM").
+function priceCell(h: PortfolioHolding): string {
+  return h.priceUsd != null ? fmtNum(h.priceUsd, 6) : "— (no price data)";
+}
+function valueCell(h: PortfolioHolding): string {
+  return h.usdValue != null ? fmtNum(h.usdValue, 2) : "— (no price data)";
+}
+function noPrice(h: PortfolioHolding): boolean {
+  return h.usdValue == null;
+}
+
+// --- 5%-since-last-refresh highlight ---------------------------------------
+// Track the per-unit price seen on the PREVIOUS refresh and diff against it.
+const baseline = ref<Map<string, number>>(new Map());
+const changePct = ref<Record<string, number>>({});
+watch(
+  () => store.portfolio?.updatedAt,
+  () => {
+    const cur = new Map<string, number>();
+    const ch: Record<string, number> = {};
+    for (const h of store.portfolio?.holdings ?? []) {
+      const p = h.priceUsd ?? h.priceXlm;
+      if (p == null) continue;
+      cur.set(h.asset, p);
+      const prev = baseline.value.get(h.asset);
+      if (prev != null && prev > 0) ch[h.asset] = ((p - prev) / prev) * 100;
+    }
+    changePct.value = ch;
+    baseline.value = cur;
+  },
+  { immediate: true },
+);
+function changeClass(h: PortfolioHolding): string {
+  const c = changePct.value[h.asset];
+  if (c == null) return "";
+  if (c > 5) return "chg-up";
+  if (c < -5) return "chg-down";
+  return "";
+}
+
+// --- refresh (manual + 60s auto) -------------------------------------------
+function refresh(): void {
+  void store.loadPortfolio();
+  void store.loadBalances();
+}
+let timer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  timer = setInterval(refresh, 60_000);
+});
+onUnmounted(() => {
+  if (timer) clearInterval(timer);
+});
+
 const chartData = computed<ChartData<"doughnut">>(() => ({
-  labels: priced.value.map((h) => code(h.asset)),
+  labels: priced.value.map((h) => store.tokenFor(h.asset).code),
   datasets: [
     {
-      data: priced.value.map((h) => h.xlmValue ?? 0),
+      data: priced.value.map((h) => val(h) ?? 0),
       backgroundColor: priced.value.map((_, i) => PALETTE[i % PALETTE.length]),
       borderColor: "#0e1726",
       borderWidth: 2,
@@ -60,57 +128,80 @@ const options: ChartOptions<"doughnut"> = {
 <template>
   <section class="panel">
     <h2>Portfolio</h2>
-    <p class="muted pf-total">
-      Total: <span class="mono">{{ fmtNum(totalXlm) }}</span> XLM-equivalent
+
+    <div class="pf-total-head">
+      <span class="pf-total-value">
+        {{ totalUsd != null ? fmtNum(totalUsd, 2) + " USDC" : fmtNum(totalXlm) + " XLM" }}
+      </span>
+      <span class="pf-total-sub">
+        Total Portfolio Value<template v-if="totalUsd != null"> · ≈ {{ fmtNum(totalXlm) }} XLM</template>
+      </span>
+    </div>
+    <div class="pf-meta">
+      <span class="muted">Updated {{ timeStr(updatedAt) }}</span>
+      <span v-if="store.portfolioLoading" class="muted">refreshing…</span>
+      <button class="btn pf-refresh" :disabled="store.portfolioLoading" @click="refresh">
+        Refresh
+      </button>
+    </div>
+
+    <p v-if="rows.length === 0" class="muted">
+      No holdings yet. Fund the account or add a trustline to see values here.
     </p>
-    <p v-if="priced.length === 0" class="muted">
-      No priced holdings yet (balances value against their XLM market).
-    </p>
+
     <div v-else class="pf-body">
-      <div class="chart-box pf-chart">
+      <div v-if="priced.length" class="chart-box pf-chart">
         <Doughnut :data="chartData" :options="options" />
       </div>
-      <ul class="levels pf-list">
-        <li v-for="h in priced" :key="h.asset" class="pf-row">
-          <span class="px">{{ code(h.asset) }}</span>
-          <span class="amt">{{ fmtNum(h.balance) }}</span>
-          <span class="mono pf-pct">{{ pct(h.xlmValue) }}</span>
-        </li>
-      </ul>
+      <div class="pf-table-wrap">
+        <table class="pf-table">
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th class="num">Balance</th>
+              <th class="num">Price (USDC)</th>
+              <th class="num">Value (USDC)</th>
+              <th class="num">% of Portfolio</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="h in rows"
+              :key="h.asset"
+              class="pf-row"
+              :class="changeClass(h)"
+            >
+              <td :title="h.asset">{{ store.tokenFor(h.asset).code }}</td>
+              <td class="num">{{ fmtNum(h.balance) }}</td>
+              <td class="num" :class="{ 'pf-noprice': noPrice(h) }">{{ priceCell(h) }}</td>
+              <td class="num pf-value" :class="{ 'pf-noprice': noPrice(h) }">{{ valueCell(h) }}</td>
+              <td class="num">{{ pct(h) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <p v-if="unpriced.length" class="muted pf-unpriced">
-      Unpriced (no XLM market): {{ unpriced.map((h) => code(h.asset)).join(", ") }}
-    </p>
   </section>
 </template>
 
 <style scoped>
-.pf-total {
-  margin-top: 0;
-}
-.pf-body {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
-}
 .pf-chart {
   flex: 1 1 220px;
   min-width: 220px;
   height: 220px;
 }
-.pf-list {
-  flex: 1 1 200px;
-}
-.pf-row {
+.pf-body {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
 }
-.pf-pct {
-  margin-left: auto;
+.pf-table-wrap {
+  flex: 2 1 320px;
+  overflow-x: auto;
 }
-.pf-unpriced {
-  font-size: 11px;
+.pf-refresh {
+  padding: 3px 12px;
+  font-size: 12px;
 }
 </style>

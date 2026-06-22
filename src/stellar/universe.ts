@@ -106,10 +106,79 @@ export const CURATED_SCAN_ASSETS: CuratedAsset[] = [
   },
 ];
 
+/**
+ * The canonical Circle USDC spec — the deepest USD market on Stellar. Used as
+ * the base unit for portfolio USD valuation (see stellar/valuation.ts).
+ */
+export const USDC_SPEC =
+  "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+
 /** Upper-cased spec -> tier, for case-insensitive lookups. */
 const TIER_BY_SPEC = new Map<string, CuratedTier>(
   CURATED_SCAN_ASSETS.map((a) => [a.spec.toUpperCase(), a.tier]),
 );
+
+/** Upper-cased spec -> human label, for enriching the UI token list. */
+const LABEL_BY_SPEC = new Map<string, string>(
+  CURATED_SCAN_ASSETS.map((a) => [a.spec.toUpperCase(), a.label]),
+);
+
+/** A UI-facing description of a tradeable asset (drives the token dropdowns). */
+export interface TokenInfo {
+  /** Canonical "XLM" or "CODE:ISSUER". */
+  spec: string;
+  /** Short ticker, e.g. "USDC". */
+  code: string;
+  /** Issuer public key, or null for native XLM. */
+  issuer: string | null;
+  /** Friendly project/asset name parsed from the curated label, else "". */
+  name: string;
+  /** Issuer home domain parsed from the curated label, else null. */
+  domain: string | null;
+  /** Risk tier when the asset is in the curated set, else null. */
+  tier: CuratedTier | null;
+}
+
+/**
+ * Describe an asset spec for the UI. Curated assets get their friendly name +
+ * domain parsed out of the "Name (domain)" label; XLM is special-cased; any
+ * other (operator-added) spec falls back to its bare code + issuer.
+ */
+export function describeAsset(spec: string): TokenInfo {
+  const s = (spec ?? "").trim();
+  if (s.toUpperCase() === "XLM" || s.toLowerCase() === "native") {
+    return {
+      spec: "XLM",
+      code: "XLM",
+      issuer: null,
+      name: "Lumens",
+      domain: "stellar.org",
+      tier: "high",
+    };
+  }
+  const [code, issuer] = s.split(":");
+  const label = LABEL_BY_SPEC.get(s.toUpperCase());
+  let name = "";
+  let domain: string | null = null;
+  if (label) {
+    // Labels look like "USD Coin (circle.com)" -> name "USD Coin", domain "circle.com".
+    const m = label.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    if (m) {
+      name = m[1]!.trim();
+      domain = m[2]!.trim();
+    } else {
+      name = label.trim();
+    }
+  }
+  return {
+    spec: s,
+    code: code ?? s,
+    issuer: issuer ?? null,
+    name,
+    domain,
+    tier: curatedTier(s) ?? null,
+  };
+}
 
 /**
  * Tier of a curated asset by its "CODE:ISSUER" spec, or undefined when the

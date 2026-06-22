@@ -232,11 +232,40 @@ export interface PortfolioHolding {
   balance: string;
   /** XLM-equivalent value, or null when the asset can't be priced. */
   xlmValue: number | null;
+  /** USDC value of the whole holding, or null when no USD route exists. */
+  usdValue: number | null;
+  /** Price of ONE unit in USDC, or null. */
+  priceUsd: number | null;
+  /** Price of ONE unit in XLM, or null. */
+  priceXlm: number | null;
 }
 
 export interface PortfolioResponse {
   holdings: PortfolioHolding[];
   totalXlm: number;
+  /** Total value in USDC, or null when nothing could be priced in USD. */
+  totalUsd: number | null;
+  /** USDC per 1 XLM, or null when unavailable (e.g. testnet). */
+  xlmPriceUsd: number | null;
+  /** ISO timestamp the snapshot was priced. */
+  updatedAt: string;
+}
+
+/** A tradeable token with friendly labels — drives the asset dropdowns. */
+export interface UniverseToken {
+  /** "XLM" or "CODE:ISSUER". */
+  spec: string;
+  code: string;
+  issuer: string | null;
+  /** Friendly name, e.g. "USD Coin" / "Aquarius"; "" when unknown. */
+  name: string;
+  /** Issuer home domain, e.g. "circle.com"; null when unknown. */
+  domain: string | null;
+  tier: "high" | "low" | null;
+}
+
+export interface UniverseResponse {
+  tokens: UniverseToken[];
 }
 
 export interface SwapQuote {

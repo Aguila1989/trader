@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, dateTimeStr } from "../format";
 import TokenChart from "./TokenChart.vue";
+import InfoTip from "./InfoTip.vue";
+import AssetSelect from "./AssetSelect.vue";
 
 const store = useTraderStore();
 
@@ -13,11 +15,23 @@ const TIMEFRAMES = [
   { key: "year", label: "Year" },
 ] as const;
 
+const TIPS = {
+  spread:
+    "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
+  trigger:
+    "If the price reaches this level, the position is closed. For a long this is below the current price; for a short, above it — it caps the loss if the trade goes against you.",
+};
+
 const code = computed(
   () => (store.selectedToken ?? "").split(":")[0] || (store.selectedToken ?? ""),
 );
 const quoteCode = computed(
   () => (store.selectedQuote ?? "XLM").split(":")[0] || store.selectedQuote,
+);
+// The detail page is scoped to ONE token, so the picker is pre-selected and
+// locked — it just shows which asset the stop applies to.
+const pairOptions = computed(() =>
+  store.selectedToken ? [store.tokenFor(store.selectedToken)] : [],
 );
 
 const mid = computed(() => {
@@ -130,7 +144,7 @@ onUnmounted(() => {
       <div>Bid <span class="mono pos">{{ fmtNum(store.tokenBook?.bestBid, 7) }}</span></div>
       <div>Ask <span class="mono neg">{{ fmtNum(store.tokenBook?.bestAsk, 7) }}</span></div>
       <div>
-        Spread
+        Spread<InfoTip :text="TIPS.spread" label="What is spread?" />
         <span class="mono">
           {{ store.tokenBook?.spreadBps != null ? fmtNum(store.tokenBook.spreadBps, 1) + " bps" : "-" }}
         </span>
@@ -145,7 +159,7 @@ onUnmounted(() => {
             <span class="muted">(empty)</span>
           </li>
           <li v-for="(lv, i) in store.tokenBook?.bids ?? []" :key="'b' + i">
-            <span class="px">{{ lv.price }}</span>
+            <span class="px">{{ fmtNum(lv.price, 7) }}</span>
             <span class="amt">{{ fmtNum(lv.amount) }}</span>
           </li>
         </ul>
@@ -157,7 +171,7 @@ onUnmounted(() => {
             <span class="muted">(empty)</span>
           </li>
           <li v-for="(lv, i) in store.tokenBook?.asks ?? []" :key="'a' + i">
-            <span class="px">{{ lv.price }}</span>
+            <span class="px">{{ fmtNum(lv.price, 7) }}</span>
             <span class="amt">{{ fmtNum(lv.amount) }}</span>
           </li>
         </ul>
@@ -196,7 +210,18 @@ onUnmounted(() => {
 
     <div class="sl-form">
       <label class="order-field">
-        <span class="order-label">Trigger price ({{ quoteCode }})</span>
+        <span class="order-label">Asset</span>
+        <AssetSelect
+          :model-value="store.selectedToken ?? ''"
+          :options="pairOptions"
+          locked
+          aria-label="Stop-loss asset"
+        />
+      </label>
+      <label class="order-field">
+        <span class="order-label">
+          Trigger price ({{ quoteCode }})<InfoTip :text="TIPS.trigger" label="Trigger price" />
+        </span>
         <input
           v-model="trigger"
           class="order-input"

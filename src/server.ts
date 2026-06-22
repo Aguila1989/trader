@@ -40,7 +40,8 @@ import {
   getTradeAggregations,
   resolveBestQuote,
 } from "./stellar/market";
-import { highTierSpecs } from "./stellar/universe";
+import { getPricedPortfolio, type PricedPortfolio } from "./stellar/valuation";
+import { highTierSpecs, describeAsset } from "./stellar/universe";
 import { signerPublicKey } from "./stellar/signer";
 import { initDb, closeDb, dbReady } from "./db/pool";
 
@@ -499,39 +500,31 @@ app.get("/api/trades.csv", async (_req, res) => {
 app.get("/api/portfolio", async (_req, res) => {
   const pub = signerPublicKey();
   if (!pub) {
-    res.json({ holdings: [], totalXlm: 0 });
+    const empty: PricedPortfolio = {
+      holdings: [],
+      totalXlm: 0,
+      totalUsd: null,
+      xlmPriceUsd: null,
+      updatedAt: new Date().toISOString(),
+    };
+    res.json(empty);
     return;
   }
   try {
-    const balances = await getBalances(pub);
-    const funded = balances.filter(
-      (b) => Number(b.balance) > 0 && !b.asset.startsWith("LP:"),
-    );
-    const holdings = await Promise.all(
-      funded.map(async (b) => {
-        if (b.asset === "XLM") {
-          return { asset: b.asset, balance: b.balance, xlmValue: Number(b.balance) };
-        }
-        try {
-          // XLM/asset book prices the asset in units-per-XLM, so an asset
-          // balance is worth balance/mid XLM.
-          const ob = await getOrderbook("XLM", b.asset, 1);
-          const mid =
-            ob.bestBid != null && ob.bestAsk != null
-              ? (ob.bestBid + ob.bestAsk) / 2
-              : (ob.bestBid ?? ob.bestAsk);
-          const value = mid && mid > 0 ? Number((Number(b.balance) / mid).toFixed(7)) : null;
-          return { asset: b.asset, balance: b.balance, xlmValue: value };
-        } catch {
-          return { asset: b.asset, balance: b.balance, xlmValue: null };
-        }
-      }),
-    );
-    const totalXlm = holdings.reduce((s, h) => s + (h.xlmValue ?? 0), 0);
-    res.json({ holdings, totalXlm: Number(totalXlm.toFixed(7)) });
+    // USDC-primary valuation with an XLM-equivalent fallback. The pricing logic
+    // lives in stellar/valuation.ts so it can be reused outside this endpoint.
+    res.json(await getPricedPortfolio(pub));
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
+});
+
+// The tradeable token universe with friendly labels — the source of truth for
+// the UI's asset dropdowns. Built from the policy whitelist (config.limits)
+// enriched with the curated names/domains; XLM is always included.
+app.get("/api/universe", (_req, res) => {
+  const tokens = config.limits.assetWhitelist.map((spec) => describeAsset(spec));
+  res.json({ tokens });
 });
 
 // --- Price alerts (observe-only) ------------------------------------------

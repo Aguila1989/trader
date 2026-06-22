@@ -363,6 +363,27 @@ export async function getOrderbook(
 }
 
 /**
+ * Mid price for a pair = quote units per 1 base unit, best-effort. A SINGLE
+ * Horizon call (top of book). Returns the bid/ask midpoint, or whichever side
+ * exists, or null when the book is empty / the call fails. This is the shared
+ * primitive for valuing holdings (balance × price) — see stellar/valuation.ts.
+ */
+export async function getMidPrice(
+  baseSpec: string,
+  quoteSpec: string,
+): Promise<number | null> {
+  try {
+    const ob = await getOrderbook(baseSpec, quoteSpec, 1);
+    if (ob.bestBid != null && ob.bestAsk != null) {
+      return (ob.bestBid + ob.bestAsk) / 2;
+    }
+    return ob.bestBid ?? ob.bestAsk ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Pick the quote whose order book actually has liquidity for `baseSpec`. Tries
  * the candidates in order; PREFERS the first (XLM) when it has a two-sided
  * book, else keeps the tightest-spread alternative (so a USDC-only token still
