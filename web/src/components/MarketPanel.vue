@@ -24,11 +24,20 @@ const change24hText = computed(() => {
   return c == null ? "-" : `${c >= 0 ? "+" : ""}${c.toFixed(2)}%`;
 });
 
+// Clickable token universe (the whitelist, minus XLM which is the quote leg).
+const tokens = computed(() =>
+  (store.limits?.assetWhitelist ?? []).filter(
+    (a) => a.toUpperCase() !== "XLM" && a.toLowerCase() !== "native",
+  ),
+);
+function tokenCode(spec: string): string {
+  return spec.split(":")[0] || spec;
+}
+
 const limitRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
   return [
-    ["Whitelist", l.assetWhitelist.join(", ") || "-"],
     ["Max / trade (std)", fmtNum(l.maxAmountPerTrade)],
     ["Max / trade (high tier)", fmtNum(l.maxAmountPerTradeHigh)],
     ["Max daily volume", fmtNum(l.maxDailyVolume)],
@@ -114,6 +123,13 @@ const orderResult = computed(() => {
       return { ok: true, text: o.status };
   }
 });
+
+// Tap a book level to prefill the order form: an ask is where you'd BUY, a bid
+// is where you'd SELL.
+function fillFromBook(price: string, side: "buy" | "sell"): void {
+  orderSide.value = side;
+  orderLimitPrice.value = price;
+}
 
 async function placeOrder(): Promise<void> {
   if (!orderValid.value || store.placingOrder) return;
@@ -336,10 +352,25 @@ async function placeOrder(): Promise<void> {
         </p>
 
         <p class="muted order-hint">
-          Manual orders go through the same risk gates as the bot - notably the
-          per-trade size cap - so a large order may come back
-          "Blocked: ... exceeds ... cap". That's expected: split it or raise the cap.
+          Manual orders bypass the size, daily-volume and exposure caps - trade
+          any amount. They're still subject to the safety gates (slippage,
+          daily-loss halt, kill switch, sufficient funds), so an order can still
+          be blocked by one of those.
         </p>
+      </div>
+
+      <h3>Tokens</h3>
+      <div class="token-list">
+        <button
+          v-for="t in tokens"
+          :key="t"
+          class="btn token-chip"
+          :title="t"
+          @click="store.openToken(t)"
+        >
+          {{ tokenCode(t) }}
+        </button>
+        <span v-if="tokens.length === 0" class="muted">(none)</span>
       </div>
 
       <h3>Risk limits</h3>
@@ -419,5 +450,14 @@ async function placeOrder(): Promise<void> {
 .order-hint {
   font-size: 11px;
   margin: 0;
+}
+.token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.token-chip {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 </style>

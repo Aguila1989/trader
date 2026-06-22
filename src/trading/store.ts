@@ -18,17 +18,25 @@ import { randomUUID } from "node:crypto";
 import type {
   DailyState,
   EvolutionPoint,
+  LiquidityRec,
+  LiquiditySnapshotRow,
   LogEntry,
   LogLevel,
   LogsPage,
   PositionSummary,
   Snapshot,
+  StopLoss,
+  StopLossAuditPage,
+  StopLossAuditRow,
   TradeProposal,
   TradesPage,
 } from "../types";
 
 const MAX_LOGS = 200;
 const MAX_PROPOSALS = 100;
+/** In-memory fallbacks when no DB is configured (history is otherwise DB-only). */
+const MAX_LIQUIDITY_MEM = 5000;
+const MAX_AUDIT_MEM = 500;
 
 function freshDaily(): DailyState {
   return {
@@ -121,6 +129,16 @@ class Store {
    */
   unrealizedPnl = 0;
 
+  /** Active stop-loss orders (manual + AI). The monitor consults these; the
+   *  array holds only ACTIVE stops (terminal ones are pruned after persisting). */
+  private stopLosses: StopLoss[] = [];
+  /** Bounded recent audit ring for the no-DB fallback (DB is authoritative). */
+  private stopLossAudit: StopLossAuditRow[] = [];
+  /** Current top-N liquidity recommendations (observe-only scanner). */
+  private liquidityRecs: LiquidityRec[] = [];
+  /** Bounded in-memory liquidity history for the no-DB fallback. */
+  private liquidityMem: LiquiditySnapshotRow[] = [];
+
   /** Serializes DB writes so an insert always lands before its updates. */
   private writeChain: Promise<void> = Promise.resolve();
   /**
@@ -155,6 +173,9 @@ class Store {
       for (const a of actionable) {
         if (!have.has(a.id)) this.proposals.push(a);
       }
+      // Active stop losses must survive a restart so the independent monitor
+      // keeps enforcing them even after a crash/redeploy.
+      this.stopLosses = await repo.listActiveStopLosses();
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -348,6 +369,107 @@ class Store {
   /** Read-only view of the live proposal list (newest first). */
   listProposals(): TradeProposal[] {
     return [...this.proposals];
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Stop-loss records. The StopLossService owns the business rules
+   * (trail direction, conflict resolution, validation); the store only
+   * holds the in-memory active set, persists (skipping paper), and emits.
+   * ---------------------------------------------------------------- */
+
+  /** Active stop losses, optionally filtered to a pair. */
+  getActiveStopLosses(base?: string, quote?: string): StopLoss[] {
+    return this.stopLosses.filter(
+      (s) =>
+        s.status === "active" &&
+        (!base || s.baseAsset === base) &&
+        (!quote || s.quoteAsset === quote),
+    );
+  }
+
+  getStopLoss(id: string): StopLoss | undefined {
+    return this.stopLosses.find((s) => s.id === id);
+  }
+
+  /** Add a NEW active stop loss to the live set and persist it. */
+  recordStopLoss(s: StopLoss): void {
+    this.stopLosses.unshift(s);
+    if (!this.paperTrading) this.persist(() => repo.insertStopLoss(s));
+    this.emit("state", this.snapshot());
+  }
+
+  /** Persist mutations to an existing stop loss (already mutated in place by the
+   *  service). Terminal stops are pruned from the live active set after saving. */
+  saveStopLoss(s: StopLoss): void {
+    if (!this.paperTrading) this.persist(() => repo.updateStopLoss(s));
+    if (s.status !== "active") {
+      this.stopLosses = this.stopLosses.filter((x) => x.id !== s.id);
+    }
+    this.emit("state", this.snapshot());
+  }
+
+  /** Append an immutable audit row (best-effort persist + small in-memory ring). */
+  recordStopLossAudit(a: StopLossAuditRow): void {
+    this.stopLossAudit.unshift(a);
+    if (this.stopLossAudit.length > MAX_AUDIT_MEM) {
+      this.stopLossAudit.length = MAX_AUDIT_MEM;
+    }
+    if (!this.paperTrading) this.persist(() => repo.insertStopLossAudit(a));
+  }
+
+  /** Paginated audit history. SQL Server when connected, else the memory ring. */
+  async getStopLossAuditPage(opts: {
+    base?: string;
+    quote?: string;
+    limit: number;
+    offset: number;
+  }): Promise<StopLossAuditPage> {
+    if (dbReady()) return repo.listStopLossAudit(opts);
+    const limit = Math.min(Math.max(opts.limit, 1), 500);
+    const offset = Math.max(opts.offset, 0);
+    const filtered = this.stopLossAudit.filter(
+      (a) =>
+        (!opts.base || a.baseAsset === opts.base) &&
+        (!opts.quote || a.quoteAsset === opts.quote),
+    );
+    return { rows: filtered.slice(offset, offset + limit), total: filtered.length, limit, offset };
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Liquidity scanner (observe-only). Only the small top-N rec list
+   * rides the SSE 'state' event; the long history is DB-backed and served
+   * via GET /api/liquidity, never broadcast.
+   * ---------------------------------------------------------------- */
+
+  /** Persist one hourly observation (no emit; the scanner emits once via setLiquidityRecs). */
+  recordLiquiditySnapshot(row: LiquiditySnapshotRow): void {
+    this.liquidityMem.push(row);
+    if (this.liquidityMem.length > MAX_LIQUIDITY_MEM) {
+      this.liquidityMem.splice(0, this.liquidityMem.length - MAX_LIQUIDITY_MEM);
+    }
+    this.persist(() => repo.insertLiquiditySnapshot(row, randomUUID()));
+  }
+
+  /** Publish the current top-N recommendations to the dashboard (single emit). */
+  setLiquidityRecs(recs: LiquidityRec[]): void {
+    this.liquidityRecs = recs;
+    this.emit("state", this.snapshot());
+  }
+
+  getLiquidityRecs(): LiquidityRec[] {
+    return this.liquidityRecs;
+  }
+
+  /** Liquidity history (for the analyzer + GET /api/liquidity). DB or memory. */
+  async getLiquidityHistory(opts: {
+    since?: string;
+    asset?: string;
+  }): Promise<LiquiditySnapshotRow[]> {
+    if (dbReady()) return repo.listLiquiditySnapshots(opts);
+    return this.liquidityMem.filter(
+      (r) =>
+        (!opts.asset || r.asset === opts.asset) && (!opts.since || r.ts >= opts.since),
+    );
   }
 
   getDaily(): DailyState {
@@ -566,6 +688,8 @@ class Store {
       positions: ledger.positions(),
       proposals: this.proposals,
       logs: this.logs,
+      stopLosses: this.stopLosses,
+      liquidityRecs: this.liquidityRecs,
     };
   }
 }

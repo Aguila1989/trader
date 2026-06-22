@@ -132,6 +132,10 @@ export interface Snapshot {
   positions: PositionSummary[];
   proposals: TradeProposal[];
   logs: LogEntry[];
+  /** Current top-N liquidity recommendations (observe-only scanner). */
+  liquidityRecs: LiquidityRec[];
+  /** Active stop-loss orders (manual + AI). */
+  stopLosses: StopLoss[];
 }
 
 export interface OrderbookLevel {
@@ -168,7 +172,127 @@ export interface MarketSnapshot {
   recentTrades: RecentTrade[];
 }
 
+/** Lean order book for the token detail page (one Horizon call). The `quote`
+ *  field echoes the AUTO-RESOLVED market when the request omitted one. */
+export interface OrderbookSnapshot {
+  base: string;
+  quote: string;
+  bestBid: number | null;
+  bestAsk: number | null;
+  spreadBps: number | null;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+}
+
+/** One OHLC candle from the /api/candles endpoint (Horizon trade aggregations). */
+export interface Candle {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  baseVolume: number;
+  tradeCount: number;
+}
+
 export interface Balance {
   asset: string;
   balance: string;
+}
+
+export interface TrustlineInfo {
+  asset: string;
+  code: string;
+  issuer: string;
+  balance: string;
+  limit: string;
+}
+
+export interface ClaimableBalanceInfo {
+  id: string;
+  asset: string;
+  amount: string;
+  sponsor?: string;
+}
+
+export interface PortfolioHolding {
+  asset: string;
+  balance: string;
+  /** XLM-equivalent value, or null when the asset can't be priced. */
+  xlmValue: number | null;
+}
+
+export interface PortfolioResponse {
+  holdings: PortfolioHolding[];
+  totalXlm: number;
+}
+
+export interface SwapQuote {
+  sendAsset: string;
+  sendAmount: string;
+  destAsset: string;
+  destAmount: string;
+  path: string[];
+  error?: string;
+}
+
+export type StopLossSetBy = "manual" | "ai";
+export type StopLossStatus = "active" | "triggered" | "cancelled" | "expired";
+
+export interface StopLoss {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  baseAsset: string;
+  quoteAsset: string;
+  triggerPrice: string;
+  sellAll: boolean;
+  quantityToSell?: string;
+  setBy: StopLossSetBy;
+  status: StopLossStatus;
+  notes?: string;
+  triggeredAt?: string;
+  triggerProposalId?: string;
+  attemptCount: number;
+  lastError?: string;
+}
+
+export interface StopLossAuditRow {
+  id: string;
+  ts: string;
+  stopLossId: string;
+  baseAsset: string;
+  quoteAsset: string;
+  action: string;
+  field?: string;
+  oldValue?: string;
+  newValue?: string;
+  initiator: string;
+  note?: string;
+}
+
+export interface StopLossAuditPage {
+  rows: StopLossAuditRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export type RankTrend = "improving" | "declining" | "stable";
+export type VolumeTrend = "growing" | "shrinking" | "stable";
+
+/** One liquidity-scanner recommendation (mirror of backend src/types.ts). */
+export interface LiquidityRec {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  rank: number;
+  baseVolume24h: number | null;
+  numTrades24h: number | null;
+  spreadBps: number | null;
+  avgRank?: number;
+  rankTrend?: RankTrend;
+  consistencyPct?: number;
+  volumeTrend?: VolumeTrend;
+  recommended: boolean;
 }

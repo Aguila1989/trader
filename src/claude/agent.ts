@@ -17,7 +17,11 @@ import {
   TOOL_MARKET,
   TOOL_HISTORY,
   TOOL_PROPOSE,
+  TOOL_SET_STOP,
+  TOOL_UPDATE_STOP,
+  TOOL_CANCEL_STOP,
 } from "./tools";
+import { stopLossService } from "../trading/stopLossService";
 import type { PositionSummary, TradeConfidence, TradeSide } from "../types";
 
 export interface ProposedTrade {
@@ -428,6 +432,80 @@ async function runTool(
         content:
           "Proposal received. The backend will apply risk policy and a human will review it.",
         trace: "propose_stellar_trade -> captured",
+      };
+    }
+    // Stop-loss tools EXECUTE immediately (they mutate existing state, they are
+    // not approval-gated proposals): the independent monitor then enforces them.
+    if (
+      name === TOOL_SET_STOP ||
+      name === TOOL_UPDATE_STOP ||
+      name === TOOL_CANCEL_STOP
+    ) {
+      const o = input as {
+        base_asset?: string;
+        quote_asset?: string;
+        stop_price?: unknown;
+        quantity?: unknown;
+        sell_all?: boolean;
+        notes?: unknown;
+      };
+      const base = String(o.base_asset ?? "");
+      const quote = String(o.quote_asset ?? "");
+      const pairLabel = `${base.split(":")[0]}/${quote.split(":")[0]}`;
+      const notes = o.notes != null ? String(o.notes) : undefined;
+
+      if (name === TOOL_CANCEL_STOP) {
+        const mine = stopLossService
+          .getActiveStopLosses(base, quote)
+          .filter((s) => s.setBy === "ai");
+        for (const s of mine) {
+          stopLossService.cancelStopLoss(s.id, "ai", notes ?? "AI exited the position");
+        }
+        return {
+          content: JSON.stringify({ ok: true, cancelled: mine.length }),
+          trace: `cancel_stop_loss ${pairLabel} -> ${mine.length}`,
+        };
+      }
+
+      const stopPrice = String(o.stop_price ?? "");
+      if (name === TOOL_UPDATE_STOP) {
+        const mine = stopLossService
+          .getActiveStopLosses(base, quote)
+          .filter((s) => s.setBy === "ai");
+        if (mine.length === 0) {
+          return {
+            content: JSON.stringify({
+              ok: false,
+              error: "No active AI stop on this pair to update; use set_stop_loss first.",
+            }),
+            trace: `update_stop_loss ${pairLabel} -> none`,
+          };
+        }
+        const updated = await stopLossService.updateStopLoss(mine[0]!.id, {
+          triggerPrice: stopPrice,
+          initiator: "ai",
+          notes,
+        });
+        return {
+          content: JSON.stringify({ ok: true, stop: updated }),
+          trace: `update_stop_loss ${pairLabel} -> ${updated.triggerPrice}`,
+        };
+      }
+
+      // set_stop_loss
+      const sellAll = o.sell_all === true || o.quantity == null;
+      const created = await stopLossService.setStopLoss({
+        baseAsset: base,
+        quoteAsset: quote,
+        triggerPrice: stopPrice,
+        sellAll,
+        quantityToSell: sellAll ? undefined : String(o.quantity),
+        setBy: "ai",
+        notes,
+      });
+      return {
+        content: JSON.stringify({ ok: true, stop: created }),
+        trace: `set_stop_loss ${pairLabel} -> ${created.triggerPrice}`,
       };
     }
     return { content: `Unknown tool: ${name}` };

@@ -171,6 +171,60 @@ describe("checkPolicy", () => {
     expect(res.allowed).toBe(true);
   });
 
+  // --- per-trade size cap split by initiator (manual vs AI) ---------------
+  it("EXEMPTS a manual order from the per-trade size cap", () => {
+    // 120 XLM is far above the high-tier size cap (50) but within daily-volume
+    // (500) and exposure (pair 150 / total 200) limits, so only the size cap
+    // would have blocked it - and manual orders bypass that.
+    const res = run({ quoteAsset: USDC, amount: "120", initiator: "manual" });
+    expect(res.allowed).toBe(true);
+  });
+
+  it("still enforces the per-trade size cap on an AI order of the same size", () => {
+    const res = run({ quoteAsset: USDC, amount: "120", initiator: "ai" });
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/exceeds max per trade/);
+  });
+
+  it("a manual order still passes through every OTHER gate (e.g. slippage)", () => {
+    const res = run({
+      quoteAsset: USDC,
+      amount: "120",
+      initiator: "manual",
+      maxSlippageBps: 60,
+    });
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/declared slippage/i);
+  });
+
+  it("EXEMPTS a manual order from the daily-volume AND exposure caps", () => {
+    // 5000 XLM blows past the size cap (50), the daily-volume cap (500, already
+    // 450 used) and the exposure caps - all bypassed for a manual order.
+    const res = run(
+      { quoteAsset: USDC, amount: "5000", initiator: "manual" },
+      { daily: { volume: 450 } },
+    );
+    expect(res.allowed).toBe(true);
+  });
+
+  it("a manual order is STILL halted by the daily-loss circuit breaker", () => {
+    const res = run(
+      { quoteAsset: USDC, amount: "120", initiator: "manual" },
+      { daily: { realizedPnl: -25 } },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/daily loss limit/i);
+  });
+
+  it("a manual order is STILL blocked by the kill switch", () => {
+    const res = run(
+      { quoteAsset: USDC, amount: "120", initiator: "manual" },
+      { killSwitch: true },
+    );
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/kill switch/i);
+  });
+
   it("blocks at the daily trade-count cap", () => {
     const res = run({}, { daily: { tradeCount: 100 } });
     expect(res.violations.join(" ")).toMatch(/trade count/i);

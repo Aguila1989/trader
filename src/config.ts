@@ -180,6 +180,34 @@ export const config = {
   autoScanIntervalSeconds: num("AUTO_SCAN_INTERVAL_SECONDS", 0),
 
   /**
+   * Hourly LIQUIDITY SCANNER cadence (seconds). When > 0, a decoupled,
+   * observe-only background job ranks the top-N most XLM-liquid Stellar assets,
+   * persists snapshots, computes trend/consistency, and flags non-whitelisted
+   * "worth watching" candidates. It NEVER trades. 0 = off (default). Floored at
+   * 300s when enabled (3600 = hourly is the intended cadence).
+   */
+  liquidityScanIntervalSeconds: num("LIQUIDITY_SCAN_INTERVAL_SECONDS", 0),
+  /**
+   * How many days of liquidity snapshots the analyzer looks back over (and the
+   * GET /api/liquidity history window). Default 30 (meets the >=30d requirement).
+   */
+  liquidityRetentionDays: num("LIQUIDITY_RETENTION_DAYS", 30),
+  /**
+   * Best-effort discovery depth: how many pages of Horizon's /assets endpoint
+   * the scanner sweeps to find NEW (non-whitelisted) candidate assets. Horizon
+   * cannot sort /assets by volume, so this is a bounded proxy sweep (ranked by
+   * holders, then re-ranked by measured XLM volume). 0 = curated+whitelist only.
+   */
+  liquidityDiscoveryPages: num("LIQUIDITY_DISCOVERY_PAGES", 2),
+
+  /**
+   * Failed stop-loss SELL attempts before the monitor raises an alert. The stop
+   * stays Active and keeps retrying (spaced by the monitor's per-pair stop
+   * throttle); this only governs when an alert is logged + audited. Default 3.
+   */
+  stopLossMaxRetries: num("STOP_LOSS_MAX_RETRIES", 3),
+
+  /**
    * Position-monitor cadence in seconds: marks open positions to market
    * (unrealized PnL -> loss gate + size taper), proposes stop-loss closes,
    * books later fills of resting offers, cancels stale offers and records

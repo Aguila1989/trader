@@ -17,6 +17,17 @@ export interface OrderbookLevel {
   amount: string;
 }
 
+/** Lean order-book snapshot (one Horizon call) for the token detail view. */
+export interface OrderbookSnapshot {
+  base: string;
+  quote: string;
+  bestBid: number | null;
+  bestAsk: number | null;
+  spreadBps: number | null;
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+}
+
 export interface OpenOffer {
   id: string;
   selling: string;
@@ -191,27 +202,44 @@ export async function getTradeAggregations(
 ): Promise<Candle[]> {
   const base = parseAsset(baseSpec);
   const quote = parseAsset(quoteSpec);
-  const end = Date.now();
-  const start = end - resolutionMs * limit;
+  // Horizon caps trade_aggregations at 200 rows per page. Page BACKWARDS
+  // (newest-first) when more are requested - e.g. the 365-candle "year" view -
+  // otherwise a >200 limit returns a 400 and this would silently yield []. The
+  // small-limit callers (snapshot 24/7, monitor 5, primeXlmRates 1) take the
+  // single-page path and behave exactly as before.
+  const PAGE = 200;
+  const start = Date.now() - resolutionMs * limit;
+  const toCandle = (r: TradeAggregationLike): Candle => ({
+    time: new Date(Number(r.timestamp ?? 0)).toISOString(),
+    open: Number(r.open ?? 0),
+    high: Number(r.high ?? 0),
+    low: Number(r.low ?? 0),
+    close: Number(r.close ?? 0),
+    baseVolume: Number(r.base_volume ?? 0),
+    tradeCount: Number(r.trade_count ?? 0),
+  });
 
   try {
-    const page = await horizon
-      .tradeAggregation(base, quote, start, end, resolutionMs, 0)
-      .order("desc")
-      .limit(limit)
-      .call();
-    const records = page.records as unknown as TradeAggregationLike[];
-    return records
-      .map((r) => ({
-        time: new Date(Number(r.timestamp ?? 0)).toISOString(),
-        open: Number(r.open ?? 0),
-        high: Number(r.high ?? 0),
-        low: Number(r.low ?? 0),
-        close: Number(r.close ?? 0),
-        baseVolume: Number(r.base_volume ?? 0),
-        tradeCount: Number(r.trade_count ?? 0),
-      }))
-      .reverse(); // Horizon returns newest-first; hand back chronological.
+    const out: Candle[] = [];
+    let end = Date.now();
+    while (out.length < limit) {
+      const want = Math.min(PAGE, limit - out.length);
+      const page = await horizon
+        .tradeAggregation(base, quote, start, end, resolutionMs, 0)
+        .order("desc")
+        .limit(want)
+        .call();
+      const records = page.records as unknown as TradeAggregationLike[];
+      if (records.length === 0) break;
+      for (const r of records) out.push(toCandle(r));
+      if (records.length < want) break; // last (partial) page
+      // Next page ends just before the oldest bucket's start, so it is excluded
+      // (no overlap). Guard against a non-advancing cursor to avoid a tight loop.
+      const oldest = Number(records[records.length - 1]?.timestamp ?? 0);
+      if (!Number.isFinite(oldest) || oldest <= start || oldest >= end) break;
+      end = oldest;
+    }
+    return out.reverse(); // newest-first -> chronological.
   } catch {
     return [];
   }
@@ -290,6 +318,132 @@ export function bookLevelsBase(snap: MarketSnapshot): {
   return { bids, asks };
 }
 
+/** Raw Horizon orderbook shape (price/amount are decimal strings). */
+interface RawBook {
+  bids: { price: string; amount: string }[];
+  asks: { price: string; amount: string }[];
+}
+
+/** Shared touch + spread math used by getOrderbook and getMarketSnapshot. */
+function mapBook(book: RawBook): {
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+  bestBid: number | null;
+  bestAsk: number | null;
+  spreadBps: number | null;
+} {
+  const bids: OrderbookLevel[] = book.bids.map((b) => ({ price: b.price, amount: b.amount }));
+  const asks: OrderbookLevel[] = book.asks.map((a) => ({ price: a.price, amount: a.amount }));
+  const bestBid = bids[0] ? Number(bids[0].price) : null;
+  const bestAsk = asks[0] ? Number(asks[0].price) : null;
+  const spreadBps =
+    bestBid !== null && bestAsk !== null && bestAsk > 0
+      ? ((bestAsk - bestBid) / bestAsk) * 10_000
+      : null;
+  return { bids, asks, bestBid, bestAsk, spreadBps };
+}
+
+/**
+ * Lean order book for one pair (a SINGLE Horizon call) - for the 30s detail
+ * refresh, which must not pay getMarketSnapshot's 4-call cost. Amounts keep
+ * Horizon's raw convention (ask amounts in base, bid amounts in quote); the
+ * detail view only displays price + volume, so no base-unit normalization
+ * (that is bookLevelsBase's job, for the policy engine's size math).
+ */
+export async function getOrderbook(
+  baseSpec: string,
+  quoteSpec: string,
+  depth = 20,
+): Promise<OrderbookSnapshot> {
+  const base = parseAsset(baseSpec);
+  const quote = parseAsset(quoteSpec);
+  const book = await horizon.orderbook(base, quote).limit(depth).call();
+  const { bids, asks, bestBid, bestAsk, spreadBps } = mapBook(book as unknown as RawBook);
+  return { base: baseSpec, quote: quoteSpec, bestBid, bestAsk, spreadBps, bids, asks };
+}
+
+/**
+ * Pick the quote whose order book actually has liquidity for `baseSpec`. Tries
+ * the candidates in order; PREFERS the first (XLM) when it has a two-sided
+ * book, else keeps the tightest-spread alternative (so a USDC-only token still
+ * renders its real market). Falls back to the first candidate when none have a
+ * live book (the detail view then shows an honest empty state).
+ */
+export async function resolveBestQuote(
+  baseSpec: string,
+  candidates: string[],
+): Promise<string> {
+  const baseUp = baseSpec.trim().toUpperCase();
+  const tried = candidates.filter((q) => q.trim().toUpperCase() !== baseUp);
+  let best: { quote: string; spread: number } | null = null;
+  for (const q of tried) {
+    try {
+      const ob = await getOrderbook(baseSpec, q, 1);
+      if (ob.bestBid != null && ob.bestAsk != null) {
+        if (q === tried[0]) return q; // XLM has a real book - prefer it.
+        const spread = ob.spreadBps ?? Number.POSITIVE_INFINITY;
+        if (!best || spread < best.spread) best = { quote: q, spread };
+      }
+    } catch {
+      /* dead / erroring book - skip this candidate */
+    }
+  }
+  return best?.quote ?? tried[0] ?? "XLM";
+}
+
+/** A non-native asset discovered via Horizon's /assets endpoint. */
+export interface DiscoveredAsset {
+  asset: string; // canonical "CODE:ISSUER"
+  assetCode: string;
+  assetIssuer: string;
+  /** Trustlines holding this asset - a rough popularity proxy (NOT volume). */
+  numAccounts: number;
+}
+
+interface RawAssetRecord {
+  asset_type?: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  num_accounts?: number;
+  amount?: string;
+}
+
+/**
+ * Discover non-native assets via Horizon's /assets endpoint. IMPORTANT: Horizon
+ * cannot sort /assets by trading volume OR holders server-side (it pages by
+ * asset_code+issuer), so this is a bounded, best-effort sweep - it pulls up to
+ * `pages` pages and the CALLER ranks the results (e.g. by num_accounts, then by
+ * MEASURED XLM-pair volume). It is therefore not an exhaustive "most liquid"
+ * list; it surfaces candidates. Best-effort: returns what it gathered on error.
+ */
+export async function listAssets(
+  opts: { limit?: number; pages?: number } = {},
+): Promise<DiscoveredAsset[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 200);
+  const pages = Math.max(opts.pages ?? 1, 1);
+  const out: DiscoveredAsset[] = [];
+  try {
+    let page = await horizon.assets().limit(limit).call();
+    for (let i = 0; ; i++) {
+      const recs = page.records as unknown as RawAssetRecord[];
+      for (const r of recs) {
+        if (r.asset_type === "native" || !r.asset_code || !r.asset_issuer) continue;
+        out.push({
+          asset: `${r.asset_code}:${r.asset_issuer}`,
+          assetCode: r.asset_code,
+          assetIssuer: r.asset_issuer,
+          numAccounts: Number(r.num_accounts ?? 0),
+        });
+      }
+      if (i + 1 >= pages || recs.length === 0) break;
+      page = await page.next();
+    }
+  } catch {
+    /* best-effort discovery - return whatever was gathered */
+  }
+  return out;
+}
+
 /**
  * Orderbook + recent trades + 24h summary for the base/quote pair.
  * Prices are quote units per 1 base unit:
@@ -325,21 +479,7 @@ export async function getMarketSnapshot(
   const stats7d =
     candles7d.length > 0 ? summarizeCandles(candles7d, 86_400_000) : null;
 
-  const bids: OrderbookLevel[] = book.bids.map((b) => ({
-    price: b.price,
-    amount: b.amount,
-  }));
-  const asks: OrderbookLevel[] = book.asks.map((a) => ({
-    price: a.price,
-    amount: a.amount,
-  }));
-
-  const bestBid = bids[0] ? Number(bids[0].price) : null;
-  const bestAsk = asks[0] ? Number(asks[0].price) : null;
-  const spreadBps =
-    bestBid !== null && bestAsk !== null && bestAsk > 0
-      ? ((bestAsk - bestBid) / bestAsk) * 10_000
-      : null;
+  const { bids, asks, bestBid, bestAsk, spreadBps } = mapBook(book as unknown as RawBook);
 
   const recentTrades: RecentTrade[] = tradeRecords.map((t) => ({
     id: String(t.id ?? ""),

@@ -1,12 +1,20 @@
 import type {
   Balance,
+  Candle,
+  ClaimableBalanceInfo,
   EvolutionPoint,
   LogsPage,
   ManualOrderInput,
   MarketSnapshot,
+  OrderbookSnapshot,
+  PortfolioResponse,
   Snapshot,
+  StopLoss,
+  StopLossAuditPage,
+  SwapQuote,
   TradeProposal,
   TradesPage,
+  TrustlineInfo,
 } from "./types";
 
 // All requests are same-origin: in dev Vite proxies /api -> :3000, in prod
@@ -95,6 +103,23 @@ export const api = {
     getJSON<MarketSnapshot & { error?: string }>(
       `/api/market?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
     ),
+  // Token detail page. `quote` omitted => backend auto-resolves the best market.
+  orderbook: (base: string, quote?: string) => {
+    const q = new URLSearchParams({ base });
+    if (quote) q.set("quote", quote);
+    return getJSON<OrderbookSnapshot & { error?: string }>(
+      `/api/orderbook?${q.toString()}`,
+    );
+  },
+  candles: (base: string, quote: string, resolution: number, limit: number) => {
+    const q = new URLSearchParams({
+      base,
+      quote,
+      resolution: String(resolution),
+      limit: String(limit),
+    });
+    return getJSON<Candle[]>(`/api/candles?${q.toString()}`);
+  },
   analyze: (base: string, quote: string) =>
     postJSON<{ reasoning?: string; error?: string }>("/api/analyze", {
       base,
@@ -128,5 +153,67 @@ export const api = {
     postJSON<{ aiProvider?: string; model?: string; error?: string }>(
       "/api/provider",
       { id },
+    ),
+  stopLosses: (base?: string, quote?: string) => {
+    const q = new URLSearchParams();
+    if (base) q.set("base", base);
+    if (quote) q.set("quote", quote);
+    const qs = q.toString();
+    return getJSON<StopLoss[]>(`/api/stoploss${qs ? `?${qs}` : ""}`);
+  },
+  setStopLoss: (body: {
+    base: string;
+    quote: string;
+    triggerPrice: string;
+    sellAll?: boolean;
+    quantityToSell?: string;
+    notes?: string;
+  }) => postJSON<StopLoss & { error?: string }>("/api/stoploss", body),
+  cancelStopLoss: (id: string) =>
+    postJSON<StopLoss & { error?: string }>(
+      `/api/stoploss/${encodeURIComponent(id)}/cancel`,
+    ),
+  stopLossAudit: (base: string, quote: string, limit = 50, offset = 0) => {
+    const q = new URLSearchParams({
+      base,
+      quote,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    return getJSON<StopLossAuditPage>(`/api/stoploss/audit?${q.toString()}`);
+  },
+  pay: (body: { destination: string; asset: string; amount: string; memo?: string }) =>
+    postJSON<{ hash?: string; error?: string }>("/api/pay", body),
+  swapQuote: (send: string, dest: string, amount: string) => {
+    const q = new URLSearchParams({ send, dest, amount });
+    return getJSON<SwapQuote>(`/api/swap/quote?${q.toString()}`);
+  },
+  swap: (body: {
+    sendAsset: string;
+    sendAmount: string;
+    destAsset: string;
+    slippageBps?: number;
+  }) =>
+    postJSON<{ hash?: string; destMin?: string; quoted?: string; error?: string }>(
+      "/api/swap",
+      body,
+    ),
+  claimables: () => getJSON<ClaimableBalanceInfo[]>("/api/claimable"),
+  claimBalance: (id: string) =>
+    postJSON<{ hash?: string; error?: string }>(
+      `/api/claimable/${encodeURIComponent(id)}/claim`,
+    ),
+  portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
+  trustlines: () => getJSON<TrustlineInfo[]>("/api/trustlines"),
+  addTrustline: (body: {
+    asset?: string;
+    code?: string;
+    issuer?: string;
+    homeDomain?: string;
+  }) => postJSON<{ hash?: string; asset?: string; error?: string }>("/api/trustlines", body),
+  removeTrustline: (body: { asset?: string; code?: string; issuer?: string }) =>
+    postJSON<{ hash?: string; asset?: string; error?: string }>(
+      "/api/trustlines/remove",
+      body,
     ),
 };

@@ -105,22 +105,34 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
 
   // 3. Per-trade size cap (tier-aware), tapered as the daily loss budget burns.
   //    A risk-reducing trade may always be as large as the position it closes.
+  //
+  //    SPLIT BY INITIATOR (the SetBy-style flag on the proposal): a MANUAL order
+  //    placed by the user from the dashboard is EXEMPT from the per-trade SIZE
+  //    cap - the user chooses their own size. AI- and system-initiated orders
+  //    stay capped, unchanged. The cap is NOT removed globally: only the
+  //    confirmed-manual path bypasses it, and ONLY this size cap - every other
+  //    gate (kill switch, whitelist, slippage/deviation, daily volume + loss
+  //    caps, the exposure caps in section 7, staleness, cooldown, preflight)
+  //    still applies to a manual order.
   const baseCap = maxAmountForPair(proposal.baseAsset, proposal.quoteAsset);
-  const taper = lossTaper(
-    daily.realizedPnl,
-    inp.unrealizedPnl ?? 0,
-    limits.maxDailyLoss,
-  );
-  let cap = baseCap * taper;
-  if (riskReducing) cap = Math.max(cap, Math.abs(net));
-  if (amount > cap + EPS) {
-    violations.push(
-      taper < 1 && !riskReducing
-        ? `Amount ${amount} exceeds max per trade ${round7(cap)} (cap ${baseCap} tapered x${taper} - ${Math.round(
-            lossBudgetUsed(daily.realizedPnl, inp.unrealizedPnl ?? 0, limits.maxDailyLoss) * 100,
-          )}% of the daily loss budget is used).`
-        : `Amount ${amount} exceeds max per trade ${round7(cap)}.`,
+  const manualInitiated = proposal.initiator === "manual";
+  if (!manualInitiated) {
+    const taper = lossTaper(
+      daily.realizedPnl,
+      inp.unrealizedPnl ?? 0,
+      limits.maxDailyLoss,
     );
+    let cap = baseCap * taper;
+    if (riskReducing) cap = Math.max(cap, Math.abs(net));
+    if (amount > cap + EPS) {
+      violations.push(
+        taper < 1 && !riskReducing
+          ? `Amount ${amount} exceeds max per trade ${round7(cap)} (cap ${baseCap} tapered x${taper} - ${Math.round(
+              lossBudgetUsed(daily.realizedPnl, inp.unrealizedPnl ?? 0, limits.maxDailyLoss) * 100,
+            )}% of the daily loss budget is used).`
+          : `Amount ${amount} exceeds max per trade ${round7(cap)}.`,
+      );
+    }
   }
 
   // 4. Daily caps - skipped for risk-reducing trades (closing is what brings
@@ -133,14 +145,19 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
     }
     // Daily volume is XLM-normalized (store.recordSubmittedTrade books it that
     // way) so both sides of this comparison share one unit across pairs.
-    const notional = amount > 0 && price > 0 ? xlmNotional(baseC, quoteC, amount, price) : 0;
-    if (notional > 0 && daily.volume + notional > limits.maxDailyVolume) {
-      violations.push(
-        `Trade would push daily volume past cap ${limits.maxDailyVolume} (XLM-equivalent).`,
-      );
+    // MANUAL orders bypass the daily VOLUME cap (the user trades any amount);
+    // the daily LOSS halt below and the per-trade-count cap above still apply.
+    if (!manualInitiated) {
+      const notional = amount > 0 && price > 0 ? xlmNotional(baseC, quoteC, amount, price) : 0;
+      if (notional > 0 && daily.volume + notional > limits.maxDailyVolume) {
+        violations.push(
+          `Trade would push daily volume past cap ${limits.maxDailyVolume} (XLM-equivalent).`,
+        );
+      }
     }
     // Loss halt counts realized PLUS the unrealized LOSS side of open marks -
     // otherwise ten open positions all deep red would never trip the limit.
+    // NOT bypassed for manual: it is a circuit breaker, not a size cap.
     const unrealizedLoss = Math.min(0, inp.unrealizedPnl ?? 0);
     const effectivePnl = daily.realizedPnl + unrealizedLoss;
     if (effectivePnl <= -Math.abs(limits.maxDailyLoss)) {
@@ -272,7 +289,9 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   // 7. Exposure caps (risk-increasing only): daily VOLUME bounds activity, not
   //    accumulation - within it the bot could still pile up one big directional
   //    book. Cap the net position per pair and the XLM-equivalent total.
-  if (!riskReducing && amount > 0 && price > 0) {
+  //    MANUAL orders bypass the exposure caps too (the user sizes their own
+  //    book); the kill switch, whitelist, slippage and daily-loss halt still apply.
+  if (!riskReducing && !manualInitiated && amount > 0 && price > 0) {
     const pairCap = baseCap * Math.max(1, limits.pairExposureMultiplier);
     if (Math.abs(newNet) > pairCap + EPS) {
       violations.push(

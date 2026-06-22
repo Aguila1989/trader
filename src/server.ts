@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Response } from "express";
 import { existsSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -14,10 +14,32 @@ import {
   autoApprove,
   reject,
   placeManualOrder,
+  runExclusive,
 } from "./trading/orchestrator";
+import { stopLossService, StopLossError } from "./trading/stopLossService";
+import {
+  getTrustlines,
+  changeTrustline,
+  resolveIssuerByDomain,
+} from "./stellar/trustlineOps";
+import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
+import { listClaimableBalances, claimBalance } from "./stellar/claimable";
+import { canonicalAsset } from "./stellar/assets";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
-import { getBalances, getMarketSnapshot } from "./stellar/market";
+import {
+  startLiquidityScanner,
+  stopLiquidityScanner,
+  getLiquidityRecommendations,
+} from "./trading/liquidityScanner";
+import {
+  getBalances,
+  getMarketSnapshot,
+  getOrderbook,
+  getTradeAggregations,
+  resolveBestQuote,
+} from "./stellar/market";
+import { highTierSpecs } from "./stellar/universe";
 import { signerPublicKey } from "./stellar/signer";
 import { initDb, closeDb, dbReady } from "./db/pool";
 
@@ -129,6 +151,211 @@ app.get("/api/balances", async (_req, res) => {
   }
 });
 
+/**
+ * Shared gate for non-trade on-chain account ops (trustlines, payments,
+ * claimable-balance claims). Writes go out only with a signing key, the kill
+ * switch released, and live trading armed - the same "no on-chain submit unless
+ * armed" invariant the trade path enforces. Returns false (and writes the
+ * response) when blocked.
+ */
+function ensureCanSubmit(res: Response): boolean {
+  if (isReadOnly) {
+    res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
+    return false;
+  }
+  if (store.killSwitch) {
+    res.status(400).json({ error: "Kill switch is active - all on-chain actions are halted." });
+    return false;
+  }
+  if (!store.liveTrading) {
+    res.status(400).json({
+      error: "Live trading is OFF - arm it on the dashboard before signing on-chain actions.",
+    });
+    return false;
+  }
+  return true;
+}
+
+// Current non-native trustlines (asset, balance, limit). Read-only.
+app.get("/api/trustlines", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json([]);
+    return;
+  }
+  try {
+    res.json(await getTrustlines(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Add a trustline by {asset:"CODE:ISSUER"} or {code, issuer} or {code, homeDomain}.
+app.post("/api/trustlines", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const assetSpec = String(b.asset ?? "").trim();
+  const code = String(b.code ?? "").trim();
+  let issuer = String(b.issuer ?? "").trim();
+  const domain = String(b.homeDomain ?? b.domain ?? "").trim();
+  try {
+    let spec = assetSpec;
+    if (!spec) {
+      if (!code) {
+        res.status(400).json({ error: "asset, or code (+ issuer/homeDomain), is required" });
+        return;
+      }
+      if (!issuer && domain) issuer = await resolveIssuerByDomain(code, domain);
+      if (!issuer) {
+        res.status(400).json({ error: "issuer or homeDomain is required" });
+        return;
+      }
+      spec = `${code}:${issuer}`;
+    }
+    const result = await runExclusive(() => changeTrustline(spec, { remove: false }));
+    store.log("trade", `Trustline added: ${result.asset} (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Remove (zero-limit) a trustline; refuses when a balance is still held.
+app.post("/api/trustlines/remove", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const assetSpec = String(b.asset ?? "").trim();
+  const code = String(b.code ?? "").trim();
+  const issuer = String(b.issuer ?? "").trim();
+  const spec = assetSpec || (code && issuer ? `${code}:${issuer}` : "");
+  if (!spec) {
+    res.status(400).json({ error: "asset (or code + issuer) is required" });
+    return;
+  }
+  try {
+    const pub = signerPublicKey();
+    if (pub) {
+      const canon = canonicalAsset(spec).toUpperCase();
+      const line = (await getTrustlines(pub)).find((l) => l.asset.toUpperCase() === canon);
+      if (line && Number(line.balance) > 0) {
+        res.status(400).json({
+          error: `Cannot remove the ${line.code} trustline: balance is ${line.balance}. Sell or transfer it to zero first.`,
+        });
+        return;
+      }
+    }
+    const result = await runExclusive(() => changeTrustline(spec, { remove: true }));
+    store.log("trade", `Trustline removed: ${result.asset} (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// --- Payments / swaps / claimable balances --------------------------------
+// Send a payment (same-asset) to a G... address or a federation address.
+app.post("/api/pay", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const destination = String(b.destination ?? "").trim();
+  const asset = String(b.asset ?? "").trim() || "XLM";
+  const amount = String(b.amount ?? "").trim();
+  const memo = b.memo != null ? String(b.memo) : undefined;
+  if (!destination) {
+    res.status(400).json({ error: "destination is required" });
+    return;
+  }
+  if (!(Number(amount) > 0)) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  try {
+    const result = await runExclusive(() =>
+      sendPayment({ destination, asset, amount, memo }),
+    );
+    store.log(
+      "trade",
+      `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Quote a strict-send swap (read-only).
+app.get("/api/swap/quote", async (req, res) => {
+  const send = String(req.query.send ?? "").trim();
+  const dest = String(req.query.dest ?? "").trim();
+  const amount = String(req.query.amount ?? "").trim();
+  if (!send || !dest || !(Number(amount) > 0)) {
+    res.status(400).json({ error: "send, dest and a positive amount are required" });
+    return;
+  }
+  try {
+    res.json((await quoteSwap(send, amount, dest)) ?? { error: "No swap path found." });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Execute a strict-send swap (path payment to self, slippage-bounded).
+app.post("/api/swap", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const b = req.body ?? {};
+  const sendAsset = String(b.sendAsset ?? "").trim();
+  const destAsset = String(b.destAsset ?? "").trim();
+  const sendAmount = String(b.sendAmount ?? "").trim();
+  const slippageBps = Number.isFinite(Number(b.slippageBps))
+    ? Number(b.slippageBps)
+    : undefined;
+  if (!sendAsset || !destAsset) {
+    res.status(400).json({ error: "sendAsset and destAsset are required" });
+    return;
+  }
+  if (!(Number(sendAmount) > 0)) {
+    res.status(400).json({ error: "sendAmount must be a positive number" });
+    return;
+  }
+  try {
+    const result = await runExclusive(() =>
+      swap({ sendAsset, sendAmount, destAsset, slippageBps }),
+    );
+    store.log(
+      "trade",
+      `Swap: ${sendAmount} ${sendAsset.split(":")[0]} -> ${destAsset.split(":")[0]} (min ${result.destMin}, tx ${result.hash}).`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Claimable balances ("pending payments") for the account.
+app.get("/api/claimable", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json([]);
+    return;
+  }
+  try {
+    res.json(await listClaimableBalances(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/claimable/:id/claim", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  try {
+    const result = await runExclusive(() => claimBalance(req.params.id));
+    store.log("trade", `Claimed balance ${req.params.id.slice(0, 12)} (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
 app.get("/api/market", async (req, res) => {
   const base = String(req.query.base ?? "XLM");
   const quote = String(req.query.quote ?? "");
@@ -138,6 +365,54 @@ app.get("/api/market", async (req, res) => {
   }
   try {
     res.json(await getMarketSnapshot(base, quote, 12));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Lean order book for the token detail page (one Horizon call, for the 30s
+// auto-refresh). `quote` is optional: when omitted it is AUTO-RESOLVED to the
+// market with liquidity (XLM preferred, else a blue-chip stablecoin), and the
+// resolved quote is echoed back so the client polls the same book + candles.
+const QUOTE_CANDIDATES = ["XLM", ...highTierSpecs()];
+app.get("/api/orderbook", async (req, res) => {
+  const base = String(req.query.base ?? "XLM").trim() || "XLM";
+  const quoteParam = String(req.query.quote ?? "").trim();
+  try {
+    const quote = quoteParam || (await resolveBestQuote(base, QUOTE_CANDIDATES));
+    res.json(await getOrderbook(base, quote, 20));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// OHLC candles for the price graph. resolution is validated against Horizon's
+// allowed set; limit is clamped to [1, 365] (getTradeAggregations pages beyond
+// Horizon's 200/page cap for the year view).
+const ALLOWED_RESOLUTIONS = new Set([
+  60_000, 300_000, 900_000, 3_600_000, 86_400_000, 604_800_000,
+]);
+app.get("/api/candles", async (req, res) => {
+  const base = String(req.query.base ?? "XLM").trim() || "XLM";
+  const quote = String(req.query.quote ?? "").trim();
+  if (!quote) {
+    res.status(400).json({ error: "quote is required" });
+    return;
+  }
+  const resolution = Number(req.query.resolution ?? 3_600_000);
+  if (!ALLOWED_RESOLUTIONS.has(resolution)) {
+    res.status(400).json({
+      error:
+        "resolution must be one of 60000, 300000, 900000, 3600000, 86400000, 604800000",
+    });
+    return;
+  }
+  const limitRaw = Number(req.query.limit ?? 168);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(Math.trunc(limitRaw), 1), 365)
+    : 168;
+  try {
+    res.json(await getTradeAggregations(base, quote, resolution, limit));
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
@@ -158,6 +433,83 @@ app.get("/api/trades", async (req, res) => {
     );
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Full trade history as CSV (download). Cells are escaped against CSV/formula
+// injection; pages through the store up to a safety cap.
+function csvCell(v: unknown): string {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@]/.test(s)) s = `'${s}`; // neutralize spreadsheet formula injection
+  if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+app.get("/api/trades.csv", async (_req, res) => {
+  const cols = [
+    "createdAt", "submittedAt", "side", "baseAsset", "quoteAsset", "amount",
+    "limitPrice", "filledAmount", "filledPrice", "status", "initiator",
+    "provider", "model", "reason", "txHash",
+  ] as const;
+  try {
+    const lines: string[] = [cols.join(",")];
+    const pageSize = 500;
+    let offset = 0;
+    let total = Infinity;
+    while (offset < total && offset < 50_000) {
+      const page = await store.getTradesPage({ limit: pageSize, offset });
+      total = page.total;
+      for (const p of page.rows) {
+        lines.push(cols.map((c) => csvCell((p as Record<string, unknown>)[c])).join(","));
+      }
+      if (page.rows.length < pageSize) break;
+      offset += pageSize;
+    }
+    res.set({
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": "attachment; filename=trades.csv",
+    });
+    res.send(lines.join("\r\n"));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Portfolio: funded balances valued in XLM-equivalent (for the allocation view).
+app.get("/api/portfolio", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json({ holdings: [], totalXlm: 0 });
+    return;
+  }
+  try {
+    const balances = await getBalances(pub);
+    const funded = balances.filter(
+      (b) => Number(b.balance) > 0 && !b.asset.startsWith("LP:"),
+    );
+    const holdings = await Promise.all(
+      funded.map(async (b) => {
+        if (b.asset === "XLM") {
+          return { asset: b.asset, balance: b.balance, xlmValue: Number(b.balance) };
+        }
+        try {
+          // XLM/asset book prices the asset in units-per-XLM, so an asset
+          // balance is worth balance/mid XLM.
+          const ob = await getOrderbook("XLM", b.asset, 1);
+          const mid =
+            ob.bestBid != null && ob.bestAsk != null
+              ? (ob.bestBid + ob.bestAsk) / 2
+              : (ob.bestBid ?? ob.bestAsk);
+          const value = mid && mid > 0 ? Number((Number(b.balance) / mid).toFixed(7)) : null;
+          return { asset: b.asset, balance: b.balance, xlmValue: value };
+        } catch {
+          return { asset: b.asset, balance: b.balance, xlmValue: null };
+        }
+      }),
+    );
+    const totalXlm = holdings.reduce((s, h) => s + (h.xlmValue ?? 0), 0);
+    res.json({ holdings, totalXlm: Number(totalXlm.toFixed(7)) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
   }
 });
 
@@ -187,6 +539,25 @@ app.get("/api/logs", async (req, res) => {
 app.get("/api/evolution", async (_req, res) => {
   try {
     res.json(await store.getEvolution());
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Liquidity scanner output: current top-N recommendations (also on the SSE
+// 'state' event) + the persisted history window for charts. Observe-only.
+app.get("/api/liquidity", async (req, res) => {
+  const since = req.query.since
+    ? String(req.query.since)
+    : new Date(
+        Date.now() - config.liquidityRetentionDays * 86_400_000,
+      ).toISOString();
+  const asset = req.query.asset ? String(req.query.asset) : undefined;
+  try {
+    res.json({
+      recs: getLiquidityRecommendations(),
+      history: await store.getLiquidityHistory({ since, asset }),
+    });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -275,6 +646,92 @@ app.post("/api/order", async (req, res) => {
     );
   } catch (err) {
     store.log("error", `Manual order failed: ${(err as Error).message}`);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// --- Stop-loss management -------------------------------------------------
+// Create a MANUAL stop loss. The service validates trigger vs market (below for
+// a long, above for a short) and the independent monitor enforces it.
+app.post("/api/stoploss", async (req, res) => {
+  const b = req.body ?? {};
+  const base = String(b.base ?? "").trim();
+  const quote = String(b.quote ?? "").trim();
+  const triggerPrice = String(b.triggerPrice ?? b.trigger_price ?? "").trim();
+  const sellAll = b.sellAll === true || b.sell_all === true;
+  const quantityToSell =
+    b.quantityToSell != null
+      ? String(b.quantityToSell).trim()
+      : b.quantity != null
+        ? String(b.quantity).trim()
+        : undefined;
+  const notes = b.notes != null ? String(b.notes) : undefined;
+  if (!base || !quote) {
+    res.status(400).json({ error: "base and quote are required" });
+    return;
+  }
+  if (!(Number(triggerPrice) > 0)) {
+    res.status(400).json({ error: "triggerPrice must be a positive number" });
+    return;
+  }
+  try {
+    const stop = await stopLossService.setStopLoss({
+      baseAsset: base,
+      quoteAsset: quote,
+      triggerPrice,
+      sellAll,
+      quantityToSell: sellAll ? undefined : quantityToSell,
+      setBy: "manual",
+      notes,
+    });
+    res.json(stop);
+  } catch (err) {
+    if (err instanceof StopLossError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Active stop losses (optionally filtered to a pair).
+app.get("/api/stoploss", (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  res.json(stopLossService.getActiveStopLosses(base, quote));
+});
+
+// Paginated audit trail for a pair (the collapsible section on the detail page).
+// Registered before the :id route so "audit" is never read as an id.
+app.get("/api/stoploss/audit", async (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  const limit = Number(req.query.limit ?? 50);
+  const offset = Number(req.query.offset ?? 0);
+  try {
+    res.json(
+      await store.getStopLossAuditPage({
+        base,
+        quote,
+        limit: Number.isFinite(limit) ? limit : 50,
+        offset: Number.isFinite(offset) ? offset : 0,
+      }),
+    );
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Cancel a stop loss (the user can cancel an AI-set stop too).
+app.post("/api/stoploss/:id/cancel", (req, res) => {
+  const reason = req.body?.reason ? String(req.body.reason) : undefined;
+  try {
+    res.json(stopLossService.cancelStopLoss(req.params.id, "manual", reason));
+  } catch (err) {
+    if (err instanceof StopLossError) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
     res.status(500).json({ error: (err as Error).message });
   }
 });
@@ -461,6 +918,7 @@ async function start(): Promise<void> {
     }
     startAutoPilot();
     startMonitor();
+    startLiquidityScanner();
     // Opt-in: arm live trading at startup instead of booting read-only. Goes
     // through setLiveTrading so it still refuses without a signing key or with
     // the monitor off; logs loudly so an armed boot is never silent.
@@ -510,6 +968,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     stopAutoPilot();
     stopMonitor();
+    stopLiquidityScanner();
     void closeDb().finally(() => process.exit(0));
   });
 }
