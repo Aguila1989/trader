@@ -9,6 +9,7 @@ import type {
   LogEntry,
   LogLevel,
   LogsPage,
+  PriceAlert,
   StopLoss,
   StopLossAuditPage,
   StopLossAuditRow,
@@ -779,6 +780,101 @@ export async function insertStopLossAudit(a: StopLossAuditRow): Promise<void> {
          (@id, @ts, @network, @stopLossId, @baseAsset, @quoteAsset, @action, @field,
           @oldValue, @newValue, @initiator, @note);`,
     );
+}
+
+/* ------------------------------------------------------------------ *
+ * Price alerts. Same dbReady-guard + idempotent-insert + upsert-fallback
+ * shape as the stop-loss helpers. Rows are never deleted (status only).
+ * ------------------------------------------------------------------ */
+
+interface RawAlertRow {
+  id: string;
+  createdAt: Date | string;
+  baseAsset: string;
+  quoteAsset: string;
+  direction: string;
+  price: number;
+  status: string;
+  note: string | null;
+  triggeredAt: Date | string | null;
+  triggerPrice: number | null;
+}
+
+function rowToAlert(r: RawAlertRow): PriceAlert {
+  return {
+    id: r.id,
+    createdAt: toIso(r.createdAt),
+    baseAsset: r.baseAsset,
+    quoteAsset: r.quoteAsset,
+    direction: r.direction as PriceAlert["direction"],
+    price: String(r.price),
+    status: r.status as PriceAlert["status"],
+    ...(r.note ? { note: r.note } : {}),
+    ...(r.triggeredAt ? { triggeredAt: toIso(r.triggeredAt) } : {}),
+    ...(r.triggerPrice != null ? { triggerPrice: String(r.triggerPrice) } : {}),
+  };
+}
+
+const ALERT_COLS = `id, createdAt, baseAsset, quoteAsset, direction, price,
+  status, note, triggeredAt, triggerPrice`;
+
+function bindAlert(req: sql.Request, a: PriceAlert): sql.Request {
+  return req
+    .input("id", sql.NVarChar(64), a.id)
+    .input("createdAt", sql.DateTime2, new Date(a.createdAt))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("baseAsset", sql.NVarChar(120), a.baseAsset)
+    .input("quoteAsset", sql.NVarChar(120), a.quoteAsset)
+    .input("direction", sql.NVarChar(8), a.direction)
+    .input("price", sql.Decimal(38, 7), Number(a.price))
+    .input("status", sql.NVarChar(16), a.status)
+    .input("note", sql.NVarChar(sql.MAX), a.note ?? null)
+    .input("triggeredAt", sql.DateTime2, a.triggeredAt ? new Date(a.triggeredAt) : null)
+    .input(
+      "triggerPrice",
+      sql.Decimal(38, 7),
+      a.triggerPrice != null ? Number(a.triggerPrice) : null,
+    );
+}
+
+export async function insertPriceAlert(a: PriceAlert): Promise<void> {
+  if (!dbReady()) return;
+  await bindAlert(getPool().request(), a).query(
+    `IF NOT EXISTS (SELECT 1 FROM dbo.PriceAlerts WHERE id = @id)
+     INSERT INTO dbo.PriceAlerts
+       (id, createdAt, network, baseAsset, quoteAsset, direction, price, status,
+        note, triggeredAt, triggerPrice)
+     VALUES
+       (@id, @createdAt, @network, @baseAsset, @quoteAsset, @direction, @price, @status,
+        @note, @triggeredAt, @triggerPrice);`,
+  );
+}
+
+export async function updatePriceAlert(a: PriceAlert): Promise<void> {
+  if (!dbReady()) return;
+  const result = await bindAlert(getPool().request(), a).query(
+    `UPDATE dbo.PriceAlerts
+        SET status = @status, triggeredAt = @triggeredAt, triggerPrice = @triggerPrice,
+            note = @note
+      WHERE id = @id;`,
+  );
+  if ((result.rowsAffected?.[0] ?? 0) === 0) {
+    await insertPriceAlert(a);
+  }
+}
+
+export async function listActivePriceAlerts(): Promise<PriceAlert[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .query<RawAlertRow>(
+      `SELECT ${ALERT_COLS}
+         FROM dbo.PriceAlerts
+        WHERE network = @net AND status = 'active'
+        ORDER BY createdAt DESC;`,
+    );
+  return res.recordset.map(rowToAlert);
 }
 
 /** Paginated audit history for a pair (collapsible section on the detail page). */

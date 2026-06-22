@@ -11,6 +11,7 @@ import MarketPanel from "./components/MarketPanel.vue";
 import ProposalsPanel from "./components/ProposalsPanel.vue";
 import EvolutionCharts from "./components/EvolutionCharts.vue";
 import LiquidityPanel from "./components/LiquidityPanel.vue";
+import AlertsPanel from "./components/AlertsPanel.vue";
 import HistoryTable from "./components/HistoryTable.vue";
 import LogHistory from "./components/LogHistory.vue";
 import LogFeed from "./components/LogFeed.vue";
@@ -34,6 +35,7 @@ onMounted(() => void store.init());
     <ProposalsPanel />
     <EvolutionCharts />
     <LiquidityPanel />
+    <AlertsPanel />
     <HistoryTable />
     <LogHistory />
     <LogFeed />

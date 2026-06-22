@@ -19,6 +19,7 @@ import {
   submitSystemProposal,
 } from "./orchestrator";
 import { stopLossService } from "./stopLossService";
+import { priceAlertService, alertCrossed } from "./priceAlertService";
 import type { ProposedTrade } from "../claude/agent";
 import type { PositionSummary, TradeProposal } from "../types";
 
@@ -586,6 +587,20 @@ function reconcileStopLosses(): void {
 }
 
 /* ------------------------------------------------------------------ *
+ * 2c. Price alerts (observe-only): fire when a pair's mid crosses a level.
+ * ------------------------------------------------------------------ */
+
+async function checkPriceAlerts(snaps: SnapCache): Promise<void> {
+  for (const alert of store.getActivePriceAlerts()) {
+    const mid = await snaps.mid(alert.baseAsset, alert.quoteAsset);
+    if (mid == null || !(mid > 0)) continue;
+    if (alertCrossed(alert.direction, Number(alert.price), mid)) {
+      priceAlertService.fire(alert, mid);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 3. Forward outcome marks (+1h / +24h)
  * ------------------------------------------------------------------ */
 
@@ -754,6 +769,9 @@ async function runOnce(): Promise<void> {
     } catch (err) {
       store.log("error", `Stop-loss reconcile failed: ${(err as Error).message}`);
     }
+    await checkPriceAlerts(snaps).catch((err) =>
+      store.log("error", `Monitor price-alert check failed: ${(err as Error).message}`),
+    );
     await outcomeMarks(snaps).catch((err) =>
       store.log("error", `Monitor outcome marks failed: ${(err as Error).message}`),
     );

@@ -8,6 +8,7 @@ import type {
   MarketSnapshot,
   OrderbookSnapshot,
   PortfolioResponse,
+  PriceAlert,
   Snapshot,
   StopLoss,
   StopLossAuditPage,
@@ -204,6 +205,18 @@ export const api = {
       `/api/claimable/${encodeURIComponent(id)}/claim`,
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
+  alerts: () => getJSON<PriceAlert[]>("/api/alerts"),
+  setAlert: (body: {
+    base: string;
+    quote: string;
+    direction: "above" | "below";
+    price: string;
+    note?: string;
+  }) => postJSON<PriceAlert & { error?: string }>("/api/alerts", body),
+  cancelAlert: (id: string) =>
+    postJSON<PriceAlert & { error?: string }>(
+      `/api/alerts/${encodeURIComponent(id)}/cancel`,
+    ),
   trustlines: () => getJSON<TrustlineInfo[]>("/api/trustlines"),
   addTrustline: (body: {
     asset?: string;
