@@ -255,6 +255,28 @@ export interface StopLossAuditPage {
  * ranked by XLM-pair SDEX volume, with trend analysis. NEVER trades.
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * Price alerts (observe-only): notify when a pair crosses a price.
+ * ------------------------------------------------------------------ */
+
+export type AlertDirection = "above" | "below";
+export type AlertStatus = "active" | "triggered" | "cancelled";
+
+export interface PriceAlert {
+  id: string;
+  createdAt: string;
+  baseAsset: string;
+  quoteAsset: string;
+  /** Fire when the mid moves ABOVE / BELOW `price`. */
+  direction: AlertDirection;
+  price: string;
+  status: AlertStatus;
+  note?: string;
+  triggeredAt?: string;
+  /** The mid price at the moment it fired. */
+  triggerPrice?: string;
+}
+
 export type RankTrend = "improving" | "declining" | "stable";
 export type VolumeTrend = "growing" | "shrinking" | "stable";
 
@@ -374,4 +396,6 @@ export interface Snapshot {
   /** Current top-N liquid assets + trend (observe-only scanner). Top-N only -
    *  the long history is served by GET /api/liquidity, never on the SSE wire. */
   liquidityRecs: LiquidityRec[];
+  /** Active price alerts. */
+  priceAlerts: PriceAlert[];
 }

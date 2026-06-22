@@ -17,6 +17,7 @@ import {
   runExclusive,
 } from "./trading/orchestrator";
 import { stopLossService, StopLossError } from "./trading/stopLossService";
+import { priceAlertService, PriceAlertError } from "./trading/priceAlertService";
 import {
   getTrustlines,
   changeTrustline,
@@ -347,9 +348,28 @@ app.get("/api/claimable", async (_req, res) => {
 
 app.post("/api/claimable/:id/claim", async (req, res) => {
   if (!ensureCanSubmit(res)) return;
+  const id = req.params.id;
   try {
-    const result = await runExclusive(() => claimBalance(req.params.id));
-    store.log("trade", `Claimed balance ${req.params.id.slice(0, 12)} (tx ${result.hash}).`);
+    // Pre-check so a claim of a token we don't trust doesn't burn a fee failing.
+    const pub = signerPublicKey();
+    if (pub) {
+      const cb = (await listClaimableBalances(pub)).find((c) => c.id === id);
+      if (!cb) {
+        res.status(404).json({ error: "claimable balance not found for this account" });
+        return;
+      }
+      if (cb.asset !== "XLM") {
+        const trusted = (await getTrustlines(pub)).some((t) => t.asset === cb.asset);
+        if (!trusted) {
+          res.status(400).json({
+            error: `Establish a ${cb.asset.split(":")[0]} trustline before claiming this balance.`,
+          });
+          return;
+        }
+      }
+    }
+    const result = await runExclusive(() => claimBalance(id));
+    store.log("trade", `Claimed balance ${id.slice(0, 12)} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
@@ -459,7 +479,8 @@ app.get("/api/trades.csv", async (_req, res) => {
       const page = await store.getTradesPage({ limit: pageSize, offset });
       total = page.total;
       for (const p of page.rows) {
-        lines.push(cols.map((c) => csvCell((p as Record<string, unknown>)[c])).join(","));
+        const row = p as unknown as Record<string, unknown>;
+        lines.push(cols.map((c) => csvCell(row[c])).join(","));
       }
       if (page.rows.length < pageSize) break;
       offset += pageSize;
@@ -510,6 +531,69 @@ app.get("/api/portfolio", async (_req, res) => {
     res.json({ holdings, totalXlm: Number(totalXlm.toFixed(7)) });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// --- Price alerts (observe-only) ------------------------------------------
+app.get("/api/alerts", (req, res) => {
+  const base = req.query.base ? String(req.query.base) : undefined;
+  const quote = req.query.quote ? String(req.query.quote) : undefined;
+  res.json(priceAlertService.getActiveAlerts(base, quote));
+});
+app.post("/api/alerts", (req, res) => {
+  const b = req.body ?? {};
+  const base = String(b.base ?? "").trim();
+  const quote = String(b.quote ?? "").trim();
+  const direction =
+    b.direction === "above" || b.direction === "below" ? b.direction : null;
+  const price = String(b.price ?? "").trim();
+  const note = b.note != null ? String(b.note) : undefined;
+  if (!base || !quote) {
+    res.status(400).json({ error: "base and quote are required" });
+    return;
+  }
+  if (!direction) {
+    res.status(400).json({ error: "direction must be 'above' or 'below'" });
+    return;
+  }
+  if (!(Number(price) > 0)) {
+    res.status(400).json({ error: "price must be a positive number" });
+    return;
+  }
+  try {
+    const alert = priceAlertService.setAlert({
+      baseAsset: base,
+      quoteAsset: quote,
+      direction,
+      price,
+      note,
+    });
+    // Alerts are evaluated by the position monitor; if it's off they never fire.
+    if (config.monitorIntervalSeconds <= 0) {
+      const warning =
+        "Alert created, but the position monitor is OFF (POSITION_MONITOR_INTERVAL_SECONDS=0) so it will not be evaluated until the monitor is enabled.";
+      store.log("warn", warning);
+      res.json({ ...alert, warning });
+      return;
+    }
+    res.json(alert);
+  } catch (err) {
+    if (err instanceof PriceAlertError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+app.post("/api/alerts/:id/cancel", (req, res) => {
+  try {
+    res.json(priceAlertService.cancelAlert(req.params.id));
+  } catch (err) {
+    if (err instanceof PriceAlertError) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

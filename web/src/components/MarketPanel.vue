@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
+import { fmtNum, assetCode as tokenCode } from "../format";
 import type { ManualOrderInput } from "../types";
 
 const store = useTraderStore();
@@ -30,10 +30,6 @@ const tokens = computed(() =>
     (a) => a.toUpperCase() !== "XLM" && a.toLowerCase() !== "native",
   ),
 );
-function tokenCode(spec: string): string {
-  return spec.split(":")[0] || spec;
-}
-
 const limitRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
@@ -209,7 +205,13 @@ async function placeOrder(): Promise<void> {
         <div>
           <h3>Bids</h3>
           <ul class="levels bids">
-            <li v-for="(lv, i) in store.market?.bids ?? []" :key="'b' + i">
+            <li
+              v-for="(lv, i) in store.market?.bids ?? []"
+              :key="'b' + i"
+              class="book-level"
+              title="Click to fill a SELL at this price"
+              @click="fillFromBook(lv.price, 'sell')"
+            >
               <span class="px">{{ fmtNum(lv.price, 7) }}</span>
               <span class="amt">{{ fmtNum(lv.amount) }}</span>
             </li>
@@ -218,7 +220,13 @@ async function placeOrder(): Promise<void> {
         <div>
           <h3>Asks</h3>
           <ul class="levels asks">
-            <li v-for="(lv, i) in store.market?.asks ?? []" :key="'a' + i">
+            <li
+              v-for="(lv, i) in store.market?.asks ?? []"
+              :key="'a' + i"
+              class="book-level"
+              title="Click to fill a BUY at this price"
+              @click="fillFromBook(lv.price, 'buy')"
+            >
               <span class="px">{{ fmtNum(lv.price, 7) }}</span>
               <span class="amt">{{ fmtNum(lv.amount) }}</span>
             </li>
@@ -459,5 +467,12 @@ async function placeOrder(): Promise<void> {
 .token-chip {
   padding: 4px 10px;
   font-size: 12px;
+}
+.book-level {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.book-level:hover {
+  background: rgba(91, 140, 255, 0.1);
 }
 </style>

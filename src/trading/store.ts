@@ -24,6 +24,7 @@ import type {
   LogLevel,
   LogsPage,
   PositionSummary,
+  PriceAlert,
   Snapshot,
   StopLoss,
   StopLossAuditPage,
@@ -138,6 +139,8 @@ class Store {
   private liquidityRecs: LiquidityRec[] = [];
   /** Bounded in-memory liquidity history for the no-DB fallback. */
   private liquidityMem: LiquiditySnapshotRow[] = [];
+  /** Active price alerts (observe-only). */
+  private priceAlerts: PriceAlert[] = [];
 
   /** Serializes DB writes so an insert always lands before its updates. */
   private writeChain: Promise<void> = Promise.resolve();
@@ -176,6 +179,7 @@ class Store {
       // Active stop losses must survive a restart so the independent monitor
       // keeps enforcing them even after a crash/redeploy.
       this.stopLosses = await repo.listActiveStopLosses();
+      this.priceAlerts = await repo.listActivePriceAlerts();
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -436,6 +440,44 @@ class Store {
   }
 
   /* ---------------------------------------------------------------- *
+   * Price alerts (observe-only). The position monitor checks active alerts
+   * each tick and fires a one-off 'alert' SSE event (browser notifications).
+   * ---------------------------------------------------------------- */
+
+  getActivePriceAlerts(base?: string, quote?: string): PriceAlert[] {
+    return this.priceAlerts.filter(
+      (a) =>
+        a.status === "active" &&
+        (!base || a.baseAsset === base) &&
+        (!quote || a.quoteAsset === quote),
+    );
+  }
+
+  getPriceAlert(id: string): PriceAlert | undefined {
+    return this.priceAlerts.find((a) => a.id === id);
+  }
+
+  recordPriceAlert(a: PriceAlert): void {
+    this.priceAlerts.unshift(a);
+    this.persist(() => repo.insertPriceAlert(a));
+    this.emit("state", this.snapshot());
+  }
+
+  /** Persist a mutated alert; prune terminal ones from the live set. */
+  savePriceAlert(a: PriceAlert): void {
+    this.persist(() => repo.updatePriceAlert(a));
+    if (a.status !== "active") {
+      this.priceAlerts = this.priceAlerts.filter((x) => x.id !== a.id);
+    }
+    this.emit("state", this.snapshot());
+  }
+
+  /** Emit a one-off 'alert' SSE event (drives browser notifications). */
+  emitAlert(payload: unknown): void {
+    this.emit("alert", payload);
+  }
+
+  /* ---------------------------------------------------------------- *
    * Liquidity scanner (observe-only). Only the small top-N rec list
    * rides the SSE 'state' event; the long history is DB-backed and served
    * via GET /api/liquidity, never broadcast.
@@ -690,6 +732,7 @@ class Store {
       logs: this.logs,
       stopLosses: this.stopLosses,
       liquidityRecs: this.liquidityRecs,
+      priceAlerts: this.priceAlerts.filter((a) => a.status === "active"),
     };
   }
 }

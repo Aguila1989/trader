@@ -50,6 +50,7 @@ export const useTraderStore = defineStore("trader", () => {
   const walletError = ref("");
   const swapQuoteResult = ref<SwapQuote | null>(null);
   const portfolio = ref<PortfolioResponse | null>(null);
+  const alertError = ref("");
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -91,6 +92,7 @@ export const useTraderStore = defineStore("trader", () => {
   const liquidityRecs = computed(() => snapshot.value?.liquidityRecs ?? []);
   // Active stops live in the snapshot (replaced wholesale on each 'state' push).
   const stopLosses = computed(() => snapshot.value?.stopLosses ?? []);
+  const priceAlerts = computed(() => snapshot.value?.priceAlerts ?? []);
   const logs = computed(() => snapshot.value?.logs ?? []);
   const daily = computed(() => snapshot.value?.daily ?? null);
   const limits = computed(() => snapshot.value?.limits ?? null);
@@ -198,6 +200,23 @@ export const useTraderStore = defineStore("trader", () => {
       markAlive();
       if (!snapshot.value) return;
       snapshot.value.daily = JSON.parse((ev as MessageEvent).data) as DailyState;
+    });
+    es.addEventListener("alert", (ev) => {
+      markAlive();
+      try {
+        const a = JSON.parse((ev as MessageEvent).data) as {
+          pair: string;
+          direction: string;
+          price: string;
+          mid: string;
+        };
+        const body = `${a.pair} crossed ${a.direction} ${a.price} (now ${a.mid})`;
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("Price alert", { body });
+        }
+      } catch {
+        /* ignore malformed alert payloads */
+      }
     });
     es.addEventListener("log", (ev) => {
       markAlive();
@@ -563,6 +582,35 @@ export const useTraderStore = defineStore("trader", () => {
     return true;
   }
 
+  // --- price alerts ---
+  async function setAlert(body: {
+    base: string;
+    quote: string;
+    direction: "above" | "below";
+    price: string;
+    note?: string;
+  }): Promise<boolean> {
+    alertError.value = "";
+    // Ask for notification permission so a fired alert can pop a desktop toast.
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      try {
+        await Notification.requestPermission();
+      } catch {
+        /* permission optional; the alert still fires + logs server-side */
+      }
+    }
+    const r = await api.setAlert(body);
+    if (r.error) {
+      alertError.value = r.error;
+      return false;
+    }
+    return true; // the active list refreshes via the SSE 'state' push
+  }
+
+  async function cancelAlert(id: string): Promise<void> {
+    await api.cancelAlert(id);
+  }
+
   async function loadEvolution(): Promise<void> {
     try {
       evolution.value = await api.evolution();
@@ -688,6 +736,10 @@ export const useTraderStore = defineStore("trader", () => {
     positions,
     liquidityRecs,
     stopLosses,
+    priceAlerts,
+    alertError,
+    setAlert,
+    cancelAlert,
     logs,
     daily,
     limits,
