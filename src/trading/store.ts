@@ -15,7 +15,12 @@ import {
 } from "./positions";
 import { getMarketSnapshot } from "../stellar/market";
 import { randomUUID } from "node:crypto";
+import { defaultRiskProfile, coerceRiskProfile } from "../types";
 import type {
+  AiLogEntry,
+  AiLogPage,
+  TradeLogEntry,
+  TradeLogPage,
   DailyState,
   EvolutionPoint,
   LiquidityRec,
@@ -25,6 +30,7 @@ import type {
   LogsPage,
   PositionSummary,
   PriceAlert,
+  RiskProfile,
   Snapshot,
   StopLoss,
   StopLossAuditPage,
@@ -38,6 +44,11 @@ const MAX_PROPOSALS = 100;
 /** In-memory fallbacks when no DB is configured (history is otherwise DB-only). */
 const MAX_LIQUIDITY_MEM = 5000;
 const MAX_AUDIT_MEM = 500;
+/** In-memory rings for the structured trade/AI logs (DB is the durable store). */
+const MAX_TRADELOG_MEM = 500;
+const MAX_AILOG_MEM = 500;
+/** How many combined trade+AI events the live log shows. */
+const LIVE_LOG_N = 20;
 
 function freshDaily(): DailyState {
   return {
@@ -104,6 +115,10 @@ async function primeXlmRates(fills: Fill[]): Promise<void> {
 class Store {
   private proposals: TradeProposal[] = [];
   private logs: LogEntry[] = [];
+  // Structured, separate trade + AI log rings (the DB is the durable source;
+  // these serve reads when no DB is configured and seed the live log).
+  private tradeLog: TradeLogEntry[] = [];
+  private aiLog: AiLogEntry[] = [];
   private subscribers = new Set<Response>();
 
   killSwitch = false;
@@ -122,6 +137,9 @@ class Store {
    */
   paperTrading = false;
   daily: DailyState = freshDaily();
+  /** Active AI risk profile (per-factor LOW/MEDIUM/HIGH). Persisted in
+   *  dbo.Settings; read LIVE by the policy/orchestrator at proposal time. */
+  riskProfile: RiskProfile = defaultRiskProfile();
   /**
    * Mark-to-market PnL of open positions in XLM, refreshed by the position
    * monitor. Its LOSS side feeds the policy engine's daily-loss halt and the
@@ -180,6 +198,15 @@ class Store {
       // keeps enforcing them even after a crash/redeploy.
       this.stopLosses = await repo.listActiveStopLosses();
       this.priceAlerts = await repo.listActivePriceAlerts();
+      // Risk profile survives restart (unlike the safety toggles, which reset).
+      const rp = await repo.getSetting("riskProfile");
+      if (rp) {
+        try {
+          this.riskProfile = coerceRiskProfile(JSON.parse(rp));
+        } catch {
+          /* malformed row: keep the default LOW profile */
+        }
+      }
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -249,6 +276,72 @@ class Store {
         }
       });
     }
+  }
+
+  /** Append a structured TRADE-log entry (append-only): ring + persist + SSE. */
+  logTrade(e: Omit<TradeLogEntry, "id" | "ts"> & { id?: string; ts?: string }): TradeLogEntry {
+    const entry: TradeLogEntry = {
+      ...e,
+      id: e.id ?? randomUUID(),
+      ts: e.ts ?? new Date().toISOString(),
+    };
+    this.tradeLog.unshift(entry);
+    if (this.tradeLog.length > MAX_TRADELOG_MEM) this.tradeLog.length = MAX_TRADELOG_MEM;
+    this.emit("tradelog", entry);
+    this.persist(() => repo.insertTradeLog(entry));
+    return entry;
+  }
+
+  /** Append a structured AI-log entry (append-only): ring + persist + SSE. */
+  logAi(e: Omit<AiLogEntry, "id" | "ts"> & { id?: string; ts?: string }): AiLogEntry {
+    const entry: AiLogEntry = {
+      ...e,
+      id: e.id ?? randomUUID(),
+      ts: e.ts ?? new Date().toISOString(),
+    };
+    this.aiLog.unshift(entry);
+    if (this.aiLog.length > MAX_AILOG_MEM) this.aiLog.length = MAX_AILOG_MEM;
+    this.emit("ailog", entry);
+    this.persist(() => repo.insertAiLog(entry));
+    return entry;
+  }
+
+  /** Paginated trade-log page (DB when available, else the in-memory ring). */
+  async getTradeLogPage(q: repo.TradeLogQuery): Promise<TradeLogPage> {
+    if (dbReady()) return repo.listTradeLog(q);
+    const f = this.tradeLog.filter(
+      (r) =>
+        (!q.initiator || r.initiator === q.initiator) &&
+        (!q.action || r.action === q.action) &&
+        (!q.token || r.baseAsset === q.token) &&
+        (!q.from || r.ts >= q.from) &&
+        (!q.to || r.ts <= q.to),
+    );
+    return { rows: f.slice(q.offset, q.offset + q.limit), total: f.length, limit: q.limit, offset: q.offset };
+  }
+
+  /** Paginated AI-log page (DB when available, else the in-memory ring). */
+  async getAiLogPage(q: repo.AiLogQuery): Promise<AiLogPage> {
+    if (dbReady()) return repo.listAiLog(q);
+    const f = this.aiLog.filter(
+      (r) =>
+        (!q.eventType || r.eventType === q.eventType) &&
+        (!q.token || r.baseAsset === q.token) &&
+        (!q.from || r.ts >= q.from) &&
+        (!q.to || r.ts <= q.to),
+    );
+    return { rows: f.slice(q.offset, q.offset + q.limit), total: f.length, limit: q.limit, offset: q.offset };
+  }
+
+  /** Last N combined trade+AI events (newest first) for the live log on mount. */
+  async recentLogEvents(
+    n = LIVE_LOG_N,
+  ): Promise<{ trades: TradeLogEntry[]; ai: AiLogEntry[] }> {
+    const [t, a] = await Promise.all([
+      this.getTradeLogPage({ limit: n, offset: 0 }),
+      this.getAiLogPage({ limit: n, offset: 0 }),
+    ]);
+    return { trades: t.rows, ai: a.rows };
   }
 
   addProposal(p: TradeProposal): void {
@@ -604,6 +697,23 @@ class Store {
     this.emit("state", this.snapshot());
   }
 
+  /** Set the AI risk profile (validated/coerced), persist it, take effect on
+   *  the NEXT proposal (the policy/orchestrator read it live). */
+  setRiskProfile(profile: unknown): RiskProfile {
+    this.riskProfile = coerceRiskProfile(profile);
+    this.persist(() => repo.upsertSetting("riskProfile", JSON.stringify(this.riskProfile)));
+    const highs = Object.entries(this.riskProfile)
+      .filter(([, v]) => v === "high")
+      .map(([k]) => k);
+    this.log(
+      "ai",
+      `Risk profile updated: ${JSON.stringify(this.riskProfile)}` +
+        (highs.length ? ` (HIGH: ${highs.join(", ")})` : ""),
+    );
+    this.emit("state", this.snapshot());
+    return this.riskProfile;
+  }
+
   /**
    * Arm/disarm live trading at runtime. Refuses to arm when there is no signing
    * key (isReadOnly): you cannot trade without a secret, and the toggle must not
@@ -733,6 +843,7 @@ class Store {
       stopLosses: this.stopLosses,
       liquidityRecs: this.liquidityRecs,
       priceAlerts: this.priceAlerts.filter((a) => a.status === "active"),
+      riskProfile: this.riskProfile,
     };
   }
 }

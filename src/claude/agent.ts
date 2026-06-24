@@ -11,6 +11,8 @@ import {
 import { signerPublicKey } from "../stellar/signer";
 import { canonicalAsset } from "../stellar/assets";
 import { effectiveCapForPair } from "../policy/engine";
+import { store } from "../trading/store";
+import { effectiveLimits, riskProfileSummary } from "../policy/riskProfile";
 import {
   tradingTools,
   TOOL_BALANCES,
@@ -160,16 +162,21 @@ export async function analyze(
   let reasoning = "";
 
   const memoryBlock = renderMemory(memory);
+  // Active risk profile, read LIVE per call (never cached): it scales the size
+  // cap the AI is told and is surfaced so the AI adjusts size / stop placement /
+  // slippage / whether to trade a volatile token per the operator's risk dials.
+  const profile = store.riskProfile;
   const cap = effectiveCapForPair(
     baseAsset,
     quoteAsset,
     memory?.realizedPnlToday ?? 0,
     memory?.unrealizedPnl ?? 0,
+    effectiveLimits(profile),
   );
   const messages: AiMessage[] = [
     {
       role: "user",
-      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Analyze the ${baseAsset}/${quoteAsset} market for account ${
+      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Active risk profile (per factor): ${riskProfileSummary(profile)}. Size, stop placement, slippage tolerance and your willingness to trade a volatile token should scale with these — LOW = most conservative, HIGH = most aggressive.\n\nAnalyze the ${baseAsset}/${quoteAsset} market for account ${
         signerPublicKey() ?? "(none configured)"
       } and decide whether to trade. Per-trade size cap for this pair: ${cap} units of ${baseAsset} (the base). Fetch fresh data with your tools first.`,
     },
@@ -271,6 +278,9 @@ export async function analyzeChain(
   let reasoning = "";
 
   const memoryBlock = renderMemory(memory);
+  // Active risk profile (live), used to scale the per-pair caps shown + surfaced.
+  const chainProfile = store.riskProfile;
+  const chainLimits = effectiveLimits(chainProfile);
   const pub = signerPublicKey();
   let balancesText = "(no account configured)";
   let offersText = "[]";
@@ -306,6 +316,7 @@ export async function analyzeChain(
         m.quote,
         memory?.realizedPnlToday ?? 0,
         memory?.unrealizedPnl ?? 0,
+        chainLimits,
       );
       const flow = m.flowBuyPct != null ? `${m.flowBuyPct.toFixed(0)}%buy` : "n/a";
       // XLM markets keep the bare quote label; cross pairs show "BASE vs QUOTE"
@@ -323,7 +334,9 @@ export async function analyzeChain(
   const messages: AiMessage[] = [
     {
       role: "user",
-      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Account: ${pub ?? "(none configured)"}
+      content: `${memoryBlock ? `${memoryBlock}\n\n` : ""}Active risk profile (per factor): ${riskProfileSummary(chainProfile)}. Scale size, stop placement, slippage and willingness to trade volatile tokens with these (LOW = conservative, HIGH = aggressive).
+
+Account: ${pub ?? "(none configured)"}
 Balances: ${balancesText}
 Open offers (your resting orders - do not blindly duplicate them): ${offersText}
 

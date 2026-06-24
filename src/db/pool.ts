@@ -205,11 +205,28 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         triggeredAt       DATETIME2(3)  NULL,
         triggerProposalId NVARCHAR(64)  NULL,
         attemptCount      INT           NOT NULL CONSTRAINT DF_StopLosses_attempt DEFAULT 0,
-        lastError         NVARCHAR(MAX) NULL
+        lastError         NVARCHAR(MAX) NULL,
+        isTrailing        BIT           NULL,
+        trailAmount       DECIMAL(38,7) NULL,
+        trailPercent      FLOAT         NULL,
+        highWaterMark     DECIMAL(38,7) NULL,
+        currentTrailPrice DECIMAL(38,7) NULL
       );
       CREATE INDEX IX_StopLosses_net_status_pair
         ON dbo.StopLosses (network, status, baseAsset, quoteAsset);
     END
+
+    -- Migrate databases created before trailing stop losses (all additive + nullable).
+    IF COL_LENGTH('dbo.StopLosses', 'isTrailing') IS NULL
+      ALTER TABLE dbo.StopLosses ADD isTrailing BIT NULL;
+    IF COL_LENGTH('dbo.StopLosses', 'trailAmount') IS NULL
+      ALTER TABLE dbo.StopLosses ADD trailAmount DECIMAL(38,7) NULL;
+    IF COL_LENGTH('dbo.StopLosses', 'trailPercent') IS NULL
+      ALTER TABLE dbo.StopLosses ADD trailPercent FLOAT NULL;
+    IF COL_LENGTH('dbo.StopLosses', 'highWaterMark') IS NULL
+      ALTER TABLE dbo.StopLosses ADD highWaterMark DECIMAL(38,7) NULL;
+    IF COL_LENGTH('dbo.StopLosses', 'currentTrailPrice') IS NULL
+      ALTER TABLE dbo.StopLosses ADD currentTrailPrice DECIMAL(38,7) NULL;
 
     -- Price alerts (observe-only): notify when a pair crosses a price.
     IF OBJECT_ID('dbo.PriceAlerts', 'U') IS NULL
@@ -250,6 +267,59 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       );
       CREATE INDEX IX_StopLossAudit_net_pair_ts
         ON dbo.StopLossAudit (network, baseAsset, quoteAsset, ts DESC);
+    END
+
+    -- Persisted key/value settings (per network): the AI risk profile, etc.
+    -- One JSON row per key; upserted in place (the only non-append-only store).
+    IF OBJECT_ID('dbo.Settings', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Settings (
+        network   NVARCHAR(16)  NOT NULL,
+        keyName   NVARCHAR(64)  NOT NULL,
+        value     NVARCHAR(MAX) NOT NULL,
+        updatedAt DATETIME2(3)  NOT NULL,
+        CONSTRAINT PK_Settings PRIMARY KEY (network, keyName)
+      );
+    END
+
+    -- Append-only structured TRADE log (distinct from the generic Logs table).
+    IF OBJECT_ID('dbo.TradeLog', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.TradeLog (
+        id         NVARCHAR(64)  NOT NULL CONSTRAINT PK_TradeLog PRIMARY KEY,
+        ts         DATETIME2(3)  NOT NULL,
+        network    NVARCHAR(16)  NOT NULL,
+        baseAsset  NVARCHAR(120) NOT NULL,
+        quoteAsset NVARCHAR(120) NOT NULL,
+        action     NVARCHAR(12)  NOT NULL,
+        amount     DECIMAL(38,7) NULL,
+        price      DECIMAL(38,7) NULL,
+        totalValue DECIMAL(38,7) NULL,
+        initiator  NVARCHAR(8)   NOT NULL,
+        status     NVARCHAR(12)  NOT NULL,
+        txHash     NVARCHAR(80)  NULL,
+        orderId    NVARCHAR(64)  NULL
+      );
+      CREATE INDEX IX_TradeLog_net_ts ON dbo.TradeLog (network, ts DESC);
+    END
+
+    -- Append-only structured AI log (reasoning + risk-profile snapshots).
+    IF OBJECT_ID('dbo.AiLog', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AiLog (
+        id          NVARCHAR(64)  NOT NULL CONSTRAINT PK_AiLog PRIMARY KEY,
+        ts          DATETIME2(3)  NOT NULL,
+        network     NVARCHAR(16)  NOT NULL,
+        eventType   NVARCHAR(24)  NOT NULL,
+        baseAsset   NVARCHAR(120) NULL,
+        quoteAsset  NVARCHAR(120) NULL,
+        reasoning   NVARCHAR(MAX) NOT NULL,
+        riskProfile NVARCHAR(MAX) NULL,
+        confidence  NVARCHAR(8)   NULL,
+        direction   NVARCHAR(8)   NULL,
+        price       DECIMAL(38,7) NULL
+      );
+      CREATE INDEX IX_AiLog_net_ts ON dbo.AiLog (network, ts DESC);
     END
   `);
 }

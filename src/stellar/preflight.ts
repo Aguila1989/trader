@@ -16,6 +16,14 @@ import type { TradeProposal } from "../types";
 export interface PreflightResult {
   ok: boolean;
   reason?: string;
+  /** Machine-readable failure cause, for branching + structured logs. */
+  code?: "no_public" | "account" | "no_trustline" | "insufficient_balance" | "bad_input" | "error";
+  /** The asset the trade would GIVE UP (for an insufficient-balance block). */
+  assetGiven?: string;
+  /** Units required of the given-up asset. */
+  required?: number;
+  /** Units actually spendable of the given-up asset. */
+  available?: number;
 }
 
 // Horizon balance lines / account read loosely at this external boundary.
@@ -76,7 +84,7 @@ export async function preflightCheck(
   p: TradeProposal,
 ): Promise<PreflightResult> {
   if (!config.stellarPublic) {
-    return { ok: false, reason: "STELLAR_PUBLIC is not configured." };
+    return { ok: false, code: "no_public", reason: "STELLAR_PUBLIC is not configured." };
   }
 
   let acct: LoadedAccountLike;
@@ -87,6 +95,7 @@ export async function preflightCheck(
   } catch (err) {
     return {
       ok: false,
+      code: "account",
       reason: `account not loadable (unfunded or wrong network?): ${(err as Error).message}`,
     };
   }
@@ -97,7 +106,7 @@ export async function preflightCheck(
     const amount = Number(p.amount);
     const price = Number(p.limitPrice);
     if (!(amount > 0) || !(price > 0)) {
-      return { ok: false, reason: "amount and limitPrice must be positive." };
+      return { ok: false, code: "bad_input", reason: "amount and limitPrice must be positive." };
     }
 
     // The asset the account will RECEIVE must have a trustline first.
@@ -105,6 +114,7 @@ export async function preflightCheck(
     if (!hasTrustline(acct, received)) {
       return {
         ok: false,
+        code: "no_trustline",
         reason: `no trustline for ${received} (the asset this trade would receive) - establish it before trading this pair.`,
       };
     }
@@ -114,12 +124,23 @@ export async function preflightCheck(
       // Selling `amount` of base.
       const avail = base === "XLM" ? spendableXlm(acct) : spendableAsset(acct, base);
       if (!Number.isFinite(avail)) {
-        return { ok: false, reason: `no ${base} balance to sell.` };
+        return {
+          ok: false,
+          code: "insufficient_balance",
+          reason: `no ${base} balance to sell.`,
+          assetGiven: base,
+          required: round7(amount),
+          available: 0,
+        };
       }
       if (avail < amount) {
         return {
           ok: false,
+          code: "insufficient_balance",
           reason: `insufficient ${base}: need ${amount}, have ~${round7(avail)} spendable${base === "XLM" ? " after reserve" : " after open offers"}.`,
+          assetGiven: base,
+          required: round7(amount),
+          available: round7(Math.max(0, avail)),
         };
       }
     } else {
@@ -127,18 +148,29 @@ export async function preflightCheck(
       const cost = amount * price;
       const avail = quote === "XLM" ? spendableXlm(acct) : spendableAsset(acct, quote);
       if (!Number.isFinite(avail)) {
-        return { ok: false, reason: `no ${quote} balance to spend.` };
+        return {
+          ok: false,
+          code: "insufficient_balance",
+          reason: `no ${quote} balance to spend.`,
+          assetGiven: quote,
+          required: round7(cost),
+          available: 0,
+        };
       }
       if (avail < cost) {
         return {
           ok: false,
+          code: "insufficient_balance",
           reason: `insufficient ${quote}: need ~${round7(cost)}, have ~${round7(avail)} spendable${quote === "XLM" ? " after reserve" : " after open offers"}.`,
+          assetGiven: quote,
+          required: round7(cost),
+          available: round7(Math.max(0, avail)),
         };
       }
     }
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, reason: `preflight error: ${(err as Error).message}` };
+    return { ok: false, code: "error", reason: `preflight error: ${(err as Error).message}` };
   }
 }

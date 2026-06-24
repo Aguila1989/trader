@@ -122,6 +122,38 @@ body {
 
 main { max-width: 1180px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
 
+/* Tab bar (Manual / Bot trading) directly below the global header. */
+.tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 10px 18px; cursor: pointer;
+  font-size: 14px; font-weight: 600; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-body { display: flex; flex-direction: column; gap: 16px; }
+
+/* --- Structured logs: initiator badge, statuses, filter row ------------ */
+.ini-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.ini-badge.manual { background: rgba(91, 140, 255, 0.18); color: var(--accent); }
+.ini-badge.ai { background: rgba(181, 140, 255, 0.18); color: #b58cff; }
+.status.filled { color: var(--pos); border-color: #1f5e42; }
+.status.partial { color: var(--warn); border-color: #5e4a1f; }
+.status.cancelled, .status.aborted { color: var(--muted); }
+.status.rejected { color: var(--neg); border-color: #5e1f28; }
+.logs-pane { display: flex; flex-direction: column; gap: 10px; }
+.logs-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.logs-filters select, .logs-date input {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text); padding: 6px 10px;
+}
+.logs-date { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.sub-tabbar .tab { padding: 8px 14px; font-size: 13px; }
+.row-focus { background: rgba(91, 140, 255, 0.12); }
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

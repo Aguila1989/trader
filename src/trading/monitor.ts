@@ -17,11 +17,52 @@ import {
   recoverRestingOfferId,
   runExclusive,
   submitSystemProposal,
+  logTradeFill,
 } from "./orchestrator";
 import { stopLossService } from "./stopLossService";
 import { priceAlertService, alertCrossed } from "./priceAlertService";
+import { getPricedPortfolio } from "../stellar/valuation";
+import { recordPortfolioSample } from "./drawdown";
 import type { ProposedTrade } from "../claude/agent";
 import type { PositionSummary, TradeProposal } from "../types";
+
+// Throttled portfolio-value sampling for the DRAWDOWN-TOLERANCE risk factor:
+// pricing the whole wallet is a handful of Horizon calls, so sample at most
+// every 5 minutes (the 24h drawdown window doesn't need finer resolution).
+const DRAWDOWN_SAMPLE_MS = 5 * 60_000;
+let lastDrawdownSampleMs = 0;
+
+/** Log a later (reconciled) PARTIAL fill of a resting offer to the trade log,
+ *  so a maker filling in tranches isn't under-reported (the first fill is logged
+ *  by executeInner; subsequent tranches are booked here). */
+function logPartialFill(p: TradeProposal, delta: number): void {
+  const price = Number(p.limitPrice) || 0;
+  store.logTrade({
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    action: p.side === "buy" ? "BUY" : "SELL",
+    amount: String(delta),
+    price: String(price),
+    totalValue: (delta * price).toFixed(7),
+    initiator: p.initiator === "manual" ? "MANUAL" : "AI",
+    status: "PARTIAL",
+    ...(p.txHash ? { txHash: p.txHash } : {}),
+    orderId: p.id,
+  });
+}
+async function sampleDrawdown(): Promise<void> {
+  const now = Date.now();
+  if (now - lastDrawdownSampleMs < DRAWDOWN_SAMPLE_MS) return;
+  lastDrawdownSampleMs = now;
+  const pub = signerPublicKey();
+  if (!pub) return;
+  try {
+    const pf = await getPricedPortfolio(pub);
+    recordPortfolioSample(pf.totalXlm, now);
+  } catch {
+    /* best-effort: skip this sample, retry next tick */
+  }
+}
 
 /**
  * The position monitor: a background loop that owns everything that happens to
@@ -231,6 +272,7 @@ async function reconcileOffers(): Promise<void> {
         await runExclusive(async () =>
           store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0),
         );
+        logPartialFill(p, delta);
         store.log(
           "trade",
           `Offer ${p.offerId} (proposal ${shortId(p.id)}) left the book - booked ${delta} ${p.baseAsset} of VERIFIED fills.`,
@@ -252,6 +294,7 @@ async function reconcileOffers(): Promise<void> {
       await runExclusive(async () =>
         store.recordIncrementalFill(p.id, delta, Number(p.limitPrice) || 0),
       );
+      logPartialFill(p, delta);
     }
     if (remainingChain <= EPS) {
       store.updateProposal(p.id, { offerId: undefined });
@@ -492,15 +535,18 @@ async function markPositions(snaps: SnapCache): Promise<void> {
     //   3. plus STOP_LOSS_PCT as an independent hard backstop.
     // All three funnel into the SINGLE proposeStopClose path so a position can
     // never have two closes fired against it in one tick.
-    const activeStop = stopLossService.resolveActiveStop(pos);
-    // Remember any stop that is now live against an OPEN position, so the
-    // reconcile pass can later mark it triggered/expired (and never expire a
-    // preemptive stop that never had a position).
+    // Remember any stop that is now live against an OPEN position (so reconcile
+    // can later mark it triggered/expired, never expiring a preemptive stop) AND
+    // ratchet trailing stops toward the high-water mark on this fresh mark BEFORE
+    // resolving the trigger, so the trailed currentTrailPrice is what fires.
+    const trailSide = pos.netQty < 0 ? "short" : "long";
     for (const s of store.getActiveStopLosses(pos.base, pos.quote)) {
       stopSeenWithPosition.add(s.id);
+      if (s.isTrailing) stopLossService.updateTrail(s, mid, trailSide);
     }
+    const activeStop = stopLossService.resolveActiveStop(pos);
     const effectiveTrigger = activeStop
-      ? Number(activeStop.triggerPrice)
+      ? stopLossService.triggerLevel(activeStop)
       : statedInvalidation(pos);
     const triggered =
       effectiveTrigger != null &&
@@ -736,7 +782,10 @@ async function recheckTimedOut(): Promise<void> {
     });
     // Book under the execution lock (consistent daily-counter snapshot vs a
     // concurrent in-flight executeInner).
-    if (updated) await runExclusive(async () => store.recordSubmittedTrade(updated));
+    if (updated) {
+      await runExclusive(async () => store.recordSubmittedTrade(updated));
+      logTradeFill(updated, updated.txHash); // structured trade-log entry for the late fill
+    }
     store.log(
       "trade",
       `Late landing reconciled: ${shortId(p.id)} (tx ${p.txHash}) actually settled - booked ${round7(filledBase)} ${p.baseAsset}.`,
@@ -763,6 +812,8 @@ async function runOnce(): Promise<void> {
     await markPositions(snaps).catch((err) =>
       store.log("error", `Monitor mark-to-market failed: ${(err as Error).message}`),
     );
+    // Sample total portfolio value for the 24h drawdown-tolerance gate (throttled).
+    await sampleDrawdown().catch(() => {});
     // Sync, but guard so a reconcile bug can't wedge the loop.
     try {
       reconcileStopLosses();

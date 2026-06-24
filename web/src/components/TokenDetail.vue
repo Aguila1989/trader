@@ -20,7 +20,16 @@ const TIPS = {
     "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
   trigger:
     "If the price reaches this level, the position is closed. For a long this is below the current price; for a short, above it — it caps the loss if the trade goes against you.",
+  trailing:
+    "A trailing stop moves toward profit automatically as the price moves in your favor (up for a long), but never the other way — locking in gains while giving the trade room.",
 };
+
+function auditLabel(action: string): string {
+  return action === "trail_updated" ? "↑ trail updated" : action;
+}
+function liveTrigger(s: { isTrailing?: boolean; currentTrailPrice?: string; triggerPrice: string }): string {
+  return s.isTrailing && s.currentTrailPrice != null ? s.currentTrailPrice : s.triggerPrice;
+}
 
 const code = computed(
   () => (store.selectedToken ?? "").split(":")[0] || (store.selectedToken ?? ""),
@@ -65,7 +74,10 @@ const pairStops = computed(() =>
 );
 
 // --- Set Stop Loss form ---
+const stopType = ref<"regular" | "trailing">("regular");
 const trigger = ref("");
+const trailBy = ref<"pct" | "amount">("pct");
+const trailValue = ref("");
 const sellAll = ref(true);
 const quantity = ref("");
 const notes = ref("");
@@ -78,11 +90,44 @@ const triggerValid = computed(() => {
   if (m == null) return true; // can't validate without a price; backend will
   return effectiveSide.value === "long" ? t < m : t > m;
 });
-const formValid = computed(
-  () => triggerValid.value && (sellAll.value || Number(quantity.value) > 0),
-);
+
+const trailNum = computed(() => Number(trailValue.value));
+// Initial trailing-stop preview from the live mid, direction-aware.
+const initialTrailPrice = computed<number | null>(() => {
+  const m = mid.value;
+  if (m == null || !(trailNum.value > 0)) return null;
+  const p =
+    effectiveSide.value === "long"
+      ? trailBy.value === "pct"
+        ? m * (1 - trailNum.value / 100)
+        : m - trailNum.value
+      : trailBy.value === "pct"
+        ? m * (1 + trailNum.value / 100)
+        : m + trailNum.value;
+  return p > 0 ? Number(p.toFixed(7)) : null;
+});
+const trailValid = computed(() => {
+  if (!(trailNum.value > 0)) return false;
+  const m = mid.value;
+  const ip = initialTrailPrice.value;
+  if (m == null || ip == null) return true; // backend validates
+  return effectiveSide.value === "long" ? ip < m : ip > m;
+});
+
+const formValid = computed(() => {
+  const qtyOk = sellAll.value || Number(quantity.value) > 0;
+  if (!qtyOk) return false;
+  return stopType.value === "trailing" ? trailValid.value : triggerValid.value;
+});
 const triggerHint = computed(() => {
   const m = mid.value;
+  if (stopType.value === "trailing") {
+    if (initialTrailPrice.value == null) return "Set a trail distance.";
+    return (
+      `Initial stop @ ${fmtNum(initialTrailPrice.value, 7)} (current ${fmtNum(m, 7)}); ` +
+      `trails ${effectiveSide.value === "long" ? "up" : "down"} as the price moves in your favor.`
+    );
+  }
   if (m == null) return "Set a trigger price.";
   return effectiveSide.value === "long"
     ? `Long stop: trigger must be BELOW the current price (${fmtNum(m, 7)}).`
@@ -93,16 +138,30 @@ async function submit(): Promise<void> {
   if (!formValid.value || submitting.value || !store.selectedToken) return;
   submitting.value = true;
   try {
-    const ok = await store.setStopLoss({
-      base: store.selectedToken,
-      quote: store.selectedQuote,
-      triggerPrice: trigger.value.trim(),
-      sellAll: sellAll.value,
-      quantityToSell: sellAll.value ? undefined : quantity.value.trim(),
-      notes: notes.value.trim() || undefined,
-    });
+    const ok = await store.setStopLoss(
+      stopType.value === "trailing"
+        ? {
+            base: store.selectedToken,
+            quote: store.selectedQuote,
+            stopType: "trailing",
+            trailBy: trailBy.value,
+            trailValue: trailValue.value.trim(),
+            sellAll: sellAll.value,
+            quantityToSell: sellAll.value ? undefined : quantity.value.trim(),
+            notes: notes.value.trim() || undefined,
+          }
+        : {
+            base: store.selectedToken,
+            quote: store.selectedQuote,
+            triggerPrice: trigger.value.trim(),
+            sellAll: sellAll.value,
+            quantityToSell: sellAll.value ? undefined : quantity.value.trim(),
+            notes: notes.value.trim() || undefined,
+          },
+    );
     if (ok) {
       trigger.value = "";
+      trailValue.value = "";
       quantity.value = "";
       notes.value = "";
     }
@@ -208,6 +267,15 @@ onUnmounted(() => {
       it opens one.
     </p>
 
+    <div class="segmented sl-type">
+      <button class="seg" :class="{ active: stopType === 'regular' }" @click="stopType = 'regular'">
+        Regular Stop Loss
+      </button>
+      <button class="seg" :class="{ active: stopType === 'trailing' }" @click="stopType = 'trailing'">
+        Trailing Stop Loss<InfoTip :text="TIPS.trailing" label="Trailing stop loss" placement="right" />
+      </button>
+    </div>
+
     <div class="sl-form">
       <label class="order-field">
         <span class="order-label">Asset</span>
@@ -218,7 +286,7 @@ onUnmounted(() => {
           aria-label="Stop-loss asset"
         />
       </label>
-      <label class="order-field">
+      <label v-if="stopType === 'regular'" class="order-field">
         <span class="order-label">
           Trigger price ({{ quoteCode }})<InfoTip :text="TIPS.trigger" label="Trigger price" />
         </span>
@@ -231,6 +299,26 @@ onUnmounted(() => {
           @keyup.enter="submit"
         />
       </label>
+      <template v-else>
+        <label class="order-field">
+          <span class="order-label">Trail by</span>
+          <div class="segmented sl-trailby">
+            <button class="seg" :class="{ active: trailBy === 'pct' }" @click="trailBy = 'pct'">%</button>
+            <button class="seg" :class="{ active: trailBy === 'amount' }" @click="trailBy = 'amount'">Amount</button>
+          </div>
+        </label>
+        <label class="order-field">
+          <span class="order-label">{{ trailBy === "pct" ? "Trail percent" : `Trail amount (${quoteCode})` }}</span>
+          <input
+            v-model="trailValue"
+            class="order-input"
+            type="text"
+            inputmode="decimal"
+            :placeholder="trailBy === 'pct' ? 'e.g. 5' : '0.00'"
+            @keyup.enter="submit"
+          />
+        </label>
+      </template>
       <label class="sl-checkbox">
         <input v-model="sellAll" type="checkbox" /> Sell all
       </label>
@@ -252,7 +340,12 @@ onUnmounted(() => {
         {{ submitting ? "Setting…" : "Set Stop Loss" }}
       </button>
     </div>
-    <p class="muted sl-hint" :class="{ neg: trigger && !triggerValid }">{{ triggerHint }}</p>
+    <p
+      class="muted sl-hint"
+      :class="{ neg: stopType === 'trailing' ? (trailValue && !trailValid) : (trigger && !triggerValid) }"
+    >
+      {{ triggerHint }}
+    </p>
     <p v-if="store.stopLossError" class="violations">{{ store.stopLossError }}</p>
 
     <h4 class="sl-sub">Active stop losses</h4>
@@ -261,7 +354,11 @@ onUnmounted(() => {
         <span class="muted">(none)</span>
       </li>
       <li v-for="s in pairStops" :key="s.id" class="sl-row">
-        <span class="mono">@ {{ s.triggerPrice }}</span>
+        <span class="mono">@ {{ fmtNum(liveTrigger(s), 7) }}</span>
+        <span v-if="s.isTrailing" class="tag trailing">trailing</span>
+        <span v-if="s.isTrailing" class="muted sl-trailinfo mono">
+          HWM {{ fmtNum(s.highWaterMark, 7) }}<template v-if="mid != null"> · {{ fmtNum(Math.abs(mid - Number(liveTrigger(s))), 7) }} to trigger</template>
+        </span>
         <span>{{ s.sellAll ? "all" : s.quantityToSell }}</span>
         <span class="tag" :class="s.setBy">{{ s.setBy }}</span>
         <span class="muted sl-created">{{ dateTimeStr(s.createdAt) }}</span>
@@ -289,7 +386,7 @@ onUnmounted(() => {
         </tr>
         <tr v-for="a in store.stopLossAudit?.rows ?? []" :key="a.id">
           <td class="muted">{{ dateTimeStr(a.ts) }}</td>
-          <td>{{ a.action }}</td>
+          <td :class="{ 'trail-evt': a.action === 'trail_updated' }">{{ auditLabel(a.action) }}</td>
           <td>{{ a.initiator }}</td>
           <td class="mono">
             {{ a.oldValue != null ? a.oldValue + " → " : "" }}{{ a.newValue ?? "" }}
@@ -373,6 +470,23 @@ onUnmounted(() => {
 .tag.ai {
   background: rgba(47, 191, 113, 0.18);
   color: #2fbf71;
+}
+.tag.trailing {
+  background: rgba(91, 140, 255, 0.18);
+  color: var(--accent);
+}
+.sl-type {
+  align-self: flex-start;
+  margin: 4px 0 10px;
+}
+.sl-trailby {
+  align-self: flex-start;
+}
+.sl-trailinfo {
+  font-size: 11px;
+}
+.trail-evt {
+  color: var(--accent);
 }
 .audit-table {
   width: 100%;

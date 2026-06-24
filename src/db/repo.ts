@@ -4,6 +4,8 @@ import { dayStartUtc } from "../time";
 import { dbReady, getPool } from "./pool";
 import { computeEvolution, type Fill } from "../trading/positions";
 import type {
+  AiLogEntry,
+  AiLogPage,
   EvolutionPoint,
   LiquiditySnapshotRow,
   LogEntry,
@@ -11,6 +13,8 @@ import type {
   LogsPage,
   PriceAlert,
   StopLoss,
+  TradeLogEntry,
+  TradeLogPage,
   StopLossAuditPage,
   StopLossAuditRow,
   StopLossSetBy,
@@ -618,6 +622,11 @@ interface RawStopLossRow {
   triggerProposalId: string | null;
   attemptCount: number;
   lastError: string | null;
+  isTrailing: boolean | null;
+  trailAmount: number | null;
+  trailPercent: number | null;
+  highWaterMark: number | null;
+  currentTrailPrice: number | null;
 }
 
 function rowToStopLoss(r: RawStopLossRow): StopLoss {
@@ -637,12 +646,18 @@ function rowToStopLoss(r: RawStopLossRow): StopLoss {
     ...(r.triggeredAt ? { triggeredAt: toIso(r.triggeredAt) } : {}),
     ...(r.triggerProposalId ? { triggerProposalId: r.triggerProposalId } : {}),
     ...(r.lastError ? { lastError: r.lastError } : {}),
+    ...(r.isTrailing ? { isTrailing: true } : {}),
+    ...(r.trailAmount != null ? { trailAmount: String(r.trailAmount) } : {}),
+    ...(r.trailPercent != null ? { trailPercent: Number(r.trailPercent) } : {}),
+    ...(r.highWaterMark != null ? { highWaterMark: String(r.highWaterMark) } : {}),
+    ...(r.currentTrailPrice != null ? { currentTrailPrice: String(r.currentTrailPrice) } : {}),
   };
 }
 
 const STOPLOSS_COLS = `id, createdAt, updatedAt, baseAsset, quoteAsset, triggerPrice,
   sellAll, quantityToSell, setBy, status, notes, triggeredAt, triggerProposalId,
-  attemptCount, lastError`;
+  attemptCount, lastError, isTrailing, trailAmount, trailPercent, highWaterMark,
+  currentTrailPrice`;
 
 function bindStopLoss(req: sql.Request, s: StopLoss): sql.Request {
   return req
@@ -665,7 +680,16 @@ function bindStopLoss(req: sql.Request, s: StopLoss): sql.Request {
     .input("triggeredAt", sql.DateTime2, s.triggeredAt ? new Date(s.triggeredAt) : null)
     .input("triggerProposalId", sql.NVarChar(64), s.triggerProposalId ?? null)
     .input("attemptCount", sql.Int, s.attemptCount)
-    .input("lastError", sql.NVarChar(sql.MAX), s.lastError ?? null);
+    .input("lastError", sql.NVarChar(sql.MAX), s.lastError ?? null)
+    .input("isTrailing", sql.Bit, s.isTrailing ?? null)
+    .input("trailAmount", sql.Decimal(38, 7), s.trailAmount != null ? Number(s.trailAmount) : null)
+    .input("trailPercent", sql.Float, s.trailPercent ?? null)
+    .input("highWaterMark", sql.Decimal(38, 7), s.highWaterMark != null ? Number(s.highWaterMark) : null)
+    .input(
+      "currentTrailPrice",
+      sql.Decimal(38, 7),
+      s.currentTrailPrice != null ? Number(s.currentTrailPrice) : null,
+    );
 }
 
 /** Insert a brand-new stop loss (idempotent on id). */
@@ -676,11 +700,13 @@ export async function insertStopLoss(s: StopLoss): Promise<void> {
      INSERT INTO dbo.StopLosses
        (id, createdAt, updatedAt, network, baseAsset, quoteAsset, triggerPrice,
         sellAll, quantityToSell, setBy, status, notes, triggeredAt,
-        triggerProposalId, attemptCount, lastError)
+        triggerProposalId, attemptCount, lastError, isTrailing, trailAmount,
+        trailPercent, highWaterMark, currentTrailPrice)
      VALUES
        (@id, @createdAt, @updatedAt, @network, @baseAsset, @quoteAsset, @triggerPrice,
         @sellAll, @quantityToSell, @setBy, @status, @notes, @triggeredAt,
-        @triggerProposalId, @attemptCount, @lastError);`,
+        @triggerProposalId, @attemptCount, @lastError, @isTrailing, @trailAmount,
+        @trailPercent, @highWaterMark, @currentTrailPrice);`,
   );
 }
 
@@ -700,7 +726,12 @@ export async function updateStopLoss(s: StopLoss): Promise<void> {
             triggeredAt = @triggeredAt,
             triggerProposalId = @triggerProposalId,
             attemptCount = @attemptCount,
-            lastError = @lastError
+            lastError = @lastError,
+            isTrailing = @isTrailing,
+            trailAmount = @trailAmount,
+            trailPercent = @trailPercent,
+            highWaterMark = @highWaterMark,
+            currentTrailPrice = @currentTrailPrice
       WHERE id = @id;`,
   );
   if ((result.rowsAffected?.[0] ?? 0) === 0) {
@@ -798,6 +829,200 @@ interface RawAlertRow {
   note: string | null;
   triggeredAt: Date | string | null;
   triggerPrice: number | null;
+}
+
+/* ---- key/value Settings (per network) ------------------------------- */
+
+/** Read a persisted setting's JSON string, or null when absent / no DB. */
+export async function getSetting(key: string): Promise<string | null> {
+  if (!dbReady()) return null;
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("k", sql.NVarChar(64), key)
+    .query<{ value: string }>(
+      `SELECT value FROM dbo.Settings WHERE network = @net AND keyName = @k;`,
+    );
+  return res.recordset[0]?.value ?? null;
+}
+
+/** Upsert a setting (in-place; the only non-append-only store). No-op without a DB. */
+export async function upsertSetting(key: string, value: string): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("k", sql.NVarChar(64), key)
+    .input("v", sql.NVarChar(sql.MAX), value)
+    .input("ts", sql.DateTime2, new Date())
+    .query(
+      `MERGE dbo.Settings AS t
+       USING (SELECT @net AS network, @k AS keyName) AS s
+         ON t.network = s.network AND t.keyName = s.keyName
+       WHEN MATCHED THEN UPDATE SET value = @v, updatedAt = @ts
+       WHEN NOT MATCHED THEN INSERT (network, keyName, value, updatedAt)
+         VALUES (@net, @k, @v, @ts);`,
+    );
+}
+
+/* ---- structured TRADE + AI logs (append-only) ----------------------- */
+
+export interface TradeLogQuery {
+  limit: number;
+  offset: number;
+  initiator?: string; // MANUAL | AI
+  action?: string; // BUY | SELL | SWAP | CANCEL | REJECTED
+  token?: string; // baseAsset spec
+  from?: string; // ISO
+  to?: string; // ISO
+}
+
+export async function insertTradeLog(e: TradeLogEntry): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), e.id)
+    .input("ts", sql.DateTime2, new Date(e.ts))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("baseAsset", sql.NVarChar(120), e.baseAsset)
+    .input("quoteAsset", sql.NVarChar(120), e.quoteAsset)
+    .input("action", sql.NVarChar(12), e.action)
+    .input("amount", sql.Decimal(38, 7), e.amount != null ? Number(e.amount) : null)
+    .input("price", sql.Decimal(38, 7), e.price != null ? Number(e.price) : null)
+    .input("totalValue", sql.Decimal(38, 7), e.totalValue != null ? Number(e.totalValue) : null)
+    .input("initiator", sql.NVarChar(8), e.initiator)
+    .input("status", sql.NVarChar(12), e.status)
+    .input("txHash", sql.NVarChar(80), e.txHash ?? null)
+    .input("orderId", sql.NVarChar(64), e.orderId ?? null)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.TradeLog WHERE id = @id)
+       INSERT INTO dbo.TradeLog
+         (id, ts, network, baseAsset, quoteAsset, action, amount, price,
+          totalValue, initiator, status, txHash, orderId)
+       VALUES
+         (@id, @ts, @network, @baseAsset, @quoteAsset, @action, @amount, @price,
+          @totalValue, @initiator, @status, @txHash, @orderId);`,
+    );
+}
+
+interface RawTradeLogRow {
+  id: string; ts: Date | string; baseAsset: string; quoteAsset: string;
+  action: string; amount: number | null; price: number | null;
+  totalValue: number | null; initiator: string; status: string;
+  txHash: string | null; orderId: string | null;
+}
+function rowToTradeLog(r: RawTradeLogRow): TradeLogEntry {
+  return {
+    id: r.id, ts: toIso(r.ts), baseAsset: r.baseAsset, quoteAsset: r.quoteAsset,
+    action: r.action as TradeLogEntry["action"],
+    amount: String(r.amount ?? 0), price: String(r.price ?? 0),
+    totalValue: String(r.totalValue ?? 0),
+    initiator: r.initiator as TradeLogEntry["initiator"],
+    status: r.status as TradeLogEntry["status"],
+    ...(r.txHash ? { txHash: r.txHash } : {}),
+    ...(r.orderId ? { orderId: r.orderId } : {}),
+  };
+}
+
+export async function listTradeLog(q: TradeLogQuery): Promise<TradeLogPage> {
+  if (!dbReady()) return { rows: [], total: 0, limit: q.limit, offset: q.offset };
+  const req = getPool().request().input("net", sql.NVarChar(16), config.network);
+  const where: string[] = ["network = @net"];
+  if (q.initiator) { req.input("initiator", sql.NVarChar(8), q.initiator); where.push("initiator = @initiator"); }
+  if (q.action) { req.input("action", sql.NVarChar(12), q.action); where.push("action = @action"); }
+  if (q.token) { req.input("token", sql.NVarChar(120), q.token); where.push("baseAsset = @token"); }
+  if (q.from) { req.input("from", sql.DateTime2, new Date(q.from)); where.push("ts >= @from"); }
+  if (q.to) { req.input("to", sql.DateTime2, new Date(q.to)); where.push("ts <= @to"); }
+  const clause = where.join(" AND ");
+  const totalRes = await req.query<{ n: number }>(`SELECT COUNT(*) AS n FROM dbo.TradeLog WHERE ${clause};`);
+  const total = totalRes.recordset[0]?.n ?? 0;
+  req.input("limit", sql.Int, q.limit).input("offset", sql.Int, q.offset);
+  const res = await req.query<RawTradeLogRow>(
+    `SELECT id, ts, baseAsset, quoteAsset, action, amount, price, totalValue,
+            initiator, status, txHash, orderId
+       FROM dbo.TradeLog WHERE ${clause}
+      ORDER BY ts DESC, id DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
+  );
+  return { rows: res.recordset.map(rowToTradeLog), total, limit: q.limit, offset: q.offset };
+}
+
+export interface AiLogQuery {
+  limit: number;
+  offset: number;
+  eventType?: string;
+  token?: string;
+  from?: string;
+  to?: string;
+}
+
+export async function insertAiLog(e: AiLogEntry): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), e.id)
+    .input("ts", sql.DateTime2, new Date(e.ts))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("eventType", sql.NVarChar(24), e.eventType)
+    .input("baseAsset", sql.NVarChar(120), e.baseAsset ?? null)
+    .input("quoteAsset", sql.NVarChar(120), e.quoteAsset ?? null)
+    .input("reasoning", sql.NVarChar(sql.MAX), e.reasoning)
+    .input("riskProfile", sql.NVarChar(sql.MAX), e.riskProfile ? JSON.stringify(e.riskProfile) : null)
+    .input("confidence", sql.NVarChar(8), e.confidence ?? null)
+    .input("direction", sql.NVarChar(8), e.direction ?? null)
+    .input("price", sql.Decimal(38, 7), e.price != null ? Number(e.price) : null)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.AiLog WHERE id = @id)
+       INSERT INTO dbo.AiLog
+         (id, ts, network, eventType, baseAsset, quoteAsset, reasoning,
+          riskProfile, confidence, direction, price)
+       VALUES
+         (@id, @ts, @network, @eventType, @baseAsset, @quoteAsset, @reasoning,
+          @riskProfile, @confidence, @direction, @price);`,
+    );
+}
+
+interface RawAiLogRow {
+  id: string; ts: Date | string; eventType: string;
+  baseAsset: string | null; quoteAsset: string | null; reasoning: string;
+  riskProfile: string | null; confidence: string | null;
+  direction: string | null; price: number | null;
+}
+function rowToAiLog(r: RawAiLogRow): AiLogEntry {
+  let rp: AiLogEntry["riskProfile"];
+  if (r.riskProfile) {
+    try { rp = JSON.parse(r.riskProfile); } catch { rp = undefined; }
+  }
+  return {
+    id: r.id, ts: toIso(r.ts), eventType: r.eventType as AiLogEntry["eventType"],
+    reasoning: r.reasoning,
+    ...(r.baseAsset ? { baseAsset: r.baseAsset } : {}),
+    ...(r.quoteAsset ? { quoteAsset: r.quoteAsset } : {}),
+    ...(rp ? { riskProfile: rp } : {}),
+    ...(r.confidence ? { confidence: r.confidence } : {}),
+    ...(r.direction ? { direction: r.direction } : {}),
+    ...(r.price != null ? { price: String(r.price) } : {}),
+  };
+}
+
+export async function listAiLog(q: AiLogQuery): Promise<AiLogPage> {
+  if (!dbReady()) return { rows: [], total: 0, limit: q.limit, offset: q.offset };
+  const req = getPool().request().input("net", sql.NVarChar(16), config.network);
+  const where: string[] = ["network = @net"];
+  if (q.eventType) { req.input("eventType", sql.NVarChar(24), q.eventType); where.push("eventType = @eventType"); }
+  if (q.token) { req.input("token", sql.NVarChar(120), q.token); where.push("baseAsset = @token"); }
+  if (q.from) { req.input("from", sql.DateTime2, new Date(q.from)); where.push("ts >= @from"); }
+  if (q.to) { req.input("to", sql.DateTime2, new Date(q.to)); where.push("ts <= @to"); }
+  const clause = where.join(" AND ");
+  const totalRes = await req.query<{ n: number }>(`SELECT COUNT(*) AS n FROM dbo.AiLog WHERE ${clause};`);
+  const total = totalRes.recordset[0]?.n ?? 0;
+  req.input("limit", sql.Int, q.limit).input("offset", sql.Int, q.offset);
+  const res = await req.query<RawAiLogRow>(
+    `SELECT id, ts, eventType, baseAsset, quoteAsset, reasoning, riskProfile,
+            confidence, direction, price
+       FROM dbo.AiLog WHERE ${clause}
+      ORDER BY ts DESC, id DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
+  );
+  return { rows: res.recordset.map(rowToAiLog), total, limit: q.limit, offset: q.offset };
 }
 
 function rowToAlert(r: RawAlertRow): PriceAlert {

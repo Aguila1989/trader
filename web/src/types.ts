@@ -13,6 +13,8 @@ export type TradeStatus =
   | "submitted"
   | "failed";
 
+export type TradeConfidence = "low" | "medium" | "high";
+
 export interface TradeProposal {
   id: string;
   createdAt: string;
@@ -32,6 +34,24 @@ export interface TradeProposal {
   filledAmount?: string;
   /** Average fill price actually achieved (quote per base). */
   filledPrice?: string;
+  /** WHO initiated this trade — drives the Manual vs Bot history split. */
+  initiator?: "manual" | "ai" | "system";
+  /** AI conviction (auto-trade holds anything below medium). */
+  confidence?: TradeConfidence;
+  /** Attribution: "manual" for user orders, else the AI provider id. */
+  provider?: string;
+  /** Model name for AI proposals. */
+  model?: string;
+}
+
+/** A resting offer on the DEX (the user's "open orders"). */
+export interface OpenOffer {
+  id: string;
+  selling: string;
+  buying: string;
+  amount: string;
+  price: string;
+  lastModified?: string;
 }
 
 /** A manual limit order placed from the dashboard (POST /api/order). The
@@ -93,6 +113,67 @@ export interface LogsPage {
   offset: number;
 }
 
+// --- Structured trade + AI log streams (mirror of backend) ---------------
+export type TradeLogAction = "BUY" | "SELL" | "SWAP" | "CANCEL" | "REJECTED";
+export type TradeLogStatus =
+  | "FILLED"
+  | "PARTIAL"
+  | "CANCELLED"
+  | "REJECTED"
+  | "ABORTED";
+export type TradeLogInitiator = "MANUAL" | "AI";
+
+export interface TradeLogEntry {
+  id: string;
+  ts: string;
+  baseAsset: string;
+  quoteAsset: string;
+  action: TradeLogAction;
+  amount: string;
+  price: string;
+  totalValue: string;
+  initiator: TradeLogInitiator;
+  status: TradeLogStatus;
+  txHash?: string;
+  orderId?: string;
+}
+
+export type AiLogEventType =
+  | "proposal"
+  | "accepted"
+  | "rejected"
+  | "risk_constraint"
+  | "stop_loss"
+  | "trail_update"
+  | "cooldown"
+  | "risk_profile";
+
+export interface AiLogEntry {
+  id: string;
+  ts: string;
+  eventType: AiLogEventType;
+  baseAsset?: string;
+  quoteAsset?: string;
+  reasoning: string;
+  riskProfile?: RiskProfile;
+  confidence?: string;
+  direction?: string;
+  price?: string;
+}
+
+export interface TradeLogPage {
+  rows: TradeLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+export interface AiLogPage {
+  rows: AiLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface Limits {
   assetWhitelist: string[];
   maxAmountPerTrade: number;
@@ -148,6 +229,19 @@ export interface Snapshot {
   stopLosses: StopLoss[];
   /** Active price alerts. */
   priceAlerts: PriceAlert[];
+  /** Active AI risk profile (per-factor LOW/MEDIUM/HIGH). */
+  riskProfile: RiskProfile;
+}
+
+export type RiskLevel = "low" | "medium" | "high";
+
+export interface RiskProfile {
+  positionSize: RiskLevel;
+  stopLossDistance: RiskLevel;
+  tradeFrequency: RiskLevel;
+  volatilityTolerance: RiskLevel;
+  drawdownTolerance: RiskLevel;
+  slippageTolerance: RiskLevel;
 }
 
 export interface OrderbookLevel {
@@ -296,6 +390,12 @@ export interface StopLoss {
   triggerProposalId?: string;
   attemptCount: number;
   lastError?: string;
+  /** Trailing-stop fields (undefined/false for regular stops). */
+  isTrailing?: boolean;
+  trailAmount?: string;
+  trailPercent?: number;
+  highWaterMark?: string;
+  currentTrailPrice?: string;
 }
 
 export interface StopLossAuditRow {

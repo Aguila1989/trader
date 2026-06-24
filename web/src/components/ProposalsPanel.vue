@@ -9,6 +9,33 @@ function statusText(s: string): string {
 }
 </script>
 
+<style scoped>
+.hl-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.conf {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.conf-high {
+  color: var(--pos);
+  border-color: #1f5e42;
+}
+.conf-medium {
+  color: var(--warn);
+  border-color: #5e4a1f;
+}
+.conf-low {
+  color: var(--muted);
+}
+</style>
+
 <template>
   <section class="panel">
     <h2>Proposals</h2>
@@ -24,7 +51,12 @@ function statusText(s: string): string {
             {{ fmtNum(p.amount) }} {{ p.baseAsset }} @ {{ fmtNum(p.limitPrice) }}
             {{ p.quoteAsset }}
           </span>
-          <span class="status" :class="p.status">{{ statusText(p.status) }}</span>
+          <span class="hl-right">
+            <span v-if="p.confidence" class="conf" :class="'conf-' + p.confidence">
+              {{ p.confidence }}
+            </span>
+            <span class="status" :class="p.status">{{ statusText(p.status) }}</span>
+          </span>
         </div>
 
         <div class="reason">{{ p.reason }}</div>

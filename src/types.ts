@@ -148,6 +148,77 @@ export interface LogEntry {
   data?: unknown;
 }
 
+/* --- Structured, separate, append-only TRADE + AI log streams ---------- *
+ * Distinct from the generic message LogEntry above (which stays for the raw
+ * diagnostics feed). These are the source of truth for the Logs tab + live log. */
+
+export type TradeLogAction = "BUY" | "SELL" | "SWAP" | "CANCEL" | "REJECTED";
+export type TradeLogStatus =
+  | "FILLED"
+  | "PARTIAL"
+  | "CANCELLED"
+  | "REJECTED"
+  | "ABORTED";
+/** Who placed the trade — stored, never derived (mirrors the SetBy pattern). */
+export type TradeLogInitiator = "MANUAL" | "AI";
+
+export interface TradeLogEntry {
+  id: string;
+  ts: string;
+  /** Token traded (base leg), as "XLM" or "CODE:ISSUER". */
+  baseAsset: string;
+  quoteAsset: string;
+  action: TradeLogAction;
+  amount: string;
+  /** Execution / limit price (quote per base). */
+  price: string;
+  /** amount × price. */
+  totalValue: string;
+  initiator: TradeLogInitiator;
+  status: TradeLogStatus;
+  txHash?: string;
+  orderId?: string;
+}
+
+export type AiLogEventType =
+  | "proposal"
+  | "accepted"
+  | "rejected"
+  | "risk_constraint"
+  | "stop_loss"
+  | "trail_update"
+  | "cooldown"
+  | "risk_profile";
+
+export interface AiLogEntry {
+  id: string;
+  ts: string;
+  eventType: AiLogEventType;
+  baseAsset?: string;
+  quoteAsset?: string;
+  /** Full reasoning / description text. */
+  reasoning: string;
+  /** Active risk profile at the moment of the event. */
+  riskProfile?: RiskProfile;
+  confidence?: string;
+  /** "buy" / "sell" for a proposal. */
+  direction?: string;
+  price?: string;
+}
+
+export interface TradeLogPage {
+  rows: TradeLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+export interface AiLogPage {
+  rows: AiLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface DailyState {
   dayKey: string;
   volume: number;
@@ -215,6 +286,18 @@ export interface StopLoss {
   attemptCount: number;
   /** Last sell-failure message (for the UI "cannot fire" surfacing). */
   lastError?: string;
+  /** True for a TRAILING stop. Fixed stops (false/undefined) are unchanged.
+   *  For a trailing stop, `triggerPrice` is the INITIAL seed and
+   *  `currentTrailPrice` is the live trigger the monitor enforces. */
+  isTrailing?: boolean;
+  /** Fixed price distance to trail by (quote per base). Mutually exclusive with trailPercent. */
+  trailAmount?: string;
+  /** Percent distance to trail by (e.g. 5 = 5%). Mutually exclusive with trailAmount. */
+  trailPercent?: number;
+  /** Best price seen since activation (high-water for long, low-water for short). */
+  highWaterMark?: string;
+  /** The live effective trigger after trailing; starts = triggerPrice, only ratchets toward profit. */
+  currentTrailPrice?: string;
 }
 
 export type StopLossAuditAction =
@@ -223,7 +306,8 @@ export type StopLossAuditAction =
   | "trigger"
   | "cancel"
   | "expire"
-  | "trigger_failed";
+  | "trigger_failed"
+  | "trail_updated";
 
 export type StopLossInitiator = "manual" | "ai" | "monitor";
 
@@ -398,4 +482,63 @@ export interface Snapshot {
   liquidityRecs: LiquidityRec[];
   /** Active price alerts. */
   priceAlerts: PriceAlert[];
+  /** Active AI risk profile (per-factor LOW/MEDIUM/HIGH). */
+  riskProfile: RiskProfile;
+}
+
+/** Per-factor risk level. LOW reproduces the current (most conservative)
+ *  behavior; MEDIUM/HIGH scale risk up. */
+export type RiskLevel = "low" | "medium" | "high";
+
+/** The six independently-configurable AI risk factors. */
+export interface RiskProfile {
+  /** % of available balance the AI sizes per order (low = the fixed cap). */
+  positionSize: RiskLevel;
+  /** How far the stop sits from entry (low = tight). */
+  stopLossDistance: RiskLevel;
+  /** How readily the AI trades / how short the cooldown (low = high-conviction only). */
+  tradeFrequency: RiskLevel;
+  /** Which tokens the AI will consider (low = stable/high-liquidity only). */
+  volatilityTolerance: RiskLevel;
+  /** 24h portfolio drawdown that pauses AI entries (low = pause at 5%). */
+  drawdownTolerance: RiskLevel;
+  /** Max slippage the AI accepts (low = 0.5%). */
+  slippageTolerance: RiskLevel;
+}
+
+/** Ordered list of the risk factors (for iteration in the UI + validation). */
+export const RISK_FACTORS = [
+  "positionSize",
+  "stopLossDistance",
+  "tradeFrequency",
+  "volatilityTolerance",
+  "drawdownTolerance",
+  "slippageTolerance",
+] as const satisfies ReadonlyArray<keyof RiskProfile>;
+
+/** Default profile: every factor LOW (current behavior). */
+export function defaultRiskProfile(): RiskProfile {
+  return {
+    positionSize: "low",
+    stopLossDistance: "low",
+    tradeFrequency: "low",
+    volatilityTolerance: "low",
+    drawdownTolerance: "low",
+    slippageTolerance: "low",
+  };
+}
+
+/** Validate + coerce an untrusted value into a RiskProfile (unknown -> low). */
+export function coerceRiskProfile(raw: unknown): RiskProfile {
+  const ok = (v: unknown): RiskLevel =>
+    v === "medium" || v === "high" ? v : "low";
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    positionSize: ok(o.positionSize),
+    stopLossDistance: ok(o.stopLossDistance),
+    tradeFrequency: ok(o.tradeFrequency),
+    volatilityTolerance: ok(o.volatilityTolerance),
+    drawdownTolerance: ok(o.drawdownTolerance),
+    slippageTolerance: ok(o.slippageTolerance),
+  };
 }

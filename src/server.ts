@@ -37,12 +37,15 @@ import {
   getBalances,
   getMarketSnapshot,
   getOrderbook,
+  getOpenOffers,
   getTradeAggregations,
   resolveBestQuote,
 } from "./stellar/market";
 import { getPricedPortfolio, type PricedPortfolio } from "./stellar/valuation";
 import { highTierSpecs, describeAsset } from "./stellar/universe";
-import { signerPublicKey } from "./stellar/signer";
+import { buildCancelOfferTransaction } from "./stellar/builder";
+import { signerPublicKey, signAndSubmit } from "./stellar/signer";
+import type { TradeProposal } from "./types";
 import { initDb, closeDb, dbReady } from "./db/pool";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -249,6 +252,73 @@ app.post("/api/trustlines/remove", async (req, res) => {
     const result = await runExclusive(() => changeTrustline(spec, { remove: true }));
     store.log("trade", `Trustline removed: ${result.asset} (tx ${result.hash}).`);
     res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// --- Open orders (resting offers) -----------------------------------------
+// The signer account's resting offers — the user's "open manual orders" list.
+app.get("/api/offers", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json([]);
+    return;
+  }
+  try {
+    res.json(await getOpenOffers(pub));
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Cancel a resting offer by id (manage*Offer amount 0). Live-gated + serialized
+// on the same execution queue as trades so it can't race a Horizon sequence.
+app.post("/api/offers/:id/cancel", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  const offerId = String(req.params.id);
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.status(400).json({ error: "No signing account configured." });
+    return;
+  }
+  try {
+    const offer = (await getOpenOffers(pub)).find((o) => o.id === offerId);
+    if (!offer) {
+      res.status(404).json({ error: "Offer not found (already filled or cancelled?)." });
+      return;
+    }
+    // Every Horizon offer is a sell offer (selling X, buying Y); a manageSellOffer
+    // with amount 0 + the id deletes it. buildCancelOfferTransaction only reads
+    // side/baseAsset/quoteAsset/limitPrice, so a minimal shape is sufficient.
+    const synthetic = {
+      side: "sell",
+      baseAsset: offer.selling,
+      quoteAsset: offer.buying,
+      limitPrice: offer.price,
+    } as unknown as TradeProposal;
+    const hash = await runExclusive(async () => {
+      const tx = await buildCancelOfferTransaction(synthetic, offerId);
+      const r = await signAndSubmit(tx);
+      return r.hash;
+    });
+    store.log(
+      "trade",
+      `Cancelled open offer ${offerId} (${offer.selling.split(":")[0]}/${offer.buying.split(":")[0]}).`,
+    );
+    store.logTrade({
+      baseAsset: offer.selling,
+      quoteAsset: offer.buying,
+      action: "CANCEL",
+      amount: offer.amount,
+      price: offer.price,
+      totalValue: (Number(offer.amount) * Number(offer.price)).toFixed(7),
+      initiator: "MANUAL",
+      status: "CANCELLED",
+      txHash: hash,
+      orderId: offerId,
+    });
+    res.json({ hash });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
@@ -612,6 +682,57 @@ app.get("/api/logs", async (req, res) => {
   }
 });
 
+// Structured TRADE log (paginated + filterable). Page size clamped 1..200.
+app.get("/api/tradelog", async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
+  try {
+    res.json(
+      await store.getTradeLogPage({
+        limit,
+        offset,
+        initiator: req.query.initiator ? String(req.query.initiator) : undefined,
+        action: req.query.action ? String(req.query.action) : undefined,
+        token: req.query.token ? String(req.query.token) : undefined,
+        from: req.query.from ? String(req.query.from) : undefined,
+        to: req.query.to ? String(req.query.to) : undefined,
+      }),
+    );
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Structured AI log (paginated + filterable). Page size clamped 1..200.
+app.get("/api/ailog", async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
+  try {
+    res.json(
+      await store.getAiLogPage({
+        limit,
+        offset,
+        eventType: req.query.eventType ? String(req.query.eventType) : undefined,
+        token: req.query.token ? String(req.query.token) : undefined,
+        from: req.query.from ? String(req.query.from) : undefined,
+        to: req.query.to ? String(req.query.to) : undefined,
+      }),
+    );
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// Last-N combined trade+AI events for the live log (survives a page refresh).
+app.get("/api/loglive", async (req, res) => {
+  const n = Math.min(Math.max(Number(req.query.n ?? 20) || 20, 1), 100);
+  try {
+    res.json(await store.recentLogEvents(n));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Cumulative volume / trades / PnL series for the evolution charts.
 app.get("/api/evolution", async (_req, res) => {
   try {
@@ -747,20 +868,46 @@ app.post("/api/stoploss", async (req, res) => {
     res.status(400).json({ error: "base and quote are required" });
     return;
   }
-  if (!(Number(triggerPrice) > 0)) {
+  // Trailing vs regular. Trailing accepts trailPercent/trailAmount directly, or
+  // the UI's {trailBy:'pct'|'amount', trailValue} shape.
+  const isTrailing = b.isTrailing === true || b.stopType === "trailing";
+  const trailPercent =
+    b.trailPercent != null
+      ? Number(b.trailPercent)
+      : b.trailBy === "pct" && b.trailValue != null
+        ? Number(b.trailValue)
+        : undefined;
+  const trailAmount =
+    b.trailAmount != null
+      ? Number(b.trailAmount)
+      : b.trailBy === "amount" && b.trailValue != null
+        ? Number(b.trailValue)
+        : undefined;
+  if (!isTrailing && !(Number(triggerPrice) > 0)) {
     res.status(400).json({ error: "triggerPrice must be a positive number" });
     return;
   }
   try {
-    const stop = await stopLossService.setStopLoss({
-      baseAsset: base,
-      quoteAsset: quote,
-      triggerPrice,
-      sellAll,
-      quantityToSell: sellAll ? undefined : quantityToSell,
-      setBy: "manual",
-      notes,
-    });
+    const stop = isTrailing
+      ? await stopLossService.setTrailingStopLoss({
+          baseAsset: base,
+          quoteAsset: quote,
+          trailPercent,
+          trailAmount,
+          sellAll,
+          quantityToSell: sellAll ? undefined : quantityToSell,
+          setBy: "manual",
+          notes,
+        })
+      : await stopLossService.setStopLoss({
+          baseAsset: base,
+          quoteAsset: quote,
+          triggerPrice,
+          sellAll,
+          quantityToSell: sellAll ? undefined : quantityToSell,
+          setBy: "manual",
+          notes,
+        });
     res.json(stop);
   } catch (err) {
     if (err instanceof StopLossError) {
@@ -856,6 +1003,12 @@ app.post("/api/kill", (req, res) => {
 app.post("/api/auto-approve", (req, res) => {
   store.setAutoApprove(Boolean(req.body?.enabled));
   res.json({ autoApprove: store.autoApprove });
+});
+
+// AI risk profile (per-factor LOW/MEDIUM/HIGH). Validated + persisted by the
+// store; takes effect on the next proposal (the policy reads it live).
+app.post("/api/risk-profile", (req, res) => {
+  res.json({ riskProfile: store.setRiskProfile(req.body ?? {}) });
 });
 
 // Master arm switch: read-only (observe) vs. live trading (can submit on-chain).

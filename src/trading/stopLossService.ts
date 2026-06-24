@@ -4,6 +4,7 @@ import { getOrderbook } from "../stellar/market";
 import { store } from "./store";
 import { config } from "../config";
 import type {
+  AiLogEntry,
   PositionSummary,
   StopLoss,
   StopLossAuditAction,
@@ -27,6 +28,8 @@ export interface StopLossStore {
   saveStopLoss(s: StopLoss): void;
   recordStopLossAudit(a: StopLossAuditRow): void;
   log(level: "info" | "warn" | "error" | "trade" | "ai", message: string): void;
+  /** Structured AI-log emit (optional so test stubs needn't implement it). */
+  logAi?(e: Omit<AiLogEntry, "id" | "ts">): void;
 }
 
 export interface StopLossDeps {
@@ -58,13 +61,32 @@ export interface UpdateStopLossInput {
   initiator?: StopLossInitiator;
 }
 
+export interface SetTrailingStopLossInput {
+  baseAsset: string;
+  quoteAsset: string;
+  /** Percent distance to trail by (e.g. 5 = 5%). Exactly one of this / trailAmount. */
+  trailPercent?: number;
+  /** Fixed price distance to trail by (quote per base). Exactly one of this / trailPercent. */
+  trailAmount?: string | number;
+  quantityToSell?: string;
+  sellAll?: boolean;
+  setBy: StopLossSetBy;
+  notes?: string;
+}
+
 export class StopLossError extends Error {}
 
 export interface IStopLossService {
   setStopLoss(input: SetStopLossInput): Promise<StopLoss>;
+  setTrailingStopLoss(input: SetTrailingStopLossInput): Promise<StopLoss>;
+  setTrailingStopLossByAmount(input: SetTrailingStopLossInput): Promise<StopLoss>;
   updateStopLoss(id: string, patch: UpdateStopLossInput): Promise<StopLoss>;
   cancelStopLoss(id: string, initiator: StopLossInitiator, reason?: string): StopLoss;
   getActiveStopLosses(base?: string, quote?: string): StopLoss[];
+  /** The live effective trigger: currentTrailPrice for a trailing stop, else triggerPrice. */
+  triggerLevel(stop: StopLoss): number;
+  /** Ratchet a trailing stop on a fresh mark (monitor-facing). Persists+audits on movement. */
+  updateTrail(stop: StopLoss, mark: number, side: "long" | "short"): void;
 }
 
 function canon(spec: string): string {
@@ -127,6 +149,20 @@ export class StopLossService implements IStopLossService {
       ...(opts.oldValue != null ? { oldValue: opts.oldValue } : {}),
       ...(opts.newValue != null ? { newValue: opts.newValue } : {}),
       ...(opts.note ? { note: opts.note } : {}),
+    });
+  }
+
+  /** Emit a structured AI-log event for a stop (no-op if the store lacks logAi). */
+  private aiLog(
+    stop: Pick<StopLoss, "baseAsset" | "quoteAsset">,
+    eventType: AiLogEntry["eventType"],
+    reasoning: string,
+  ): void {
+    this.deps.store.logAi?.({
+      eventType,
+      baseAsset: stop.baseAsset,
+      quoteAsset: stop.quoteAsset,
+      reasoning,
     });
   }
 
@@ -200,6 +236,115 @@ export class StopLossService implements IStopLossService {
       `Stop-loss set (${input.setBy}) on ${baseAsset.split(":")[0]}/${quoteAsset.split(":")[0]} @ ${stop.triggerPrice}` +
         `${sellAll ? " (sell all)" : ` (${stop.quantityToSell})`}.`,
     );
+    if (input.setBy === "ai") {
+      this.aiLog(stop, "stop_loss", `AI set stop @ ${stop.triggerPrice}${input.notes ? ` — ${input.notes}` : ""}.`);
+    }
+    return stop;
+  }
+
+  /** Set a trailing stop that trails by a PERCENT (e.g. 5 = 5%). */
+  setTrailingStopLoss(input: SetTrailingStopLossInput): Promise<StopLoss> {
+    return this.createTrailing({ ...input, trailAmount: undefined });
+  }
+
+  /** Set a trailing stop that trails by a fixed price AMOUNT (quote per base). */
+  setTrailingStopLossByAmount(input: SetTrailingStopLossInput): Promise<StopLoss> {
+    return this.createTrailing({ ...input, trailPercent: undefined });
+  }
+
+  /** Enforce: exactly one of trailPercent / trailAmount, and it must be > 0. */
+  private validateTrail(trailPercent: number | undefined, trailAmount: number | undefined): void {
+    const hasPct = trailPercent != null && Number.isFinite(trailPercent);
+    const hasAmt = trailAmount != null && Number.isFinite(trailAmount);
+    if (hasPct === hasAmt) {
+      throw new StopLossError("Provide exactly one of trailPercent or trailAmount.");
+    }
+    if (hasPct && !(trailPercent! > 0)) throw new StopLossError("trailPercent must be > 0.");
+    if (hasPct && !(trailPercent! < 100)) throw new StopLossError("trailPercent must be < 100.");
+    if (hasAmt && !(trailAmount! > 0)) throw new StopLossError("trailAmount must be > 0.");
+  }
+
+  private async createTrailing(input: SetTrailingStopLossInput): Promise<StopLoss> {
+    const baseAsset = canon(input.baseAsset);
+    const quoteAsset = canon(input.quoteAsset);
+    const trailPercent = input.trailPercent;
+    const trailAmount = input.trailAmount != null ? Number(input.trailAmount) : undefined;
+    this.validateTrail(trailPercent, trailAmount);
+
+    const sellAll = input.sellAll === true;
+    if (!sellAll && !(Number(input.quantityToSell) > 0)) {
+      throw new StopLossError("quantityToSell must be a positive number (or set sellAll).");
+    }
+
+    // Seed the trail from the live mid. A trailing stop NEEDS a price to anchor
+    // the high-water mark + initial trigger, so an unpriceable book is fatal here.
+    const mid = await this.deps.getMid(baseAsset, quoteAsset);
+    if (mid == null || !(mid > 0)) {
+      throw new StopLossError("No market price available to seed the trailing stop.");
+    }
+    const side = this.side(baseAsset, quoteAsset);
+    const effectiveSide = side === "short" ? "short" : "long";
+    // Long trails BELOW (sell-stop under a rising HWM); short trails ABOVE.
+    const trailFrom = (m: number): number =>
+      trailPercent != null
+        ? effectiveSide === "long"
+          ? m * (1 - trailPercent / 100)
+          : m * (1 + trailPercent / 100)
+        : effectiveSide === "long"
+          ? m - trailAmount!
+          : m + trailAmount!;
+    const initial = Number(trailFrom(mid).toFixed(7));
+    // Fail closed on a trail so large it puts the initial stop at/below zero:
+    // such a stop can never fire (the monitor requires a positive trigger), so
+    // it would be silent dead protection. Mirrors setStopLoss's trigger>0 guard.
+    if (!(initial > 0)) {
+      throw new StopLossError(
+        `Trail distance is too large: it would place the initial stop at or below zero (${initial}).`,
+      );
+    }
+    if (effectiveSide === "long" && !(initial < mid)) {
+      throw new StopLossError(`Initial trailing stop ${initial} must be below the current price ${mid}.`);
+    }
+    if (effectiveSide === "short" && !(initial > mid)) {
+      throw new StopLossError(`Initial trailing stop ${initial} must be above the current price ${mid}.`);
+    }
+
+    const now = this.nowIso();
+    const stop: StopLoss = {
+      id: randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      baseAsset,
+      quoteAsset,
+      triggerPrice: String(initial),
+      sellAll,
+      ...(sellAll ? {} : { quantityToSell: String(Number(input.quantityToSell)) }),
+      setBy: input.setBy,
+      status: "active",
+      ...(input.notes ? { notes: input.notes } : {}),
+      attemptCount: 0,
+      isTrailing: true,
+      ...(trailPercent != null ? { trailPercent } : {}),
+      ...(trailAmount != null ? { trailAmount: String(trailAmount) } : {}),
+      highWaterMark: String(Number(mid.toFixed(7))),
+      currentTrailPrice: String(initial),
+    };
+    this.deps.store.recordStopLoss(stop);
+    const trailDesc = trailPercent != null ? `${trailPercent}%` : `${trailAmount}`;
+    this.audit(stop, "create", input.setBy, {
+      field: "currentTrailPrice",
+      newValue: stop.currentTrailPrice,
+      note: `trailing by ${trailDesc}${input.notes ? ` - ${input.notes}` : ""}`,
+    });
+    this.deps.store.log(
+      "trade",
+      `Trailing stop set (${input.setBy}) on ${baseAsset.split(":")[0]}/${quoteAsset.split(":")[0]}: ` +
+        `trail ${trailDesc}, initial @ ${stop.currentTrailPrice} (mark ${mid})` +
+        `${sellAll ? " (sell all)" : ` (${stop.quantityToSell})`}.`,
+    );
+    if (input.setBy === "ai") {
+      this.aiLog(stop, "stop_loss", `AI set TRAILING stop (trail ${trailDesc}), initial @ ${stop.currentTrailPrice}${input.notes ? ` — ${input.notes}` : ""}.`);
+    }
     return stop;
   }
 
@@ -259,6 +404,9 @@ export class StopLossService implements IStopLossService {
       "trade",
       `Stop-loss cancelled (${initiator}) on ${stop.baseAsset.split(":")[0]}/${stop.quoteAsset.split(":")[0]}${reason ? ` - ${reason}` : ""}.`,
     );
+    if (stop.setBy === "ai" || initiator === "ai") {
+      this.aiLog(stop, "stop_loss", `AI stop cancelled${reason ? ` — ${reason}` : ""}.`);
+    }
     return stop;
   }
 
@@ -269,13 +417,92 @@ export class StopLossService implements IStopLossService {
    * PROTECTIVE among the pair's active stops (direction-aware), with a conflict
    * logged once when more than one exists. Returns null when there are none.
    */
+  /** The live effective trigger: currentTrailPrice for a trailing stop, else triggerPrice. */
+  triggerLevel(stop: StopLoss): number {
+    if (stop.isTrailing && stop.currentTrailPrice != null) return Number(stop.currentTrailPrice);
+    return Number(stop.triggerPrice);
+  }
+
+  /**
+   * Ratchet a trailing stop on a fresh mark. Direction-aware: a LONG trails UP
+   * under a rising high-water mark (trigger sits below); a SHORT trails DOWN
+   * under a falling low-water mark (trigger sits above). currentTrailPrice never
+   * moves toward a loss. Persists + writes a trail_updated audit row ONLY when
+   * the trail actually moves, so a flat market is silent.
+   */
+  updateTrail(stop: StopLoss, mark: number, side: "long" | "short"): void {
+    if (stop.status !== "active" || !stop.isTrailing || !(mark > 0)) return;
+    const trailPct = stop.trailPercent;
+    const trailAmt = stop.trailAmount != null ? Number(stop.trailAmount) : undefined;
+    const hwm = stop.highWaterMark != null ? Number(stop.highWaterMark) : undefined;
+    const curTrail =
+      stop.currentTrailPrice != null ? Number(stop.currentTrailPrice) : Number(stop.triggerPrice);
+    const trailFrom = (m: number): number =>
+      trailPct != null
+        ? side === "long"
+          ? m * (1 - trailPct / 100)
+          : m * (1 + trailPct / 100)
+        : side === "long"
+          ? m - (trailAmt ?? 0)
+          : m + (trailAmt ?? 0);
+
+    // RE-SEED when the trail sits on the WRONG side of the high-water mark for
+    // the live position side — e.g. a trail seeded long while flat, then a SHORT
+    // opens. Left as-is the stale-direction trigger would fire the instant the
+    // opposite-side position opens; instead anchor a fresh trail to this mark.
+    if (hwm != null && (side === "long" ? curTrail > hwm + EPS : curTrail < hwm - EPS)) {
+      const reseeded = Number(trailFrom(mark).toFixed(7));
+      if (reseeded > 0) {
+        stop.highWaterMark = String(Number(mark.toFixed(7)));
+        stop.currentTrailPrice = String(reseeded);
+        stop.updatedAt = this.nowIso();
+        this.audit(stop, "trail_updated", "monitor", {
+          field: "currentTrailPrice",
+          oldValue: String(curTrail),
+          newValue: String(reseeded),
+          note: `re-seeded for ${side} @ mark ${Number(mark.toFixed(7))}`,
+        });
+        this.deps.store.saveStopLoss(stop);
+      }
+      return;
+    }
+
+    const improved = hwm == null || (side === "long" ? mark > hwm : mark < hwm);
+    if (!improved) return;
+    const candidate = Number(trailFrom(mark).toFixed(7));
+    // Only ratchet toward profit: up for a long, down for a short.
+    const newTrail = side === "long" ? Math.max(curTrail, candidate) : Math.min(curTrail, candidate);
+    const newHwm = Number(mark.toFixed(7));
+    if (newTrail === curTrail && newHwm === hwm) return; // no effective movement
+
+    stop.highWaterMark = String(newHwm);
+    stop.currentTrailPrice = String(newTrail);
+    stop.updatedAt = this.nowIso();
+    // Audit ONLY a real trail move; a pure high-water advance (trail unchanged)
+    // is persisted silently rather than logged as an old==new "change".
+    if (newTrail !== curTrail) {
+      this.audit(stop, "trail_updated", "monitor", {
+        field: "currentTrailPrice",
+        oldValue: String(curTrail),
+        newValue: String(newTrail),
+        note: `HWM ${newHwm} @ mark ${Number(mark.toFixed(7))}`,
+      });
+      this.aiLog(
+        stop,
+        "trail_update",
+        `Trail ratcheted ${curTrail} → ${newTrail} (HWM ${newHwm}, mark ${Number(mark.toFixed(7))}).`,
+      );
+    }
+    this.deps.store.saveStopLoss(stop);
+  }
+
   resolveActiveStop(pos: PositionSummary): StopLoss | null {
     const stops = this.deps.store.getActiveStopLosses(canon(pos.base), canon(pos.quote));
     if (stops.length === 0) return null;
     const side = pos.netQty < 0 ? "short" : "long";
     let chosen = stops[0]!;
     for (const s of stops) {
-      if (this.moreProtective(side, Number(s.triggerPrice), Number(chosen.triggerPrice))) {
+      if (this.moreProtective(side, this.triggerLevel(s), this.triggerLevel(chosen))) {
         chosen = s;
       }
     }

@@ -4,6 +4,13 @@ import { store } from "./store";
 import { aiModel, aiProviderId } from "../ai";
 import { checkPolicy, isRiskReducing } from "../policy/engine";
 import {
+  effectiveLimits,
+  minAutoConfidence,
+  drawdownPausePct,
+  riskProfileSummary,
+} from "../policy/riskProfile";
+import { currentDrawdownPct, drawdownPeak } from "./drawdown";
+import {
   bookLevelsBase,
   getBalances,
   getMarketSnapshot,
@@ -300,17 +307,21 @@ export async function runChainScan(): Promise<ScanOutcome> {
   // universe - the rest are named in the log, not hidden.
   const gatedLabels: string[] = [];
   const tradeable: MarketSnapshot[] = [];
+  // Pre-filter against the RISK-SCALED gates (same as checkPolicy), so a higher
+  // volatilityTolerance actually surfaces wider-spread / thinner markets to the
+  // analyst instead of the scan silently applying the LOW thresholds.
+  const scanLimits = effectiveLimits(store.riskProfile);
   for (const m of markets) {
     const reasons: string[] = [];
     if (
-      config.limits.maxEntrySpreadBps > 0 &&
+      scanLimits.maxEntrySpreadBps > 0 &&
       m.spreadBps != null &&
-      m.spreadBps > config.limits.maxEntrySpreadBps
+      m.spreadBps > scanLimits.maxEntrySpreadBps
     ) {
       reasons.push(`spread ${m.spreadBps.toFixed(0)}bps`);
     }
     const vol = m.stats.baseVolume24h;
-    if (config.limits.minVolume24h > 0 && vol != null && vol < config.limits.minVolume24h) {
+    if (scanLimits.minVolume24h > 0 && vol != null && vol < scanLimits.minVolume24h) {
       reasons.push(`vol24h ${Number(vol.toFixed(1))}`);
     }
     const label =
@@ -443,11 +454,95 @@ function repriceMaker(
   return p;
 }
 
+// AI/system insufficient-balance cooldown. After a balance block, suppress the
+// SAME (pair, side) re-proposal for this long so the bot doesn't spin proposing
+// a trade it cannot fund. Manual orders never enter intake() so are never gated.
+// NOTE: a coarse time gate — depositing the missing asset mid-cooldown does NOT
+// eagerly clear it; the side re-opens when the window expires (next scan).
+const INSUFFICIENT_BALANCE_COOLDOWN_MS = 5 * 60_000;
+const insufficientBalanceCooldownUntil = new Map<string, number>();
+function balanceCooldownKey(base: string, quote: string, side: string): string {
+  return `${base}|${quote}|${side}`.toUpperCase();
+}
+
+/** MANUAL vs AI for the structured trade log (system/monitor closes = AI). */
+function initiatorTag(p: TradeProposal): "MANUAL" | "AI" {
+  return p.initiator === "manual" ? "MANUAL" : "AI";
+}
+
+/** Record a (real or paper) fill to the structured TRADE log. Exported so the
+ *  monitor's reconcile paths (late-landing + resting-offer partials) log too. */
+export function logTradeFill(p: TradeProposal, txHash?: string): void {
+  const amount = p.filledAmount ?? p.amount;
+  const price = p.filledPrice ?? p.limitPrice;
+  const total = Number(amount) * Number(price);
+  const partial =
+    p.filledAmount != null && Number(p.filledAmount) + 1e-7 < Number(p.amount);
+  store.logTrade({
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    action: p.side === "buy" ? "BUY" : "SELL",
+    amount: String(amount),
+    price: String(price),
+    totalValue: Number.isFinite(total) ? total.toFixed(7) : "0",
+    initiator: initiatorTag(p),
+    status: partial ? "PARTIAL" : "FILLED",
+    ...(txHash ? { txHash } : {}),
+    orderId: p.id,
+  });
+}
+
 async function intake(
   p: ProposedTrade,
   meta?: { provider?: string; model?: string; initiator?: TradeProposal["initiator"] },
 ): Promise<TradeProposal> {
   const now = new Date().toISOString();
+
+  // Insufficient-balance cooldown: drop a repeat proposal for the same pair+side
+  // without persisting/streaming it (avoids spinning + feed spam). Logged so the
+  // suppression is visible.
+  const cdKey = balanceCooldownKey(p.baseAsset, p.quoteAsset, p.side);
+  const cdUntil = insufficientBalanceCooldownUntil.get(cdKey) ?? 0;
+  if (cdUntil && Date.now() >= cdUntil) insufficientBalanceCooldownUntil.delete(cdKey); // prune expired
+  if (Date.now() < cdUntil) {
+    const secs = Math.ceil((cdUntil - Date.now()) / 1000);
+    store.log(
+      "warn",
+      `AI proposal suppressed (insufficient-balance cooldown): ${p.side} ` +
+        `${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} — ${secs}s remaining.`,
+      {
+        reason: "insufficient_balance_cooldown",
+        base: p.baseAsset,
+        quote: p.quoteAsset,
+        side: p.side,
+        secondsRemaining: secs,
+      },
+    );
+    return {
+      id: randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      side: p.side,
+      baseAsset: p.baseAsset,
+      quoteAsset: p.quoteAsset,
+      amount: p.amount,
+      limitPrice: p.limitPrice,
+      postOnly: p.postOnly,
+      maxSlippageBps: p.maxSlippageBps,
+      reason: p.reason,
+      status: "blocked",
+      policyViolations: [`Insufficient-balance cooldown: retry suppressed for ~${secs}s.`],
+      initiator: meta?.initiator ?? "ai",
+      provider: meta?.provider ?? aiProviderId(),
+      model: meta?.model ?? aiModel(),
+      confidence: p.confidence,
+      targetPrice: p.targetPrice,
+      invalidationPrice: p.invalidationPrice,
+      horizon: p.horizon,
+      paper: store.paperTrading || undefined,
+    };
+  }
+
   const proposal: TradeProposal = {
     id: randomUUID(),
     createdAt: now,
@@ -484,6 +579,72 @@ async function intake(
       `${p.confidence ? ` (${p.confidence} confidence)` : ""}`,
   );
 
+  // Active risk profile, read LIVE (never cached): drives the effective limits,
+  // the conviction gate and the drawdown pause for THIS proposal.
+  const profile = store.riskProfile;
+  // Risk-profile snapshot logged alongside every AI proposal (spec).
+  store.log(
+    "ai",
+    `Risk profile @ proposal ${shortId(proposal.id)}: ${riskProfileSummary(profile)}`,
+    { event: "risk_profile_snapshot", proposalId: proposal.id, token: p.baseAsset, riskProfile: profile },
+  );
+  // Structured AI-log: the proposal itself + the risk-profile snapshot.
+  store.logAi({
+    eventType: "proposal",
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    reasoning: p.reason,
+    riskProfile: profile,
+    ...(p.confidence ? { confidence: p.confidence } : {}),
+    direction: p.side,
+    price: p.limitPrice,
+  });
+  store.logAi({
+    eventType: "risk_profile",
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    reasoning: `Risk profile at proposal time: ${riskProfileSummary(profile)}`,
+    riskProfile: profile,
+  });
+
+  // DRAWDOWN TOLERANCE: pause NEW entries (not risk-reducing exits) when the 24h
+  // portfolio drawdown exceeds the profile threshold (null at HIGH = no pause).
+  const ddThreshold = drawdownPausePct(profile);
+  const dd = currentDrawdownPct(Date.now());
+  if (
+    ddThreshold != null &&
+    dd >= ddThreshold &&
+    !isRiskReducing(proposal, store.getPositions())
+  ) {
+    store.updateProposal(proposal.id, {
+      status: "blocked",
+      policyViolations: [
+        `Risk: 24h portfolio drawdown ${dd.toFixed(1)}% >= ${ddThreshold}% pause threshold (drawdownTolerance=${profile.drawdownTolerance}).`,
+      ],
+    });
+    const peak = drawdownPeak(Date.now());
+    const ddMsg =
+      `Paused by drawdown gate: 24h drawdown ${dd.toFixed(1)}% >= ${ddThreshold}% threshold` +
+      ` (drawdownTolerance=${profile.drawdownTolerance})` +
+      `${peak ? `; 24h peak ${peak.valueXlm} XLM @ ${new Date(peak.ts).toISOString()}` : ""}.`;
+    store.log("ai", `Proposal ${shortId(proposal.id)} ${ddMsg}`, {
+      event: "risk_constraint",
+      reason: "drawdown_pause",
+      drawdownPct: dd,
+      threshold: ddThreshold,
+      peak: peak ?? undefined,
+      riskProfile: profile,
+    });
+    store.logAi({
+      eventType: "risk_constraint",
+      baseAsset: p.baseAsset,
+      quoteAsset: p.quoteAsset,
+      reasoning: ddMsg,
+      riskProfile: profile,
+    });
+    return current(proposal.id);
+  }
+
   const context = await marketContext(p.baseAsset, p.quoteAsset);
   // Reprice a post_only maker to the live touch BEFORE the gate, so it isn't
   // false-blocked as a crossing taker on a stale/imprecise analyst limit (it is
@@ -498,6 +659,7 @@ async function intake(
     positions: store.getPositions(),
     unrealizedPnl: store.unrealizedPnl,
     autoExecution: store.autoApprove && store.armed,
+    limits: effectiveLimits(profile),
   });
 
   if (!policy.allowed) {
@@ -543,12 +705,25 @@ async function intake(
   // "low"/"medium"/"high" to undefined, and no client validates the tool
   // schema's `required` fields, so a model (especially an OpenAI-compatible one
   // like DeepSeek) can omit it. An undefined confidence must never auto-submit.
-  if (proposal.confidence !== "high" && proposal.confidence !== "medium") {
+  // TRADE FREQUENCY: the minimum AI confidence to auto-submit scales with the
+  // profile. LOW/MEDIUM require medium+ (current behavior); HIGH also allows
+  // "low". An undefined/malformed confidence ALWAYS fails closed (held).
+  const minConf = minAutoConfidence(profile); // "low" | "medium"
+  const conf = proposal.confidence;
+  const meetsConviction =
+    conf === "high" || conf === "medium" || (minConf === "low" && conf === "low");
+  if (!meetsConviction) {
+    const heldMsg = `Held for manual review: ${proposal.confidence ?? "unstated"} confidence (min to auto-submit: ${minConf}).`;
     store.updateProposal(proposal.id, { status: "pending_approval" });
-    store.log(
-      "trade",
-      `Proposal ${shortId(proposal.id)} held for manual review: ${proposal.confidence ?? "unstated"} confidence.`,
-    );
+    store.log("trade", `Proposal ${shortId(proposal.id)} ${heldMsg}`);
+    store.logAi({
+      eventType: "rejected",
+      baseAsset: proposal.baseAsset,
+      quoteAsset: proposal.quoteAsset,
+      reasoning: heldMsg,
+      riskProfile: profile,
+      ...(proposal.confidence ? { confidence: proposal.confidence } : {}),
+    });
     return current(proposal.id);
   }
 
@@ -792,6 +967,9 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
     unrealizedPnl: store.unrealizedPnl,
     // Unattended submissions fail CLOSED on missing market data.
     autoExecution: auto,
+    // Same risk-scaled limits as intake (read live; manual orders keep their
+    // own cap-bypass via proposal.initiator inside checkPolicy).
+    limits: effectiveLimits(store.riskProfile),
   });
   if (!policy.allowed) {
     store.updateProposal(id, {
@@ -832,6 +1010,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
       "trade",
       `Proposal ${shortId(id)} PAPER-FILLED ${fill.filledBase} ${p.baseAsset} @ ~${fill.avgPrice} ${p.quoteAsset} (simulated; no on-chain submit).`,
     );
+    logTradeFill(recorded, "paper");
     return;
   }
 
@@ -839,14 +1018,56 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   // don't sign a transaction that is guaranteed to fail (and burn a fee).
   const pre = await preflightCheck(p);
   if (!pre.ok) {
-    store.updateProposal(id, {
-      status: "blocked",
-      policyViolations: [`Preflight: ${pre.reason ?? "insufficient funds/trustline"}`],
-    });
+    const insufficient = pre.code === "insufficient_balance";
+    // Spec-worded message for the funds case; generic for trustline/other.
+    const violation = insufficient
+      ? `Order rejected: insufficient ${pre.assetGiven} balance. Required: ${pre.required}, Available: ${pre.available}.`
+      : `Preflight: ${pre.reason ?? "insufficient funds/trustline"}`;
+    store.updateProposal(id, { status: "blocked", policyViolations: [violation] });
     store.log(
       "warn",
       `Proposal ${shortId(id)} blocked at preflight: ${pre.reason}`,
+      insufficient
+        ? {
+            reason: "insufficient_balance",
+            token: pre.assetGiven,
+            required: pre.required,
+            available: pre.available,
+            initiator: p.initiator,
+          }
+        : { reason: pre.code, detail: pre.reason, initiator: p.initiator },
     );
+    // A balance pre-check rejection is a TRADE-log event (spec).
+    if (insufficient) {
+      store.logTrade({
+        baseAsset: p.baseAsset,
+        quoteAsset: p.quoteAsset,
+        action: "REJECTED",
+        amount: p.amount,
+        price: p.limitPrice,
+        totalValue: (Number(p.amount) * Number(p.limitPrice)).toFixed(7),
+        initiator: initiatorTag(p),
+        status: "REJECTED",
+        orderId: p.id,
+      });
+    }
+    // AI/system: arm the cooldown so the same trade isn't re-proposed for 5 min.
+    if (insufficient && p.initiator !== "manual") {
+      const key = balanceCooldownKey(p.baseAsset, p.quoteAsset, p.side);
+      insufficientBalanceCooldownUntil.set(key, Date.now() + INSUFFICIENT_BALANCE_COOLDOWN_MS);
+      store.log(
+        "warn",
+        `${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} ${p.side} on ` +
+          `insufficient-balance cooldown for ${INSUFFICIENT_BALANCE_COOLDOWN_MS / 60_000} min.`,
+        { reason: "insufficient_balance_cooldown_set", base: p.baseAsset, quote: p.quoteAsset, side: p.side },
+      );
+      store.logAi({
+        eventType: "cooldown",
+        baseAsset: p.baseAsset,
+        quoteAsset: p.quoteAsset,
+        reasoning: `Insufficient-balance cooldown armed for ${p.side} ${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} (${INSUFFICIENT_BALANCE_COOLDOWN_MS / 60_000} min).`,
+      });
+    }
     return;
   }
 
@@ -889,6 +1110,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
     const recorded = store.updateProposal(id, patch) ?? p;
     store.recordSubmittedTrade(recorded);
     store.log("trade", `Proposal ${shortId(id)} SUBMITTED. tx ${hash}`);
+    logTradeFill(recorded, hash);
   } catch (err) {
     const msg = extractStellarError(err);
     store.updateProposal(id, { status: "failed", error: msg });

@@ -11,6 +11,10 @@ import type {
   TradeProposal,
 } from "../types";
 
+/** The risk-limits shape (inferred from config so there's one source of truth).
+ *  An optional per-call override lets the risk profile scale limits live. */
+export type Limits = typeof config.limits;
+
 // Stellar amounts carry 7 decimals; treat anything smaller as zero.
 const EPS = 1e-7;
 
@@ -35,6 +39,9 @@ export interface PolicyInputs {
    * or volume data blocks the trade instead of silently skipping the check.
    */
   autoExecution?: boolean;
+  /** Risk-profile-scaled limits for THIS proposal. Falls back to config.limits
+   *  when absent, so callers that don't pass it behave exactly as before. */
+  limits?: Limits;
 }
 
 /**
@@ -49,7 +56,8 @@ export interface PolicyInputs {
  */
 export function checkPolicy(inp: PolicyInputs): PolicyResult {
   const { proposal, context, daily, killSwitch, nowMs } = inp;
-  const { limits } = config;
+  // Risk-profile-scaled limits when provided, else the static config (unchanged).
+  const limits = inp.limits ?? config.limits;
   const violations: string[] = [];
 
   // 0. Kill switch overrides everything - including exits. It is the
@@ -114,7 +122,7 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
   //    gate (kill switch, whitelist, slippage/deviation, daily volume + loss
   //    caps, the exposure caps in section 7, staleness, cooldown, preflight)
   //    still applies to a manual order.
-  const baseCap = maxAmountForPair(proposal.baseAsset, proposal.quoteAsset);
+  const baseCap = maxAmountForPair(proposal.baseAsset, proposal.quoteAsset, limits);
   const manualInitiated = proposal.initiator === "manual";
   if (!manualInitiated) {
     const taper = lossTaper(
@@ -519,10 +527,11 @@ export function effectiveCapForPair(
   quote: string,
   realizedPnl: number,
   unrealizedPnl: number,
+  lim: Limits = config.limits,
 ): number {
   return round7(
-    maxAmountForPair(base, quote) *
-      lossTaper(realizedPnl, unrealizedPnl, config.limits.maxDailyLoss),
+    maxAmountForPair(base, quote, lim) *
+      lossTaper(realizedPnl, unrealizedPnl, lim.maxDailyLoss),
   );
 }
 
@@ -532,9 +541,13 @@ export function effectiveCapForPair(
  * the cap to maxAmountPerTradeHigh, but ONLY when EVERY non-XLM leg is high-tier;
  * any low-tier or unknown leg keeps the conservative standard maxAmountPerTrade.
  */
-export function maxAmountForPair(base: string, quote: string): number {
-  const std = config.limits.maxAmountPerTrade;
-  const high = Math.max(config.limits.maxAmountPerTradeHigh, std);
+export function maxAmountForPair(
+  base: string,
+  quote: string,
+  lim: Limits = config.limits,
+): number {
+  const std = lim.maxAmountPerTrade;
+  const high = Math.max(lim.maxAmountPerTradeHigh, std);
   // Caps are in BASE-asset units and the HIGH cap is calibrated for the
   // chain-scan shape (base = XLM). Any pair whose base is NOT XLM - cross
   // pairs like USDC/EURC but also inverted manual pairs like USDC/XLM - keeps

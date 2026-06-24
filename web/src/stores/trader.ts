@@ -11,8 +11,12 @@ import type {
   LogsPage,
   ManualOrderInput,
   MarketSnapshot,
+  AiLogEntry,
+  OpenOffer,
   OrderbookSnapshot,
   PortfolioResponse,
+  RiskProfile,
+  TradeLogEntry,
   Snapshot,
   StopLossAuditPage,
   SwapQuote,
@@ -31,6 +35,11 @@ const TIMEFRAMES: Record<Timeframe, { resolution: number; limit: number }> = {
 };
 
 const MAX_LOGS = 200;
+
+/** One combined live-log item, tagged by which structured stream it came from. */
+export type LiveLogItem =
+  | { stream: "trade"; entry: TradeLogEntry }
+  | { stream: "ai"; entry: AiLogEntry };
 
 export const useTraderStore = defineStore("trader", () => {
   // --- live state mirrored from the backend ---
@@ -56,6 +65,56 @@ export const useTraderStore = defineStore("trader", () => {
 
   // --- tradeable token universe (drives the asset dropdowns) ---
   const universe = ref<UniverseToken[]>([]);
+
+  // --- open orders (resting offers) ---
+  const openOffers = ref<OpenOffer[]>([]);
+
+  // --- active dashboard tab (persisted) ---
+  const TAB_KEY = "trader_active_tab";
+  type MainTab = "manual" | "bot" | "logs";
+  function readTab(): MainTab {
+    try {
+      const t = localStorage.getItem(TAB_KEY);
+      return t === "bot" || t === "logs" ? t : "manual";
+    } catch {
+      return "manual";
+    }
+  }
+  const activeTab = ref<MainTab>(readTab());
+  function setActiveTab(tab: MainTab): void {
+    activeTab.value = tab;
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      /* private mode / storage disabled — tab still works for the session */
+    }
+  }
+  // Deep-link target for "click a live-log entry -> open it in the Logs tab".
+  const logsFocus = ref<{ sub: "trade" | "ai"; id: string } | null>(null);
+  function focusLog(sub: "trade" | "ai", id: string): void {
+    logsFocus.value = { sub, id };
+    setActiveTab("logs");
+  }
+
+  // --- live log: last 20 combined trade+AI events (seeded from the persisted
+  // store, then streamed; NOT a divergent buffer). ---
+  const liveLog = ref<LiveLogItem[]>([]);
+  const LIVE_CAP = 20;
+  function pushLive(item: LiveLogItem): void {
+    liveLog.value = [item, ...liveLog.value].slice(0, LIVE_CAP);
+  }
+  async function loadLiveLog(): Promise<void> {
+    try {
+      const { trades, ai } = await api.logLive(LIVE_CAP);
+      const merged: LiveLogItem[] = [
+        ...trades.map((entry) => ({ stream: "trade" as const, entry })),
+        ...ai.map((entry) => ({ stream: "ai" as const, entry })),
+      ].sort((a, b) => (a.entry.ts < b.entry.ts ? 1 : -1));
+      liveLog.value = merged.slice(0, LIVE_CAP);
+    } catch {
+      /* leave previous */
+    }
+  }
 
   // --- manual order placement ---
   const lastOrder = ref<(TradeProposal & { error?: string }) | null>(null);
@@ -98,6 +157,17 @@ export const useTraderStore = defineStore("trader", () => {
   // Active stops live in the snapshot (replaced wholesale on each 'state' push).
   const stopLosses = computed(() => snapshot.value?.stopLosses ?? []);
   const priceAlerts = computed(() => snapshot.value?.priceAlerts ?? []);
+  const riskProfile = computed<RiskProfile>(
+    () =>
+      snapshot.value?.riskProfile ?? {
+        positionSize: "low",
+        stopLossDistance: "low",
+        tradeFrequency: "low",
+        volatilityTolerance: "low",
+        drawdownTolerance: "low",
+        slippageTolerance: "low",
+      },
+  );
   const logs = computed(() => snapshot.value?.logs ?? []);
   const daily = computed(() => snapshot.value?.daily ?? null);
   const limits = computed(() => snapshot.value?.limits ?? null);
@@ -161,6 +231,8 @@ export const useTraderStore = defineStore("trader", () => {
     }
     void loadUniverse();
     void loadBalances();
+    void loadOffers();
+    void loadLiveLog();
     void loadTrustlines();
     void loadClaimables();
     void loadPortfolio();
@@ -271,6 +343,22 @@ export const useTraderStore = defineStore("trader", () => {
         void loadLogs();
       }
     });
+    es.addEventListener("tradelog", (ev) => {
+      markAlive();
+      try {
+        pushLive({ stream: "trade", entry: JSON.parse((ev as MessageEvent).data) as TradeLogEntry });
+      } catch {
+        /* ignore malformed payloads */
+      }
+    });
+    es.addEventListener("ailog", (ev) => {
+      markAlive();
+      try {
+        pushLive({ stream: "ai", entry: JSON.parse((ev as MessageEvent).data) as AiLogEntry });
+      } catch {
+        /* ignore malformed payloads */
+      }
+    });
     es.addEventListener("proposal", (ev) => {
       markAlive();
       if (!snapshot.value) return;
@@ -296,6 +384,10 @@ export const useTraderStore = defineStore("trader", () => {
   // --- toggles ---
   async function setAutoApprove(enabled: boolean): Promise<void> {
     await api.setAutoApprove(enabled);
+  }
+  /** Update the AI risk profile; the SSE 'state' push refreshes the snapshot. */
+  async function setRiskProfile(profile: RiskProfile): Promise<void> {
+    await api.setRiskProfile(profile);
   }
   async function setLiveTrading(enabled: boolean): Promise<void> {
     await api.setLiveTrading(enabled);
@@ -458,10 +550,13 @@ export const useTraderStore = defineStore("trader", () => {
   async function setStopLoss(body: {
     base: string;
     quote: string;
-    triggerPrice: string;
+    triggerPrice?: string;
     sellAll?: boolean;
     quantityToSell?: string;
     notes?: string;
+    stopType?: "regular" | "trailing";
+    trailBy?: "amount" | "pct";
+    trailValue?: string;
   }): Promise<boolean> {
     stopLossError.value = "";
     const r = await api.setStopLoss(body);
@@ -515,6 +610,26 @@ export const useTraderStore = defineStore("trader", () => {
     } catch {
       /* leave previous data; dropdowns fall back to bare codes */
     }
+  }
+
+  async function loadOffers(): Promise<void> {
+    try {
+      openOffers.value = await api.offers();
+    } catch {
+      /* leave previous data */
+    }
+  }
+
+  async function cancelOffer(id: string): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.cancelOffer(id);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    await loadOffers();
+    void loadBalances();
+    return true;
   }
 
   // --- trustlines ---
@@ -804,6 +919,8 @@ export const useTraderStore = defineStore("trader", () => {
     isPaper,
     init,
     setAutoApprove,
+    riskProfile,
+    setRiskProfile,
     setLiveTrading,
     setPaperTrading,
     setKill,
@@ -838,6 +955,15 @@ export const useTraderStore = defineStore("trader", () => {
     tokenFor,
     heldTokens,
     heldBalance,
+    openOffers,
+    loadOffers,
+    cancelOffer,
+    activeTab,
+    setActiveTab,
+    liveLog,
+    loadLiveLog,
+    logsFocus,
+    focusLog,
     loadClaimables,
     pay,
     getSwapQuote,

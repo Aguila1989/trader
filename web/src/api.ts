@@ -6,9 +6,15 @@ import type {
   LogsPage,
   ManualOrderInput,
   MarketSnapshot,
+  OpenOffer,
   OrderbookSnapshot,
+  AiLogEntry,
+  AiLogPage,
   PortfolioResponse,
   PriceAlert,
+  RiskProfile,
+  TradeLogEntry,
+  TradeLogPage,
   Snapshot,
   StopLoss,
   StopLossAuditPage,
@@ -101,6 +107,40 @@ export const api = {
     if (opts.since) q.set("since", opts.since);
     return getJSON<LogsPage>(`/api/logs?${q.toString()}`);
   },
+  tradeLog: (opts: {
+    limit: number;
+    offset: number;
+    initiator?: string;
+    action?: string;
+    token?: string;
+    from?: string;
+    to?: string;
+  }) => {
+    const q = new URLSearchParams({ limit: String(opts.limit), offset: String(opts.offset) });
+    if (opts.initiator) q.set("initiator", opts.initiator);
+    if (opts.action) q.set("action", opts.action);
+    if (opts.token) q.set("token", opts.token);
+    if (opts.from) q.set("from", opts.from);
+    if (opts.to) q.set("to", opts.to);
+    return getJSON<TradeLogPage>(`/api/tradelog?${q.toString()}`);
+  },
+  aiLog: (opts: {
+    limit: number;
+    offset: number;
+    eventType?: string;
+    token?: string;
+    from?: string;
+    to?: string;
+  }) => {
+    const q = new URLSearchParams({ limit: String(opts.limit), offset: String(opts.offset) });
+    if (opts.eventType) q.set("eventType", opts.eventType);
+    if (opts.token) q.set("token", opts.token);
+    if (opts.from) q.set("from", opts.from);
+    if (opts.to) q.set("to", opts.to);
+    return getJSON<AiLogPage>(`/api/ailog?${q.toString()}`);
+  },
+  logLive: (n = 20) =>
+    getJSON<{ trades: TradeLogEntry[]; ai: AiLogEntry[] }>(`/api/loglive?n=${n}`),
   market: (base: string, quote: string) =>
     getJSON<MarketSnapshot & { error?: string }>(
       `/api/market?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
@@ -151,6 +191,8 @@ export const api = {
       "/api/paper-trading",
       { enabled },
     ),
+  setRiskProfile: (profile: RiskProfile) =>
+    postJSON<{ riskProfile: RiskProfile }>("/api/risk-profile", profile),
   setProvider: (id: string) =>
     postJSON<{ aiProvider?: string; model?: string; error?: string }>(
       "/api/provider",
@@ -159,10 +201,14 @@ export const api = {
   setStopLoss: (body: {
     base: string;
     quote: string;
-    triggerPrice: string;
+    triggerPrice?: string;
     sellAll?: boolean;
     quantityToSell?: string;
     notes?: string;
+    // Trailing stop: stopType "trailing" + trailBy/trailValue (or omit for regular).
+    stopType?: "regular" | "trailing";
+    trailBy?: "amount" | "pct";
+    trailValue?: string;
   }) => postJSON<StopLoss & { error?: string }>("/api/stoploss", body),
   cancelStopLoss: (id: string) =>
     postJSON<StopLoss & { error?: string }>(
@@ -200,6 +246,11 @@ export const api = {
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
   universe: () => getJSON<UniverseResponse>("/api/universe"),
+  offers: () => getJSON<OpenOffer[]>("/api/offers"),
+  cancelOffer: (id: string) =>
+    postJSON<{ hash?: string; error?: string }>(
+      `/api/offers/${encodeURIComponent(id)}/cancel`,
+    ),
   setAlert: (body: {
     base: string;
     quote: string;

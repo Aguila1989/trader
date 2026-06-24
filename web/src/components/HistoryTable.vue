@@ -3,8 +3,29 @@ import { computed } from "vue";
 import { useTraderStore } from "../stores/trader";
 import { withToken } from "../api";
 import { fmtNum, dateTimeStr, shortKey } from "../format";
+import type { TradeProposal } from "../types";
+
+// "manual" / "bot" filter the loaded page by who initiated each trade; "all"
+// shows everything. (Filtering is over the current page — server-side paged
+// filtering is a later refinement.)
+const props = withDefaults(defineProps<{ source?: "manual" | "bot" | "all" }>(), {
+  source: "all",
+});
 
 const store = useTraderStore();
+
+// A trade counts as manual when explicitly initiated by the user, else it's a
+// bot (AI/system) trade. Persisted rows lack `initiator` but keep `provider`.
+function isManual(p: TradeProposal): boolean {
+  return (p.initiator ?? (p.provider === "manual" ? "manual" : "ai")) === "manual";
+}
+const title = computed(() =>
+  props.source === "manual"
+    ? "Manual trade history"
+    : props.source === "bot"
+      ? "Bot trade history"
+      : "Trade history",
+);
 
 // Download the full trade history as CSV. The token rides as a query param
 // (same mechanism the SSE stream uses) so the attachment download authenticates.
@@ -28,7 +49,11 @@ const STATUSES = [
   "failed",
 ];
 
-const rows = computed(() => store.tradesPage?.rows ?? []);
+const rows = computed(() => {
+  const all = store.tradesPage?.rows ?? [];
+  if (props.source === "all") return all;
+  return all.filter((p) => (props.source === "manual" ? isManual(p) : !isManual(p)));
+});
 const total = computed(() => store.tradesPage?.total ?? 0);
 const rangeStart = computed(() => (total.value === 0 ? 0 : store.pageOffset + 1));
 const rangeEnd = computed(() =>
@@ -43,7 +68,7 @@ function statusText(s: string): string {
 <template>
   <section class="panel">
     <div class="hist-head">
-      <h2>Trade history</h2>
+      <h2>{{ title }}</h2>
       <div class="hist-controls">
         <select
           :value="store.statusFilter"
@@ -85,13 +110,17 @@ function statusText(s: string): string {
             <th>Pair</th>
             <th class="num">Amount</th>
             <th class="num">Limit</th>
+            <th v-if="source === 'bot'">Conf</th>
             <th>Status</th>
+            <th v-if="source === 'bot'">AI reasoning</th>
             <th>Tx</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
-            <td colspan="7" class="muted center">No trades on this page.</td>
+            <td :colspan="source === 'bot' ? 9 : 7" class="muted center">
+              No {{ source === "all" ? "" : source + " " }}trades on this page.
+            </td>
           </tr>
           <tr v-for="p in rows" :key="p.id">
             <td class="mono">{{ dateTimeStr(p.updatedAt) }}</td>
@@ -101,7 +130,9 @@ function statusText(s: string): string {
             <td class="mono">{{ p.baseAsset }}/{{ p.quoteAsset }}</td>
             <td class="num mono">{{ fmtNum(p.amount) }}</td>
             <td class="num mono">{{ fmtNum(p.limitPrice) }}</td>
+            <td v-if="source === 'bot'" class="muted">{{ p.confidence ?? "-" }}</td>
             <td><span class="status" :class="p.status">{{ statusText(p.status) }}</span></td>
+            <td v-if="source === 'bot'" class="muted hist-reason" :title="p.reason">{{ p.reason || "-" }}</td>
             <td class="mono">{{ p.txHash ? shortKey(p.txHash) : "-" }}</td>
           </tr>
         </tbody>
@@ -109,3 +140,13 @@ function statusText(s: string): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.hist-reason {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+</style>
