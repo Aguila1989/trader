@@ -39,13 +39,13 @@ export const chapter05: Chapter = {
     },
     {
       id: "c5-l4",
-      title: "What is the difference between a manual and an AI stop loss?",
+      title: "Conflict resolution — when you and the AI both set a stop",
       paragraphs: [
-        "Mechanically they are identical. Both are direction-aware triggers, both pass through every safety gate when they fire, and both appear in a list with a Cancel button. The difference is only who chose the numbers and where the stop is listed.",
-        "A manual stop reflects your judgement: you typed the trigger and quantity, so it is exactly as tight or loose as you decided. An AI stop reflects the model judgement and comes with a written rationale in its notes column, which a manual stop does not have. They live in separate sections, Manual stop losses and AI stop losses, so you can tell at a glance which is which.",
-        "Because they are independent, they can coexist and even overlap. Running both is a common pattern: your manual stop expresses your personal risk limit, while the AI stop acts as a second opinion or a deeper backstop. Cancelling one never touches the other.",
+        "You and the AI can each hold a stop on the same token at the same time. They live in separate sections, Manual stop losses and AI stop losses, and neither one overwrites the other. The position monitor is never confused by two stops: it resolves them down to a single effective trigger before it acts.",
+        "The rule is simple — the most protective stop wins. For a long position the monitor enforces whichever active stop sits highest, closest below the current price, because that one fires first and caps the loss soonest; the looser stop never gets the chance to trigger while the tighter one is armed. For a trailing stop it is the live trailing trigger that is compared, not the original seed. Cancel the protective one and the monitor immediately falls back to the other.",
+        "A useful consequence: adding a second stop can only tighten your protection, never loosen it. A common pattern is to let your manual stop be your hard personal limit while the AI stop, with its written rationale, acts as a second opinion — whichever is more protective at any moment is the one that acts. Each keeps its own Cancel button, so removing one leaves the other working.",
       ],
-      example: "On the same 1,000 XLM you set a manual stop at 0.110 because that is your comfort line. The AI independently sets its stop at 0.113 with a note about support. Both sit in their own lists. If XLM slides, the AI stop at 0.113 fires first; if that one had been cancelled, your manual 0.110 would still catch the fall. Each has its own Cancel button.",
+      example: "You hold 1,000 XLM. You set a manual stop at 0.110, your comfort line, and the AI sets its own at 0.113 with a note about support. Both sit in their separate lists, but the monitor only enforces the most protective — 0.113. If XLM slides, the close fires at 0.113. If you cancel the AI stop, your manual 0.110 takes over automatically. Two stops never double-sell; the higher one simply leads.",
     },
     {
       id: "c5-l5",

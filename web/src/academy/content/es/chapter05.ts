@@ -39,13 +39,13 @@ export const chapter05: Chapter = {
     },
     {
       id: "c5-l4",
-      title: "Cual es la diferencia entre un stop loss manual y uno de la IA?",
+      title: "Resolucion de conflictos: cuando tu y la IA fijais un stop a la vez",
       paragraphs: [
-        "Mecanicamente son identicos. Ambos son triggers que tienen en cuenta la direccion, ambos pasan por cada control de seguridad cuando se disparan y ambos aparecen en una lista con un boton de Cancelar. La diferencia esta solo en quien eligio los numeros y en donde se lista el stop.",
-        "Un stop manual refleja tu criterio: tu escribiste el trigger y la cantidad, asi que es exactamente tan ajustado o tan holgado como decidiste. Un stop de la IA refleja el criterio del modelo y viene con una justificacion escrita en su columna de notas, algo que un stop manual no tiene. Viven en secciones separadas, stop losses manuales y stop losses de la IA, asi que distingues de un vistazo cual es cual.",
-        "Como son independientes, pueden coexistir e incluso solaparse. Usar ambos es un patron habitual: tu stop manual expresa tu limite de riesgo personal, mientras que el stop de la IA actua como una segunda opinion o un respaldo mas profundo. Cancelar uno nunca afecta al otro.",
+        "Tu y la IA podeis tener cada uno un stop sobre el mismo token al mismo tiempo. Viven en secciones separadas, stop losses manuales y stop losses de la IA, y ninguno sobrescribe al otro. El monitor de posiciones nunca se confunde con dos stops: los reduce a un unico trigger efectivo antes de actuar.",
+        "La regla es sencilla: gana el stop mas protector. Para una posicion larga, el monitor aplica el stop activo que este mas alto, el mas cercano por debajo del precio actual, porque ese se dispara primero y limita la perdida cuanto antes; el stop mas holgado nunca llega a dispararse mientras el mas ajustado esta armado. Para un trailing stop se compara el trigger dinamico en vivo, no el valor inicial con el que se sembro. Si cancelas el mas protector, el monitor recurre de inmediato al otro.",
+        "Una consecuencia util: anadir un segundo stop solo puede reforzar tu proteccion, nunca debilitarla. Un patron habitual es dejar que tu stop manual sea tu limite personal firme mientras el stop de la IA, con su justificacion escrita, actua como una segunda opinion; el que sea mas protector en cada momento es el que actua. Cada uno conserva su propio boton de Cancelar, asi que eliminar uno deja al otro funcionando.",
       ],
-      example: "Sobre los mismos 1,000 XLM fijas un stop manual en 0.110 porque esa es tu linea de comodidad. La IA fija de forma independiente su stop en 0.113 con una nota sobre el soporte. Ambos estan en sus propias listas. Si XLM baja, el stop de la IA en 0.113 se dispara primero; si ese se hubiera cancelado, tu stop manual en 0.110 aun atraparia la caida. Cada uno tiene su propio boton de Cancelar.",
+      example: "Tienes 1,000 XLM. Fijas un stop manual en 0.110, tu linea de comodidad, y la IA fija el suyo en 0.113 con una nota sobre el soporte. Ambos estan en sus listas separadas, pero el monitor solo aplica el mas protector: 0.113. Si XLM resbala, el cierre se dispara en 0.113. Si cancelas el stop de la IA, tu manual de 0.110 toma el relevo automaticamente. Dos stops nunca venden por duplicado; el mas alto simplemente lidera.",
     },
     {
       id: "c5-l5",

@@ -4,6 +4,10 @@
 // from i18n.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useLocale } from "../locale";
+import { glossaryFor } from "../glossary";
+import { segmentText } from "../segment";
+import TermTip from "./TermTip.vue";
 import type { Chapter } from "../types";
 
 const props = defineProps<{ chapter: Chapter; lessonIndex: number }>();
@@ -14,7 +18,18 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { locale } = useLocale();
 const lesson = computed(() => props.chapter.lessons[props.lessonIndex]);
+
+// Split the lesson prose into text + glossary-term segments. `used` is shared
+// across paragraphs + the example so each term is linked only on first use.
+const segments = computed(() => {
+  const g = glossaryFor(locale.value);
+  const used = new Set<string>();
+  const paras = lesson.value.paragraphs.map((p) => segmentText(p, g, used));
+  const example = segmentText(lesson.value.example, g, used);
+  return { paras, example };
+});
 const total = computed(() => props.chapter.lessons.length);
 const isFirst = computed(() => props.lessonIndex === 0);
 const isLast = computed(() => props.lessonIndex >= total.value - 1);
@@ -46,11 +61,21 @@ const levelClass = computed(() => "lvl-" + props.chapter.level.toLowerCase());
 
     <article class="panel ls-body">
       <h1 class="ls-h1">{{ lesson.title }}</h1>
-      <p v-for="(para, i) in lesson.paragraphs" :key="i" class="ls-p">{{ para }}</p>
+      <p v-for="(segs, i) in segments.paras" :key="i" class="ls-p">
+        <template v-for="(s, j) in segs" :key="j">
+          <TermTip v-if="s.kind === 'term'" :term="s.term" :def="s.def" />
+          <template v-else>{{ s.text }}</template>
+        </template>
+      </p>
 
       <div class="ls-example">
         <span class="ex-tag">{{ t("academy.lesson.example") }}</span>
-        <p>{{ lesson.example }}</p>
+        <p>
+          <template v-for="(s, j) in segments.example" :key="j">
+            <TermTip v-if="s.kind === 'term'" :term="s.term" :def="s.def" />
+            <template v-else>{{ s.text }}</template>
+          </template>
+        </p>
       </div>
     </article>
 

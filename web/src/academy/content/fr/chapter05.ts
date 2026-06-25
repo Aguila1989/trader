@@ -39,13 +39,13 @@ export const chapter05: Chapter = {
     },
     {
       id: "c5-l4",
-      title: "Quelle est la difference entre un stop loss manuel et un stop loss IA ?",
+      title: "Resolution des conflits, quand vous et l'IA placez tous deux un stop",
       paragraphs: [
-        "Mecaniquement, ils sont identiques. Tous deux sont des seuils tenant compte du sens de la position, tous deux passent par chaque controle de securite lorsqu'ils se declenchent, et tous deux apparaissent dans une liste avec un bouton Annuler. La seule difference, c'est qui a choisi les chiffres et ou le stop est repertorie.",
-        "Un stop manuel reflete votre jugement : vous avez saisi le seuil et la quantite, il est donc aussi serre ou large que vous l'avez decide. Un stop IA reflete le jugement du modele et s'accompagne d'une justification ecrite dans sa colonne de notes, ce qu'un stop manuel n'a pas. Ils vivent dans des sections distinctes, stop loss manuels et stop loss IA, pour que vous voyiez d'un coup d'oeil lequel est lequel.",
-        "Parce qu'ils sont independants, ils peuvent coexister et meme se chevaucher. Faire tourner les deux est un schema courant : votre stop manuel exprime votre limite de risque personnelle, tandis que le stop IA fait office de deuxieme avis ou de filet de securite plus profond. Annuler l'un ne touche jamais l'autre.",
+        "Vous et l'IA pouvez chacun detenir un stop sur le meme jeton au meme moment. Ils vivent dans des sections distinctes, stop loss manuels et stop loss IA, et aucun n'ecrase l'autre. Le moniteur de position n'est jamais perturbe par deux stops : il les reduit a un seul seuil effectif avant d'agir.",
+        "La regle est simple, le stop le plus protecteur l'emporte. Pour une position longue, le moniteur applique celui des stops actifs qui se situe le plus haut, le plus proche sous le prix actuel, car c'est celui-la qui se declenche en premier et plafonne la perte le plus tot ; le stop plus lache n'a jamais l'occasion de se declencher tant que le plus serre est arme. Pour un trailing stop, c'est le seuil de suivi en direct qui est compare, et non la valeur initiale. Annulez le plus protecteur et le moniteur bascule aussitot sur l'autre.",
+        "Une consequence utile : ajouter un second stop ne peut que renforcer votre protection, jamais l'affaiblir. Un schema courant consiste a laisser votre stop manuel etre votre limite personnelle stricte tandis que le stop IA, avec sa justification ecrite, fait office de deuxieme avis : celui qui est le plus protecteur a un instant donne est celui qui agit. Chacun garde son propre bouton Annuler, de sorte qu'en retirer un laisse l'autre en fonction.",
       ],
-      example: "Sur les memes 1 000 XLM, vous placez un stop manuel a 0,110 parce que c'est votre limite de confort. L'IA, de son cote, place son stop a 0,113 avec une note sur le support. Les deux figurent dans leurs propres listes. Si le XLM glisse, le stop IA a 0,113 se declenche en premier ; si celui-ci avait ete annule, votre stop manuel a 0,110 rattraperait quand meme la chute. Chacun a son propre bouton Annuler.",
+      example: "Vous detenez 1 000 XLM. Vous placez un stop manuel a 0,110, votre ligne de confort, et l'IA place le sien a 0,113 avec une note sur le support. Les deux figurent dans leurs listes distinctes, mais le moniteur n'applique que le plus protecteur, 0,113. Si le XLM glisse, la cloture se declenche a 0,113. Si vous annulez le stop IA, votre stop manuel a 0,110 prend le relais automatiquement. Deux stops ne vendent jamais en double ; le plus haut prend simplement les commandes.",
     },
     {
       id: "c5-l5",

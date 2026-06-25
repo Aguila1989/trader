@@ -15,9 +15,18 @@ import type {
 } from "./types";
 
 const STORAGE_KEY = "academy_progress_v1";
+const BYPASS_KEY = "academy_expert_bypass";
 
 function emptyChapter(): ChapterProgress {
   return { viewedLessons: [], quizPassed: false, attempts: [] };
+}
+
+function readBypass(): boolean {
+  try {
+    return localStorage.getItem(BYPASS_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function read(): ProgressMap {
@@ -33,6 +42,17 @@ function read(): ProgressMap {
 
 export const useAcademyStore = defineStore("academy", () => {
   const progress = ref<ProgressMap>(read());
+  // Expert bypass: "Skip to Advanced" unlocks every level without passing the
+  // BASIC/ADVANCED quizzes (for users who already know the basics).
+  const expertBypass = ref<boolean>(readBypass());
+  function setExpertBypass(on: boolean): void {
+    expertBypass.value = on;
+    try {
+      localStorage.setItem(BYPASS_KEY, on ? "1" : "0");
+    } catch {
+      /* private mode — still works for the session */
+    }
+  }
 
   function persist(): void {
     try {
@@ -83,9 +103,10 @@ export const useAcademyStore = defineStore("academy", () => {
     return attempt;
   }
 
-  /** Clear ALL saved Academy progress. */
+  /** Clear ALL saved Academy progress (and the expert bypass). */
   function resetAll(): void {
     progress.value = {};
+    setExpertBypass(false);
     persist();
   }
 
@@ -116,6 +137,7 @@ export const useAcademyStore = defineStore("academy", () => {
    * is passed; EXPERT unlocks once every ADVANCED quiz is passed.
    */
   function isLevelUnlocked(level: Level): boolean {
+    if (expertBypass.value) return true; // "Skip to Advanced" expert bypass
     if (level === "BASIC") return true;
     if (level === "ADVANCED") return isLevelComplete("BASIC");
     return isLevelComplete("ADVANCED");
@@ -154,6 +176,8 @@ export const useAcademyStore = defineStore("academy", () => {
   return {
     progress,
     levels: LEVELS,
+    expertBypass,
+    setExpertBypass,
     chapterProgress,
     markLessonViewed,
     recordQuizAttempt,

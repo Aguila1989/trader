@@ -45,6 +45,18 @@ function open(ch: Chapter): void {
   if (academy.isChapterUnlocked(ch)) emit("open", ch.id);
 }
 
+// "Skip to Advanced": expert bypass — unlock every level and jump to ADVANCED.
+function skipToAdvanced(): void {
+  academy.setExpertBypass(true);
+  requestAnimationFrame(() => {
+    try {
+      document.getElementById("academy-ADVANCED")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      /* no DOM */
+    }
+  });
+}
+
 // --- reset progress confirmation ---
 const confirmingReset = ref(false);
 function doReset(): void {
@@ -60,10 +72,19 @@ function doReset(): void {
         <h1 class="ov-title">{{ t("academy.title") }}</h1>
         <p class="ov-sub muted">{{ t("academy.subtitle") }}</p>
       </div>
-      <button class="btn ov-reset" @click="confirmingReset = true">{{ t("academy.reset") }}</button>
+      <div class="ov-actions">
+        <button
+          v-if="!academy.expertBypass && !academy.isLevelUnlocked('ADVANCED')"
+          class="btn accent"
+          @click="skipToAdvanced"
+        >
+          {{ t("academy.skipToAdvanced") }} →
+        </button>
+        <button class="btn ov-reset" @click="confirmingReset = true">{{ t("academy.reset") }}</button>
+      </div>
     </header>
 
-    <section v-for="g in groups" :key="g.level" class="ov-group">
+    <section v-for="g in groups" :key="g.level" :id="'academy-' + g.level" class="ov-group">
       <div class="grp-head">
         <span class="badge lvl" :class="'lvl-' + g.level.toLowerCase()">{{ t("academy.level." + g.level) }}</span>
         <span class="grp-blurb muted">{{ t("academy.levelBlurb." + g.level) }}</span>
@@ -104,6 +125,7 @@ function doReset(): void {
 
           <div class="cc-title">{{ ch.title }}</div>
           <div class="cc-desc">{{ ch.description }}</div>
+          <div class="cc-whofor">{{ t("academy.whoFor." + ch.level) }}</div>
 
           <div class="cc-foot">
             <span class="cc-pips">
@@ -140,6 +162,7 @@ function doReset(): void {
 .ov-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .ov-title { margin: 0 0 4px; font-size: 24px; }
 .ov-sub { margin: 0; max-width: 640px; font-size: 13px; }
+.ov-actions { display: flex; gap: 10px; flex-shrink: 0; flex-wrap: wrap; }
 .ov-reset { flex-shrink: 0; }
 
 .ov-group { display: flex; flex-direction: column; gap: 12px; }
@@ -184,6 +207,7 @@ function doReset(): void {
 .cc-badge.lock { color: var(--muted); }
 .cc-title { font-weight: 600; font-size: 15px; }
 .cc-desc { color: var(--muted); font-size: 13px; line-height: 1.4; flex: 1; }
+.cc-whofor { font-size: 11px; font-style: italic; color: var(--accent); }
 
 .cc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
 .cc-pips { display: flex; gap: 4px; }

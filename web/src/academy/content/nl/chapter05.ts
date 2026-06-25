@@ -39,13 +39,13 @@ export const chapter05: Chapter = {
     },
     {
       id: "c5-l4",
-      title: "Wat is het verschil tussen een handmatige en een AI stop loss?",
+      title: "Conflictoplossing — wanneer jij en de AI allebei een stop zetten",
       paragraphs: [
-        "Mechanisch zijn ze identiek. Beide zijn richtingbewuste triggers, beide gaan door elke veiligheidscontrole heen wanneer ze afgaan, en beide verschijnen in een lijst met een Annuleren-knop. Het verschil zit alleen in wie de getallen koos en waar de stop wordt vermeld.",
-        "Een handmatige stop weerspiegelt jouw oordeel: jij hebt de trigger en hoeveelheid ingetikt, dus hij is precies zo krap of ruim als jij besloot. Een AI-stop weerspiegelt het oordeel van het model en komt met een geschreven onderbouwing in de notitiekolom, die een handmatige stop niet heeft. Ze staan in aparte onderdelen, Handmatige stop losses en AI stop losses, zodat je in een oogopslag ziet welke welke is.",
-        "Omdat ze onafhankelijk zijn, kunnen ze naast elkaar bestaan en zelfs overlappen. Beide tegelijk draaien is een veelvoorkomend patroon: je handmatige stop drukt je persoonlijke risicogrens uit, terwijl de AI-stop dient als tweede mening of diepere achtervang. Een van beide annuleren raakt de ander nooit.",
+        "Jij en de AI kunnen allebei tegelijk een stop op dezelfde token aanhouden. Ze leven in aparte onderdelen, Handmatige stop losses en AI stop losses, en geen van beide overschrijft de ander. De positiemonitor raakt nooit in de war van twee stops: hij brengt ze terug tot een enkele effectieve trigger voordat hij handelt.",
+        "De regel is simpel — de meest beschermende stop wint. Bij een long-positie hanteert de monitor de actieve stop die het hoogst ligt, het dichtst onder de huidige prijs, want die gaat het eerst af en beperkt het verlies het snelst; de ruimere stop krijgt nooit de kans om af te gaan zolang de krappere scherp staat. Bij een trailing stop wordt de live trailing-trigger vergeleken, niet de oorspronkelijke startwaarde. Annuleer je de beschermende stop, dan valt de monitor meteen terug op de andere.",
+        "Een handig gevolg: een tweede stop toevoegen kan je bescherming alleen maar verstrakken, nooit verslappen. Een veelvoorkomend patroon is je handmatige stop als je harde persoonlijke grens te laten gelden, terwijl de AI-stop, met zijn geschreven onderbouwing, als tweede mening dient — welke op dat moment het meest beschermend is, is degene die handelt. Elk houdt zijn eigen Annuleren-knop, dus de een weghalen laat de ander gewoon doorwerken.",
       ],
-      example: "Op dezelfde 1.000 XLM zet je een handmatige stop op 0,110 omdat dat jouw comfortgrens is. De AI zet onafhankelijk zijn stop op 0,113 met een notitie over steun. Beide staan in hun eigen lijst. Glijdt XLM weg, dan gaat de AI-stop op 0,113 eerst af; was die geannuleerd, dan ving je handmatige 0,110 de val nog op. Elk heeft zijn eigen Annuleren-knop.",
+      example: "Je houdt 1.000 XLM aan. Je zet een handmatige stop op 0,110, jouw comfortgrens, en de AI zet zijn eigen stop op 0,113 met een notitie over steun. Beide staan in hun eigen lijst, maar de monitor hanteert alleen de meest beschermende — 0,113. Glijdt XLM weg, dan gaat de sluiting af op 0,113. Annuleer je de AI-stop, dan neemt je handmatige 0,110 automatisch over. Twee stops verkopen nooit dubbel; de hoogste neemt simpelweg de leiding.",
     },
     {
       id: "c5-l5",

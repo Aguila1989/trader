@@ -6,6 +6,13 @@ export default {
     subtitle:
       "Learn crypto trading and this bot, one chapter at a time. Read the lessons, then pass the quiz (70%+) to unlock the next level.",
     reset: "Reset progress",
+    skipToAdvanced: "Skip to Advanced",
+    whatDoesThisMean: "What does this mean?",
+    whoFor: {
+      BASIC: "No experience needed — start here",
+      ADVANCED: "You've made a few trades and want to go deeper",
+      EXPERT: "You understand trading and want full control",
+    },
     level: { BASIC: "BASIC", ADVANCED: "ADVANCED", EXPERT: "EXPERT" },
     levelBlurb: {
       BASIC: "Crypto, prices, your first trade, and the basics of risk.",
@@ -59,6 +66,13 @@ export default {
     subtitle:
       "Leer crypto traden en deze bot kennen, hoofdstuk voor hoofdstuk. Lees de lessen en haal daarna de quiz (70%+) om het volgende niveau te ontgrendelen.",
     reset: "Voortgang resetten",
+    skipToAdvanced: "Direct naar Gevorderd",
+    whatDoesThisMean: "Wat betekent dit?",
+    whoFor: {
+      BASIC: "Geen ervaring nodig — begin hier",
+      ADVANCED: "Je hebt al wat trades gedaan en wilt verdieping",
+      EXPERT: "Je begrijpt traden en wilt volledige controle",
+    },
     level: { BASIC: "BASIS", ADVANCED: "GEVORDERD", EXPERT: "EXPERT" },
     levelBlurb: {
       BASIC: "Crypto, prijzen, je eerste trade en de basis van risico.",
@@ -112,6 +126,13 @@ export default {
     subtitle:
       "Apprenez le trading de cryptomonnaies et ce bot, chapitre par chapitre. Lisez les leçons, puis réussissez le quiz (70 % et plus) pour débloquer le niveau suivant.",
     reset: "Réinitialiser la progression",
+    skipToAdvanced: "Passer à Avancé",
+    whatDoesThisMean: "Qu'est-ce que ça veut dire ?",
+    whoFor: {
+      BASIC: "Aucune expérience requise — commencez ici",
+      ADVANCED: "Vous avez déjà fait quelques trades et voulez aller plus loin",
+      EXPERT: "Vous comprenez le trading et voulez un contrôle total",
+    },
     level: { BASIC: "DÉBUTANT", ADVANCED: "AVANCÉ", EXPERT: "EXPERT" },
     levelBlurb: {
       BASIC: "La crypto, les prix, votre première transaction et les bases du risque.",
@@ -165,6 +186,13 @@ export default {
     subtitle:
       "Aprende a operar con criptomonedas y a usar este bot, capítulo a capítulo. Lee las lecciones y luego aprueba el cuestionario (70 % o más) para desbloquear el siguiente nivel.",
     reset: "Restablecer progreso",
+    skipToAdvanced: "Saltar a Avanzado",
+    whatDoesThisMean: "¿Qué significa esto?",
+    whoFor: {
+      BASIC: "No se necesita experiencia — empieza aquí",
+      ADVANCED: "Ya has hecho algunas operaciones y quieres profundizar",
+      EXPERT: "Entiendes el trading y quieres control total",
+    },
     level: { BASIC: "BÁSICO", ADVANCED: "AVANZADO", EXPERT: "EXPERTO" },
     levelBlurb: {
       BASIC: "Cripto, precios, tu primera operación y las bases del riesgo.",
