@@ -356,6 +356,14 @@ export const config = {
      * 100000 stroops = 0.01 XLM keeps a stuck trade affordable to push through.
      */
     maxFeeStroops: num("MAX_FEE_STROOPS", 100_000),
+    /**
+     * Daily OUTFLOW cap for the wallet endpoints (/api/pay sends). Bounds how
+     * much can leave the wallet per trading day on top of the kill switch +
+     * whitelist gates (SEC-01). Counted at face value: XLM exactly, other
+     * (whitelisted) assets at their nominal sent amount. 0 (default) disables
+     * the velocity cap - the whitelist + kill-switch gates still apply.
+     */
+    maxDailyEgress: num("MAX_DAILY_EGRESS", 0),
   },
 
   port: num("PORT", 3000),

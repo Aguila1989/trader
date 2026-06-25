@@ -26,6 +26,7 @@ import {
 import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
 import { listClaimableBalances, claimBalance } from "./stellar/claimable";
 import { canonicalAsset } from "./stellar/assets";
+import { checkEgress } from "./policy/engine";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
 import {
@@ -181,6 +182,31 @@ function ensureCanSubmit(res: Response): boolean {
   return true;
 }
 
+/**
+ * SEC-01 policy gate for the wallet endpoints (pay / swap / trustline / claim),
+ * which sit OUTSIDE the DEX trade path and so don't run checkPolicy. Enforces the
+ * asset whitelist and the daily-outflow cap (MAX_DAILY_EGRESS). Pass `amountXlm`
+ * only for an actual OUTFLOW (a /api/pay send) so it counts against the cap.
+ * Writes a 403 and returns false when blocked.
+ */
+function ensureEgressAllowed(
+  res: Response,
+  assets: string[],
+  amountXlm?: number,
+): boolean {
+  const r = checkEgress({
+    assets,
+    amountXlm,
+    egressTodayXlm: store.getEgressTodayXlm(),
+    killSwitch: store.killSwitch,
+  });
+  if (!r.allowed) {
+    res.status(403).json({ error: r.violations.join("; ") });
+    return false;
+  }
+  return true;
+}
+
 // Current non-native trustlines (asset, balance, limit). Read-only.
 app.get("/api/trustlines", async (_req, res) => {
   const pub = signerPublicKey();
@@ -217,6 +243,9 @@ app.post("/api/trustlines", async (req, res) => {
       }
       spec = `${code}:${issuer}`;
     }
+    // SEC-01: only establish trustlines for whitelisted assets (a wrong issuer
+    // can be a scam clone of a well-known ticker).
+    if (!ensureEgressAllowed(res, [spec])) return;
     const result = await runExclusive(() => changeTrustline(spec, { remove: false }));
     store.log("trade", `Trustline added: ${result.asset} (tx ${result.hash}).`);
     res.json(result);
@@ -341,10 +370,13 @@ app.post("/api/pay", async (req, res) => {
     res.status(400).json({ error: "amount must be a positive number" });
     return;
   }
+  // SEC-01: whitelist the sent asset + bound the daily outflow (MAX_DAILY_EGRESS).
+  if (!ensureEgressAllowed(res, [asset], Number(amount))) return;
   try {
     const result = await runExclusive(() =>
       sendPayment({ destination, asset, amount, memo }),
     );
+    store.recordEgress(Number(amount));
     store.log(
       "trade",
       `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
@@ -389,6 +421,10 @@ app.post("/api/swap", async (req, res) => {
     res.status(400).json({ error: "sendAmount must be a positive number" });
     return;
   }
+  // SEC-01: both legs must be whitelisted (the swap acquires destAsset, like a
+  // trade). No egress cap: a strict-send swap converts the wallet's own assets
+  // to-self rather than sending value to an external destination.
+  if (!ensureEgressAllowed(res, [sendAsset, destAsset])) return;
   try {
     const result = await runExclusive(() =>
       swap({ sendAsset, sendAmount, destAsset, slippageBps }),
@@ -429,6 +465,8 @@ app.post("/api/claimable/:id/claim", async (req, res) => {
         res.status(404).json({ error: "claimable balance not found for this account" });
         return;
       }
+      // SEC-01: only claim balances of whitelisted assets.
+      if (!ensureEgressAllowed(res, [cb.asset])) return;
       if (cb.asset !== "XLM") {
         const trusted = (await getTrustlines(pub)).some((t) => t.asset === cb.asset);
         if (!trusted) {

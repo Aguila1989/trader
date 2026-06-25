@@ -401,6 +401,57 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
  * the orchestrator can auto-execute EXITS even in manual-approval mode: a
  * reducing trade can only lower exposure, so it never needs a human gate.
  */
+export interface EgressInputs {
+  /** Asset spec(s) involved that must be on the whitelist (the leg(s) moved). */
+  assets: string[];
+  /** XLM-equiv value LEAVING the wallet, for the MAX_DAILY_EGRESS velocity cap.
+   *  Omit for non-outflow actions (trustline change, claim, self-swap). */
+  amountXlm?: number;
+  /** XLM already sent out today (store.getEgressTodayXlm()). */
+  egressTodayXlm?: number;
+  /** The kill switch (defense-in-depth; the routes also gate it pre-call). */
+  killSwitch?: boolean;
+  /** Optional limits override; falls back to config.limits. */
+  limits?: Limits;
+}
+
+/**
+ * SEC-01 gate for the wallet endpoints (`/api/pay`, `/api/swap`,
+ * `/api/trustlines`, `/api/claimable`) that move or commit funds OUTSIDE the DEX
+ * trade path. `checkPolicy` is shaped for a `TradeProposal` (slippage, reward/
+ * risk, exposure, ...) and does not fit a raw payment, so these routes used to
+ * bypass policy entirely. This enforces the checks that DO apply to them: kill
+ * switch, asset whitelist, and the daily outflow cap. Returns the violation
+ * list, same shape as `checkPolicy`.
+ */
+export function checkEgress(inp: EgressInputs): PolicyResult {
+  const limits = inp.limits ?? config.limits;
+  const violations: string[] = [];
+
+  if (inp.killSwitch) {
+    violations.push("Kill switch is active - all on-chain actions halted.");
+  }
+
+  const whitelist = new Set(limits.assetWhitelist.map(safeCanon));
+  for (const a of inp.assets) {
+    if (!a) continue;
+    if (!whitelist.has(safeCanon(a))) {
+      violations.push(`Asset ${a} is not whitelisted.`);
+    }
+  }
+
+  if (inp.amountXlm != null && limits.maxDailyEgress > 0) {
+    const total = (inp.egressTodayXlm ?? 0) + Math.max(0, inp.amountXlm);
+    if (total > limits.maxDailyEgress + EPS) {
+      violations.push(
+        `Daily egress cap exceeded: ${total.toFixed(4)} > ${limits.maxDailyEgress} XLM-equiv (MAX_DAILY_EGRESS).`,
+      );
+    }
+  }
+
+  return { allowed: violations.length === 0, violations };
+}
+
 export function isRiskReducing(
   proposal: TradeProposal,
   positions: PositionSummary[],

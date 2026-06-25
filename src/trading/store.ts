@@ -137,6 +137,9 @@ class Store {
    */
   paperTrading = false;
   daily: DailyState = freshDaily();
+  // SEC-01: daily wallet OUTFLOW (XLM-equiv) for the MAX_DAILY_EGRESS cap.
+  // In-memory by design (resets on restart, like the live-trading arm switch).
+  private egressXlm = 0;
   /** Active AI risk profile (per-factor LOW/MEDIUM/HIGH). Persisted in
    *  dbo.Settings; read LIVE by the policy/orchestrator at proposal time. */
   riskProfile: RiskProfile = defaultRiskProfile();
@@ -242,6 +245,7 @@ class Store {
     const k = dayKey();
     if (k !== this.daily.dayKey) {
       this.daily = freshDaily();
+      this.egressXlm = 0; // SEC-01: outflow budget resets with the trading day
       this.log("info", `New trading day ${k}: daily counters reset.`);
     }
   }
@@ -413,6 +417,18 @@ class Store {
     this.daily.realizedPnl = round7(this.daily.realizedPnl + realized);
     this.daily.lastTradeAt = new Date().toISOString();
     this.emit("daily", this.daily);
+  }
+
+  /** SEC-01: XLM-equiv sent out of the wallet so far today (MAX_DAILY_EGRESS). */
+  getEgressTodayXlm(): number {
+    this.rolloverDay();
+    return this.egressXlm;
+  }
+
+  /** SEC-01: record a successful wallet outflow against today's egress budget. */
+  recordEgress(xlm: number): void {
+    this.rolloverDay();
+    if (Number.isFinite(xlm) && xlm > 0) this.egressXlm = round7(this.egressXlm + xlm);
   }
 
   /**

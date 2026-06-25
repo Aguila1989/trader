@@ -25,11 +25,12 @@ vi.mock("../config", () => ({
       maxOfferAgeMinutes: 15,
       maxProposalAgeSeconds: 600,
       minRiskReward: 1.2,
+      maxDailyEgress: 0,
     },
   },
 }));
 
-const { checkPolicy, maxAmountForPair, lossTaper, isRiskReducing } = await import("./engine");
+const { checkPolicy, maxAmountForPair, lossTaper, isRiskReducing, checkEgress } = await import("./engine");
 import type {
   TradeProposal,
   PolicyContext,
@@ -691,5 +692,39 @@ describe("proposal staleness", () => {
       { nowMs: NOW },
     );
     expect(res.allowed).toBe(true);
+  });
+});
+
+// SEC-01: the wallet-endpoint gate (whitelist + kill switch + daily egress cap).
+describe("checkEgress", () => {
+  const SCAM = "USDC:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHAT";
+
+  it("allows whitelisted assets", () => {
+    expect(checkEgress({ assets: ["XLM", USDC] }).allowed).toBe(true);
+  });
+
+  it("blocks a non-whitelisted asset", () => {
+    const res = checkEgress({ assets: [SCAM] });
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/whitelist/i);
+  });
+
+  it("blocks when the kill switch is active", () => {
+    const res = checkEgress({ assets: ["XLM"], killSwitch: true });
+    expect(res.allowed).toBe(false);
+    expect(res.violations.join(" ")).toMatch(/kill switch/i);
+  });
+
+  it("ignores the egress cap when MAX_DAILY_EGRESS is 0 (default)", () => {
+    // Mock config has maxDailyEgress: 0 -> no cap regardless of amount.
+    expect(checkEgress({ assets: ["XLM"], amountXlm: 1_000_000 }).allowed).toBe(true);
+  });
+
+  it("enforces the egress cap when configured", () => {
+    const limits = { assetWhitelist: ["XLM", USDC], maxDailyEgress: 100 } as never;
+    expect(checkEgress({ assets: ["XLM"], amountXlm: 40, egressTodayXlm: 50, limits }).allowed).toBe(true);
+    const over = checkEgress({ assets: ["XLM"], amountXlm: 60, egressTodayXlm: 50, limits });
+    expect(over.allowed).toBe(false);
+    expect(over.violations.join(" ")).toMatch(/egress/i);
   });
 });
