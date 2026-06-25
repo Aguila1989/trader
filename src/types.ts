@@ -91,6 +91,9 @@ export interface TradeProposal {
   model?: string;
   /** The analyst's stated conviction. Auto-trade holds "low" for manual review. */
   confidence?: TradeConfidence;
+  /** Numeric AI conviction 0-100 (Expert-Mode threshold gate compares against
+   *  this). The `confidence` label is derived from it when present. */
+  confidenceScore?: number;
   /** Price target supporting the thesis (quote per base). Used with
    *  invalidationPrice to enforce a minimum reward/risk ratio. */
   targetPrice?: string;
@@ -201,6 +204,8 @@ export interface AiLogEntry {
   /** Active risk profile at the moment of the event. */
   riskProfile?: RiskProfile;
   confidence?: string;
+  /** Numeric AI conviction 0-100 when present (Expert-Mode). */
+  confidenceScore?: number;
   /** "buy" / "sell" for a proposal. */
   direction?: string;
   price?: string;
@@ -504,6 +509,40 @@ export interface RiskProfile {
   drawdownTolerance: RiskLevel;
   /** Max slippage the AI accepts (low = 0.5%). */
   slippageTolerance: RiskLevel;
+  /**
+   * Expert Mode: when true, the numeric `expert` thresholds are authoritative
+   * and override the LOW/MEDIUM/HIGH label mapping. When false/undefined the
+   * system behaves EXACTLY as before (full backward compatibility).
+   */
+  expertMode?: boolean;
+  /** Exact numeric thresholds, consulted only when `expertMode` is true. */
+  expert?: ExpertRiskProfile;
+}
+
+/**
+ * Exact numeric risk thresholds (Expert Mode). Every field maps 1:1 onto a
+ * granular control in the Risk Settings panel. Ranges are enforced both in the
+ * UI and server-side via coerceExpertProfile (see EXPERT_RANGES).
+ */
+export interface ExpertRiskProfile {
+  /** Max position size as % of available balance (1-100). */
+  positionSizePct: number;
+  /** Stop-loss distance expressed as a % from entry, or a fixed XLM amount. */
+  stopLossMode: "pct" | "amount";
+  /** Stop distance % from entry (0.5-20); used when stopLossMode = "pct". */
+  stopLossPct: number;
+  /** Stop distance as a fixed amount (quote units) from entry; used when "amount". */
+  stopLossAmount: number;
+  /** Minimum AI confidence score (0-100) required to auto-execute (50-99). */
+  minConfidence: number;
+  /** Maximum accepted 24h price-swing % for a token before the AI skips it (1-50). */
+  maxVolatilityPct: number;
+  /** Pause AI entries if the portfolio drops this % in 24h (1-50). */
+  drawdownPausePct: number;
+  /** Never pause on drawdown (maps to HIGH in basic mode). */
+  drawdownNeverPause: boolean;
+  /** Maximum accepted slippage % (0.1-10). */
+  maxSlippagePct: number;
 }
 
 /** Ordered list of the risk factors (for iteration in the UI + validation). */
@@ -516,7 +555,71 @@ export const RISK_FACTORS = [
   "slippageTolerance",
 ] as const satisfies ReadonlyArray<keyof RiskProfile>;
 
-/** Default profile: every factor LOW (current behavior). */
+/** Named preset profiles. "custom" is reported when no preset matches. */
+export type RiskPreset = "conservative" | "balanced" | "aggressive";
+
+/** Min/max/step for each numeric Expert field — single source for UI + server. */
+export const EXPERT_RANGES = {
+  positionSizePct: { min: 1, max: 100, step: 1 },
+  stopLossPct: { min: 0.5, max: 20, step: 0.5 },
+  stopLossAmount: { min: 0.0000001, max: 1_000_000_000, step: 0.1 },
+  minConfidence: { min: 50, max: 99, step: 1 },
+  maxVolatilityPct: { min: 1, max: 50, step: 1 },
+  drawdownPausePct: { min: 1, max: 50, step: 1 },
+  maxSlippagePct: { min: 0.1, max: 10, step: 0.1 },
+} as const;
+
+/** The numeric values each preset loads into all factors at once. */
+export const EXPERT_PRESETS: Record<RiskPreset, ExpertRiskProfile> = {
+  conservative: {
+    positionSizePct: 5,
+    stopLossMode: "pct",
+    stopLossPct: 2,
+    stopLossAmount: 1,
+    minConfidence: 85,
+    maxVolatilityPct: 5,
+    drawdownPausePct: 5,
+    drawdownNeverPause: false,
+    maxSlippagePct: 0.5,
+  },
+  balanced: {
+    positionSizePct: 15,
+    stopLossMode: "pct",
+    stopLossPct: 5,
+    stopLossAmount: 1,
+    minConfidence: 70,
+    maxVolatilityPct: 15,
+    drawdownPausePct: 10,
+    drawdownNeverPause: false,
+    maxSlippagePct: 1.5,
+  },
+  aggressive: {
+    positionSizePct: 30,
+    stopLossMode: "pct",
+    stopLossPct: 10,
+    stopLossAmount: 1,
+    minConfidence: 55,
+    maxVolatilityPct: 30,
+    drawdownPausePct: 25,
+    // Matches basic-mode HIGH drawdownTolerance (= no pause).
+    drawdownNeverPause: true,
+    maxSlippagePct: 3,
+  },
+};
+
+/** Clamp an untrusted numeric into [min,max], falling back when not finite. */
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** The conservative preset is the Expert-Mode default (mirrors all-LOW). */
+export function defaultExpertProfile(): ExpertRiskProfile {
+  return { ...EXPERT_PRESETS.conservative };
+}
+
+/** Default profile: every factor LOW, Expert Mode off (current behavior). */
 export function defaultRiskProfile(): RiskProfile {
   return {
     positionSize: "low",
@@ -525,6 +628,26 @@ export function defaultRiskProfile(): RiskProfile {
     volatilityTolerance: "low",
     drawdownTolerance: "low",
     slippageTolerance: "low",
+    expertMode: false,
+    expert: defaultExpertProfile(),
+  };
+}
+
+/** Validate + clamp an untrusted value into an ExpertRiskProfile. */
+export function coerceExpertProfile(raw: unknown): ExpertRiskProfile {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const d = EXPERT_PRESETS.conservative;
+  const r = EXPERT_RANGES;
+  return {
+    positionSizePct: clampNum(o.positionSizePct, r.positionSizePct.min, r.positionSizePct.max, d.positionSizePct),
+    stopLossMode: o.stopLossMode === "amount" ? "amount" : "pct",
+    stopLossPct: clampNum(o.stopLossPct, r.stopLossPct.min, r.stopLossPct.max, d.stopLossPct),
+    stopLossAmount: clampNum(o.stopLossAmount, r.stopLossAmount.min, r.stopLossAmount.max, d.stopLossAmount),
+    minConfidence: Math.round(clampNum(o.minConfidence, r.minConfidence.min, r.minConfidence.max, d.minConfidence)),
+    maxVolatilityPct: clampNum(o.maxVolatilityPct, r.maxVolatilityPct.min, r.maxVolatilityPct.max, d.maxVolatilityPct),
+    drawdownPausePct: clampNum(o.drawdownPausePct, r.drawdownPausePct.min, r.drawdownPausePct.max, d.drawdownPausePct),
+    drawdownNeverPause: o.drawdownNeverPause === true,
+    maxSlippagePct: clampNum(o.maxSlippagePct, r.maxSlippagePct.min, r.maxSlippagePct.max, d.maxSlippagePct),
   };
 }
 
@@ -540,5 +663,20 @@ export function coerceRiskProfile(raw: unknown): RiskProfile {
     volatilityTolerance: ok(o.volatilityTolerance),
     drawdownTolerance: ok(o.drawdownTolerance),
     slippageTolerance: ok(o.slippageTolerance),
+    expertMode: o.expertMode === true,
+    expert: coerceExpertProfile(o.expert),
   };
+}
+
+/** Which preset (if any) the numeric Expert values currently match. */
+export function matchExpertPreset(e: ExpertRiskProfile): RiskPreset | "custom" {
+  const presets: RiskPreset[] = ["conservative", "balanced", "aggressive"];
+  for (const key of presets) {
+    const p = EXPERT_PRESETS[key];
+    const same = (Object.keys(p) as (keyof ExpertRiskProfile)[]).every(
+      (k) => p[k] === e[k],
+    );
+    if (same) return key;
+  }
+  return "custom";
 }
