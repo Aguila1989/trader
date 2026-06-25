@@ -7,6 +7,7 @@ import {
   effectiveLimits,
   minAutoConfidence,
   minConfidenceScore,
+  maxVolatility24hPct,
   drawdownPausePct,
   riskProfileSummary,
 } from "../policy/riskProfile";
@@ -312,6 +313,9 @@ export async function runChainScan(): Promise<ScanOutcome> {
   // volatilityTolerance actually surfaces wider-spread / thinner markets to the
   // analyst instead of the scan silently applying the LOW thresholds.
   const scanLimits = effectiveLimits(store.riskProfile);
+  // EXPERT volatility: skip tokens whose 24h price swing exceeds the configured
+  // max (null in basic mode → no 24h-swing gate, unchanged behavior).
+  const maxVol = maxVolatility24hPct(store.riskProfile);
   for (const m of markets) {
     const reasons: string[] = [];
     if (
@@ -324,6 +328,10 @@ export async function runChainScan(): Promise<ScanOutcome> {
     const vol = m.stats.baseVolume24h;
     if (scanLimits.minVolume24h > 0 && vol != null && vol < scanLimits.minVolume24h) {
       reasons.push(`vol24h ${Number(vol.toFixed(1))}`);
+    }
+    const swing = m.stats.change24hPct;
+    if (maxVol != null && swing != null && Math.abs(swing) > maxVol) {
+      reasons.push(`24h swing ${Math.abs(swing).toFixed(1)}% > ${maxVol}%`);
     }
     const label =
       m.base === "XLM"
