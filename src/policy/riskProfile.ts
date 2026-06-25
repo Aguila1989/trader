@@ -159,12 +159,20 @@ export function drawdownPausePct(p: RiskProfile): number | null {
  * (Expert-mode %-of-balance sizing is applied by the caller via
  * positionSizeCapFromBalance, where the live balance is known.)
  */
-export function effectiveLimits(p: RiskProfile): Limits {
+export function effectiveLimits(p: RiskProfile, availableBalanceXlm?: number): Limits {
   const mult = positionSizeMultiplier(p);
+  // EXPERT mode sizes each order as a % of available balance. The cap is
+  // XLM-calibrated for the XLM-base chain-scan shape; cross/inverted pairs fall
+  // back to it as a conservative upper bound and preflight still blocks anything
+  // beyond actually-held funds. null in basic mode (the multiplier path applies).
+  const expertCap =
+    availableBalanceXlm != null ? positionSizeCapFromBalance(p, availableBalanceXlm) : null;
+  const maxAmt = expertCap != null ? expertCap : config.limits.maxAmountPerTrade * mult;
+  const maxAmtHigh = expertCap != null ? expertCap : config.limits.maxAmountPerTradeHigh * mult;
   return {
     ...config.limits,
-    maxAmountPerTrade: config.limits.maxAmountPerTrade * mult,
-    maxAmountPerTradeHigh: config.limits.maxAmountPerTradeHigh * mult,
+    maxAmountPerTrade: maxAmt,
+    maxAmountPerTradeHigh: maxAmtHigh,
     maxSlippageBps: effectiveSlippageBps(p),
     cooldownSeconds: effectiveCooldownSeconds(p),
     minVolume24h: effectiveMinVolume24h(p),

@@ -168,12 +168,26 @@ export async function analyze(
   // cap the AI is told and is surfaced so the AI adjusts size / stop placement /
   // slippage / whether to trade a volatile token per the operator's risk dials.
   const profile = store.riskProfile;
+  // Expert mode sizes per order as a % of available balance — fetch the live XLM
+  // balance so the per-pair cap the AI is told reflects that (basic mode unaffected).
+  let xlmBal: number | undefined;
+  if (profile.expertMode) {
+    const pub = signerPublicKey();
+    if (pub) {
+      try {
+        const bals = await getBalances(pub);
+        xlmBal = Number(bals.find((b) => b.asset === "XLM")?.balance ?? 0);
+      } catch {
+        /* leave undefined — falls back to the config size envelope */
+      }
+    }
+  }
   const cap = effectiveCapForPair(
     baseAsset,
     quoteAsset,
     memory?.realizedPnlToday ?? 0,
     memory?.unrealizedPnl ?? 0,
-    effectiveLimits(profile),
+    effectiveLimits(profile, xlmBal),
   );
   const messages: AiMessage[] = [
     {
@@ -282,13 +296,15 @@ export async function analyzeChain(
   const memoryBlock = renderMemory(memory);
   // Active risk profile (live), used to scale the per-pair caps shown + surfaced.
   const chainProfile = store.riskProfile;
-  const chainLimits = effectiveLimits(chainProfile);
   const pub = signerPublicKey();
   let balancesText = "(no account configured)";
   let offersText = "[]";
+  let xlmBal: number | undefined;
   if (pub) {
     try {
-      balancesText = JSON.stringify(await getBalances(pub));
+      const bals = await getBalances(pub);
+      balancesText = JSON.stringify(bals);
+      xlmBal = Number(bals.find((b) => b.asset === "XLM")?.balance ?? 0);
     } catch {
       balancesText = "(failed to load balances)";
     }
@@ -298,6 +314,8 @@ export async function analyzeChain(
       offersText = "(failed to load open offers)";
     }
   }
+  // Expert mode: the per-pair caps shown reflect %-of-balance sizing.
+  const chainLimits = effectiveLimits(chainProfile, chainProfile.expertMode ? xlmBal : undefined);
 
   const table = markets
     .map((m) => {

@@ -116,6 +116,23 @@ async function walletHeld(): Promise<((spec: string) => boolean) | null> {
 }
 
 /**
+ * Available native XLM balance, for Expert-mode %-of-balance position sizing.
+ * undefined when no account is configured or the lookup fails (callers then
+ * fall back to the config size envelope). Only fetched when Expert Mode is on.
+ */
+async function availableXlmBalance(): Promise<number | undefined> {
+  const pub = signerPublicKey();
+  if (!pub) return undefined;
+  try {
+    const balances = await getBalances(pub);
+    const native = balances.find((b) => b.asset === "XLM");
+    return native ? Number(native.balance) : 0;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Warn when the wallet can only trade ONE direction on a pair: with no quote
  * currency it can only SELL the base (nothing to buy with); with no base it can
  * only BUY. `held` is the predicate from walletHeld().
@@ -670,7 +687,7 @@ async function intake(
     positions: store.getPositions(),
     unrealizedPnl: store.unrealizedPnl,
     autoExecution: store.autoApprove && store.armed,
-    limits: effectiveLimits(profile),
+    limits: effectiveLimits(profile, profile.expertMode ? await availableXlmBalance() : undefined),
   });
 
   if (!policy.allowed) {
@@ -997,8 +1014,12 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
     // Unattended submissions fail CLOSED on missing market data.
     autoExecution: auto,
     // Same risk-scaled limits as intake (read live; manual orders keep their
-    // own cap-bypass via proposal.initiator inside checkPolicy).
-    limits: effectiveLimits(store.riskProfile),
+    // own cap-bypass via proposal.initiator inside checkPolicy). Expert mode
+    // sizes per order as a % of available balance.
+    limits: effectiveLimits(
+      store.riskProfile,
+      store.riskProfile.expertMode ? await availableXlmBalance() : undefined,
+    ),
   });
   if (!policy.allowed) {
     store.updateProposal(id, {
