@@ -38,6 +38,8 @@ export interface TradeProposal {
   initiator?: "manual" | "ai" | "system";
   /** AI conviction (auto-trade holds anything below medium). */
   confidence?: TradeConfidence;
+  /** Numeric AI conviction 0-100 (Expert-Mode threshold gate). */
+  confidenceScore?: number;
   /** Attribution: "manual" for user orders, else the AI provider id. */
   provider?: string;
   /** Model name for AI proposals. */
@@ -157,6 +159,7 @@ export interface AiLogEntry {
   reasoning: string;
   riskProfile?: RiskProfile;
   confidence?: string;
+  confidenceScore?: number;
   direction?: string;
   price?: string;
 }
@@ -235,6 +238,7 @@ export interface Snapshot {
 
 export type RiskLevel = "low" | "medium" | "high";
 
+// Mirror of the backend RiskProfile (src/types.ts). Kept hand-synced.
 export interface RiskProfile {
   positionSize: RiskLevel;
   stopLossDistance: RiskLevel;
@@ -242,6 +246,65 @@ export interface RiskProfile {
   volatilityTolerance: RiskLevel;
   drawdownTolerance: RiskLevel;
   slippageTolerance: RiskLevel;
+  /** Expert Mode: numeric `expert` thresholds override the labels when true. */
+  expertMode?: boolean;
+  expert?: ExpertRiskProfile;
+}
+
+/** Exact numeric Expert-Mode thresholds (mirror of backend ExpertRiskProfile). */
+export interface ExpertRiskProfile {
+  positionSizePct: number;
+  stopLossMode: "pct" | "amount";
+  stopLossPct: number;
+  stopLossAmount: number;
+  minConfidence: number;
+  maxVolatilityPct: number;
+  drawdownPausePct: number;
+  drawdownNeverPause: boolean;
+  maxSlippagePct: number;
+}
+
+export const RISK_FACTORS = [
+  "positionSize",
+  "stopLossDistance",
+  "tradeFrequency",
+  "volatilityTolerance",
+  "drawdownTolerance",
+  "slippageTolerance",
+] as const satisfies ReadonlyArray<keyof RiskProfile>;
+
+export type RiskPreset = "conservative" | "balanced" | "aggressive";
+
+/** Min/max/step per numeric Expert field (mirror of backend EXPERT_RANGES). */
+export const EXPERT_RANGES = {
+  positionSizePct: { min: 1, max: 100, step: 1 },
+  stopLossPct: { min: 0.5, max: 20, step: 0.5 },
+  stopLossAmount: { min: 0.0000001, max: 1_000_000_000, step: 0.1 },
+  minConfidence: { min: 50, max: 99, step: 1 },
+  maxVolatilityPct: { min: 1, max: 50, step: 1 },
+  drawdownPausePct: { min: 1, max: 50, step: 1 },
+  maxSlippagePct: { min: 0.1, max: 10, step: 0.1 },
+} as const;
+
+export const EXPERT_PRESETS: Record<RiskPreset, ExpertRiskProfile> = {
+  conservative: { positionSizePct: 5, stopLossMode: "pct", stopLossPct: 2, stopLossAmount: 1, minConfidence: 85, maxVolatilityPct: 5, drawdownPausePct: 5, drawdownNeverPause: false, maxSlippagePct: 0.5 },
+  balanced: { positionSizePct: 15, stopLossMode: "pct", stopLossPct: 5, stopLossAmount: 1, minConfidence: 70, maxVolatilityPct: 15, drawdownPausePct: 10, drawdownNeverPause: false, maxSlippagePct: 1.5 },
+  aggressive: { positionSizePct: 30, stopLossMode: "pct", stopLossPct: 10, stopLossAmount: 1, minConfidence: 55, maxVolatilityPct: 30, drawdownPausePct: 25, drawdownNeverPause: true, maxSlippagePct: 3 },
+};
+
+export function defaultExpertProfile(): ExpertRiskProfile {
+  return { ...EXPERT_PRESETS.conservative };
+}
+
+/** Which preset (if any) the numeric Expert values currently match. */
+export function matchExpertPreset(e: ExpertRiskProfile): RiskPreset | "custom" {
+  const presets: RiskPreset[] = ["conservative", "balanced", "aggressive"];
+  for (const key of presets) {
+    const p = EXPERT_PRESETS[key];
+    const same = (Object.keys(p) as (keyof ExpertRiskProfile)[]).every((k) => p[k] === e[k]);
+    if (same) return key;
+  }
+  return "custom";
 }
 
 export interface OrderbookLevel {

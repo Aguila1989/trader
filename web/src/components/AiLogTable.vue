@@ -152,9 +152,10 @@ function riskSummary(rp?: RiskProfile): string {
             <tr v-if="expanded.has(r.id)" class="ai-expand">
               <td colspan="5">
                 <div class="ai-full">{{ r.reasoning }}</div>
-                <div v-if="r.confidence || r.direction || r.price" class="muted ai-meta">
+                <div v-if="r.confidence || r.confidenceScore != null || r.direction || r.price" class="muted ai-meta">
                   <span v-if="r.direction">{{ t("aiLog.meta.direction") }}: {{ r.direction }}</span>
-                  <span v-if="r.confidence">{{ t("aiLog.meta.confidence") }}: {{ r.confidence }}</span>
+                  <span v-if="r.confidenceScore != null">{{ t("aiLog.meta.confidence") }}: {{ r.confidenceScore }}/100</span>
+                  <span v-else-if="r.confidence">{{ t("aiLog.meta.confidence") }}: {{ r.confidence }}</span>
                   <span v-if="r.price">{{ t("aiLog.meta.price") }}: {{ r.price }}</span>
                 </div>
               </td>
