@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { timeStr } from "../format";
 import type { LogEntry, LogLevel } from "../types";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const LEVELS = ["", "info", "warn", "error", "trade", "ai"];
@@ -18,7 +20,7 @@ const rangeEnd = computed(() =>
 );
 
 function levelText(l: string): string {
-  return l ? l : "all levels";
+  return l ? l : t("logHistory.allLevels");
 }
 
 function dayKey(iso: string): string {
@@ -54,7 +56,7 @@ watch(search, (v) => {
 <template>
   <section class="panel">
     <div class="hist-head">
-      <h2>Log history</h2>
+      <h2>{{ t("logHistory.title") }}</h2>
       <div class="hist-controls">
         <select
           :value="store.logLevelFilter"
@@ -70,44 +72,46 @@ watch(search, (v) => {
           v-model="search"
           type="search"
           class="log-search"
-          placeholder="Search messages..."
+          :placeholder="t('logHistory.searchPlaceholder')"
         />
         <span class="muted page-info">
-          {{ rangeStart }}-{{ rangeEnd }} of {{ total }}
+          {{ rangeStart }}-{{ rangeEnd }} {{ t("logHistory.of") }} {{ total }}
         </span>
         <button
           class="btn"
           :disabled="store.logPageOffset === 0"
           @click="store.logPrevPage()"
         >
-          Prev
+          {{ t("logHistory.prev") }}
         </button>
         <button
           class="btn"
           :disabled="rangeEnd >= total"
           @click="store.logNextPage()"
         >
-          Next
+          {{ t("logHistory.next") }}
         </button>
       </div>
     </div>
 
     <p v-if="!store.snapshot?.dbConnected" class="muted db-note">
-      In-memory only - persisted history needs SQL Server (see README).
+      {{ t("logHistory.inMemoryNote") }}
     </p>
 
     <div class="table-wrap">
       <table class="hist">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Level</th>
-            <th>Message</th>
+            <th>{{ t("logHistory.colTime") }}</th>
+            <th>{{ t("logHistory.colLevel") }}</th>
+            <th>{{ t("logHistory.colMessage") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
-            <td colspan="3" class="muted center">No logs on this page.</td>
+            <td colspan="3" class="muted center">
+              {{ t("logHistory.noLogs") }}
+            </td>
           </tr>
           <template v-for="d in days" :key="d.day">
             <tr class="day-row">

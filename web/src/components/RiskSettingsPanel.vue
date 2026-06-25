@@ -3,42 +3,44 @@
 // conservative behavior; raising a factor lets the AI take more risk on that
 // dimension. Changes POST immediately and take effect on the next proposal.
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import InfoTip from "./InfoTip.vue";
 import type { RiskLevel, RiskProfile } from "../types";
 
 const store = useTraderStore();
+const { t } = useI18n();
 
 const FACTORS: { key: keyof RiskProfile; label: string; tip: string }[] = [
   {
     key: "positionSize",
-    label: "Position size",
-    tip: "LOW: AI trades the minimum safe amount per order (current behavior). MEDIUM: scales position size to a moderate % of available balance. HIGH: uses a larger % of available balance per order.",
+    label: t("riskSettings.factors.positionSize.label"),
+    tip: t("riskSettings.factors.positionSize.tip"),
   },
   {
     key: "stopLossDistance",
-    label: "Stop loss distance",
-    tip: "LOW: stop placed close to entry (tight, limits losses). MEDIUM: a moderate distance from entry. HIGH: further from entry (wider, allows more movement). The AI prefers a trailing stop at MEDIUM/HIGH.",
+    label: t("riskSettings.factors.stopLossDistance.label"),
+    tip: t("riskSettings.factors.stopLossDistance.tip"),
   },
   {
     key: "tradeFrequency",
-    label: "Trade frequency",
-    tip: "LOW: trades conservatively, only on high-confidence signals. MEDIUM: trades on moderate-confidence signals. HIGH: trades more frequently, including lower-confidence signals.",
+    label: t("riskSettings.factors.tradeFrequency.label"),
+    tip: t("riskSettings.factors.tradeFrequency.tip"),
   },
   {
     key: "volatilityTolerance",
-    label: "Asset volatility tolerance",
-    tip: "LOW: only stable, high-liquidity tokens. MEDIUM: also considers moderately volatile tokens. HIGH: considers all whitelisted tokens including volatile ones.",
+    label: t("riskSettings.factors.volatilityTolerance.label"),
+    tip: t("riskSettings.factors.volatilityTolerance.tip"),
   },
   {
     key: "drawdownTolerance",
-    label: "Drawdown tolerance",
-    tip: "LOW: pauses trading if the portfolio drops more than 5% in 24h. MEDIUM: pauses if it drops more than 10% in 24h. HIGH: does not pause based on portfolio drawdown.",
+    label: t("riskSettings.factors.drawdownTolerance.label"),
+    tip: t("riskSettings.factors.drawdownTolerance.tip"),
   },
   {
     key: "slippageTolerance",
-    label: "Slippage tolerance",
-    tip: "LOW: rejects trades where slippage exceeds 0.5% (current behavior). MEDIUM: accepts slippage up to 1.5%. HIGH: accepts slippage up to 3%.",
+    label: t("riskSettings.factors.slippageTolerance.label"),
+    tip: t("riskSettings.factors.slippageTolerance.tip"),
   },
 ];
 const LEVELS: RiskLevel[] = ["low", "medium", "high"];
@@ -71,16 +73,13 @@ function resetLow(): void {
 
 <template>
   <section class="panel">
-    <h2>Risk settings</h2>
+    <h2>{{ t("riskSettings.title") }}</h2>
     <p class="muted rs-note">
-      How aggressively the AI trades, per factor. LOW = current (most
-      conservative) behavior; raising a factor lets the AI take more risk on that
-      dimension. Changes take effect on the next proposal — no restart needed.
+      {{ t("riskSettings.note") }}
     </p>
 
     <div v-if="anyHigh" class="rs-warn">
-      ⚠ One or more risk factors are set to HIGH. The AI may place larger or more
-      frequent trades. Monitor your portfolio closely.
+      ⚠ {{ t("riskSettings.highWarning") }}
     </div>
 
     <ul class="rs-list">
@@ -105,11 +104,11 @@ function resetLow(): void {
 
     <div class="rs-foot">
       <span class="rs-overall">
-        Overall risk profile:
+        {{ t("riskSettings.overall") }}:
         <strong :class="'rs-' + overall.toLowerCase()">{{ overall }}</strong>
       </span>
       <button class="btn rs-reset" :disabled="overall === 'LOW'" @click="resetLow">
-        Reset to LOW
+        {{ t("riskSettings.resetToLow") }}
       </button>
     </div>
   </section>

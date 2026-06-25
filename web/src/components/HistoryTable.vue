@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { withToken } from "../api";
 import { fmtNum, dateTimeStr, shortKey } from "../format";
 import type { TradeProposal } from "../types";
+
+const { t } = useI18n();
 
 // "manual" / "bot" filter the loaded page by who initiated each trade; "all"
 // shows everything. (Filtering is over the current page — server-side paged
@@ -21,10 +24,10 @@ function isManual(p: TradeProposal): boolean {
 }
 const title = computed(() =>
   props.source === "manual"
-    ? "Manual trade history"
+    ? t("history.title.manual")
     : props.source === "bot"
-      ? "Bot trade history"
-      : "Trade history",
+      ? t("history.title.bot")
+      : t("history.title.all"),
 );
 
 // Download the full trade history as CSV. The token rides as a query param
@@ -60,8 +63,12 @@ const rangeEnd = computed(() =>
   Math.min(store.pageOffset + store.pageLimit, total.value),
 );
 
+// Localized label for a status code. Falls back to the underscore-stripped code
+// when no translation exists for that status.
 function statusText(s: string): string {
-  return s.replace(/_/g, " ");
+  const key = `history.status.${s}`;
+  const label = t(key);
+  return label === key ? s.replace(/_/g, " ") : label;
 }
 </script>
 
@@ -75,51 +82,57 @@ function statusText(s: string): string {
           @change="store.setStatusFilter(($event.target as HTMLSelectElement).value)"
         >
           <option v-for="s in STATUSES" :key="s || 'all'" :value="s">
-            {{ s ? statusText(s) : "all statuses" }}
+            {{ s ? statusText(s) : t("history.allStatuses") }}
           </option>
         </select>
         <span class="muted page-info">
-          {{ rangeStart }}-{{ rangeEnd }} of {{ total }}
+          {{ rangeStart }}-{{ rangeEnd }} {{ t("history.ofTotal") }} {{ total }}
         </span>
         <button class="btn" :disabled="store.pageOffset === 0" @click="store.prevPage()">
-          Prev
+          {{ t("history.prev") }}
         </button>
         <button
           class="btn"
           :disabled="rangeEnd >= total"
           @click="store.nextPage()"
         >
-          Next
+          {{ t("history.next") }}
         </button>
-        <button class="btn" :disabled="total === 0" title="Download all trades as CSV" @click="exportCsv">
-          Export CSV
+        <button class="btn" :disabled="total === 0" :title="t('history.exportCsvTitle')" @click="exportCsv">
+          {{ t("history.exportCsv") }}
         </button>
       </div>
     </div>
 
     <p v-if="!store.snapshot?.dbConnected" class="muted db-note">
-      In-memory only - persisted history needs SQL Server (see README).
+      {{ t("history.dbNote") }}
     </p>
 
     <div class="table-wrap">
       <table class="hist">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Side</th>
-            <th>Pair</th>
-            <th class="num">Amount</th>
-            <th class="num">Limit</th>
-            <th v-if="source === 'bot'">Conf</th>
-            <th>Status</th>
-            <th v-if="source === 'bot'">AI reasoning</th>
-            <th>Tx</th>
+            <th>{{ t("history.col.time") }}</th>
+            <th>{{ t("history.col.side") }}</th>
+            <th>{{ t("history.col.pair") }}</th>
+            <th class="num">{{ t("history.col.amount") }}</th>
+            <th class="num">{{ t("history.col.limit") }}</th>
+            <th v-if="source === 'bot'">{{ t("history.col.conf") }}</th>
+            <th>{{ t("history.col.status") }}</th>
+            <th v-if="source === 'bot'">{{ t("history.col.aiReasoning") }}</th>
+            <th>{{ t("history.col.tx") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
             <td :colspan="source === 'bot' ? 9 : 7" class="muted center">
-              No {{ source === "all" ? "" : source + " " }}trades on this page.
+              {{
+                source === "manual"
+                  ? t("history.empty.manual")
+                  : source === "bot"
+                    ? t("history.empty.bot")
+                    : t("history.empty.all")
+              }}
             </td>
           </tr>
           <tr v-for="p in rows" :key="p.id">

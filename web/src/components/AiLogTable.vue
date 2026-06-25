@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // AI Log sub-tab: paginated/filterable AI reasoning + decision events.
 import { computed, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { useTraderStore } from "../stores/trader";
 import { dateTimeStr } from "../format";
 import type { AiLogEntry, RiskProfile } from "../types";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const rows = ref<AiLogEntry[]>([]);
@@ -20,16 +22,17 @@ const token = ref("");
 const from = ref("");
 const to = ref("");
 
+// [filter value, i18n key suffix under aiLog.events.*]
 const EVENT_TYPES = [
-  ["", "All events"],
-  ["proposal", "Proposal"],
-  ["accepted", "Accepted"],
-  ["rejected", "Rejected"],
-  ["risk_constraint", "Risk Constraint"],
-  ["stop_loss", "Stop Loss"],
-  ["trail_update", "Trail Update"],
-  ["cooldown", "Cooldown"],
-  ["risk_profile", "Risk Profile"],
+  ["", "all"],
+  ["proposal", "proposal"],
+  ["accepted", "accepted"],
+  ["rejected", "rejected"],
+  ["risk_constraint", "riskConstraint"],
+  ["stop_loss", "stopLoss"],
+  ["trail_update", "trailUpdate"],
+  ["cooldown", "cooldown"],
+  ["risk_profile", "riskProfile"],
 ] as const;
 
 async function load(): Promise<void> {
@@ -100,39 +103,39 @@ function riskSummary(rp?: RiskProfile): string {
 <template>
   <div class="logs-pane">
     <div class="logs-filters">
-      <select v-model="eventType" aria-label="Event type filter">
-        <option v-for="[v, label] in EVENT_TYPES" :key="v || 'all'" :value="v">{{ label }}</option>
+      <select v-model="eventType" :aria-label="t('aiLog.eventTypeFilter')">
+        <option v-for="[v, key] in EVENT_TYPES" :key="v || 'all'" :value="v">{{ t(`aiLog.events.${key}`) }}</option>
       </select>
-      <select v-model="token" aria-label="Token filter">
-        <option value="">All tokens</option>
-        <option v-for="t in store.universe" :key="t.spec" :value="t.spec">{{ t.code }}</option>
+      <select v-model="token" :aria-label="t('aiLog.tokenFilter')">
+        <option value="">{{ t("aiLog.allTokens") }}</option>
+        <option v-for="tk in store.universe" :key="tk.spec" :value="tk.spec">{{ tk.code }}</option>
       </select>
-      <label class="logs-date">From <input v-model="from" type="date" /></label>
-      <label class="logs-date">To <input v-model="to" type="date" /></label>
-      <select v-model.number="limit" aria-label="Page size">
-        <option :value="50">50 / page</option>
-        <option :value="100">100 / page</option>
-        <option :value="200">200 / page</option>
+      <label class="logs-date">{{ t("aiLog.from") }} <input v-model="from" type="date" /></label>
+      <label class="logs-date">{{ t("aiLog.to") }} <input v-model="to" type="date" /></label>
+      <select v-model.number="limit" :aria-label="t('aiLog.pageSize')">
+        <option :value="50">{{ t("aiLog.perPage", { n: 50 }) }}</option>
+        <option :value="100">{{ t("aiLog.perPage", { n: 100 }) }}</option>
+        <option :value="200">{{ t("aiLog.perPage", { n: 200 }) }}</option>
       </select>
-      <span class="muted page-info">{{ rangeStart }}-{{ rangeEnd }} of {{ total }}</span>
-      <button class="btn" :disabled="offset === 0" @click="prev">Prev</button>
-      <button class="btn" :disabled="rangeEnd >= total" @click="next">Next</button>
+      <span class="muted page-info">{{ rangeStart }}-{{ rangeEnd }} {{ t("aiLog.of") }} {{ total }}</span>
+      <button class="btn" :disabled="offset === 0" @click="prev">{{ t("aiLog.prev") }}</button>
+      <button class="btn" :disabled="rangeEnd >= total" @click="next">{{ t("aiLog.next") }}</button>
     </div>
 
     <div class="table-wrap">
       <table class="hist">
         <thead>
           <tr>
-            <th>Timestamp</th>
-            <th>Event Type</th>
-            <th>Token</th>
-            <th>Reasoning</th>
-            <th>Risk Profile</th>
+            <th>{{ t("aiLog.col.timestamp") }}</th>
+            <th>{{ t("aiLog.col.eventType") }}</th>
+            <th>{{ t("aiLog.col.token") }}</th>
+            <th>{{ t("aiLog.col.reasoning") }}</th>
+            <th>{{ t("aiLog.col.riskProfile") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
-            <td colspan="5" class="muted center">{{ loading ? "Loading…" : "No AI-log entries." }}</td>
+            <td colspan="5" class="muted center">{{ loading ? t("aiLog.loading") : t("aiLog.empty") }}</td>
           </tr>
           <template v-for="r in rows" :key="r.id">
             <tr
@@ -150,9 +153,9 @@ function riskSummary(rp?: RiskProfile): string {
               <td colspan="5">
                 <div class="ai-full">{{ r.reasoning }}</div>
                 <div v-if="r.confidence || r.direction || r.price" class="muted ai-meta">
-                  <span v-if="r.direction">direction: {{ r.direction }}</span>
-                  <span v-if="r.confidence">confidence: {{ r.confidence }}</span>
-                  <span v-if="r.price">price: {{ r.price }}</span>
+                  <span v-if="r.direction">{{ t("aiLog.meta.direction") }}: {{ r.direction }}</span>
+                  <span v-if="r.confidence">{{ t("aiLog.meta.confidence") }}: {{ r.confidence }}</span>
+                  <span v-if="r.price">{{ t("aiLog.meta.price") }}: {{ r.price }}</span>
                 </div>
               </td>
             </tr>

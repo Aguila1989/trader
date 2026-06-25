@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 const selected = ref("");
 const busy = ref(false);
@@ -36,26 +38,25 @@ async function remove(asset: string): Promise<void> {
 
 <template>
   <section class="panel">
-    <h2>Trustlines</h2>
+    <h2>{{ t("trustlines.title") }}</h2>
     <p class="muted tl-note">
-      Assets the wallet can hold. Pick a token to add its trustline so you can
-      trade or receive it; each add locks 0.5 XLM reserve.
-      <span v-if="store.isReadOnly">Arm live trading to modify trustlines.</span>
+      {{ t("trustlines.intro") }}
+      <span v-if="store.isReadOnly">{{ t("trustlines.armToModify") }}</span>
     </p>
     <ul class="levels">
       <li v-if="store.trustlines.length === 0" class="muted-row">
-        <span class="muted">(only XLM)</span>
+        <span class="muted">{{ t("trustlines.onlyXlm") }}</span>
       </li>
-      <li v-for="t in store.trustlines" :key="t.asset" class="tl-row">
-        <span class="px" :title="t.asset">{{ t.code }}</span>
-        <span class="amt">{{ fmtNum(t.balance) }}</span>
+      <li v-for="tl in store.trustlines" :key="tl.asset" class="tl-row">
+        <span class="px" :title="tl.asset">{{ tl.code }}</span>
+        <span class="amt">{{ fmtNum(tl.balance) }}</span>
         <button
           class="btn tl-remove"
-          :disabled="store.isReadOnly || Number(t.balance) > 0"
-          :title="Number(t.balance) > 0 ? 'Sell/transfer the balance to zero first' : 'Remove trustline'"
-          @click="remove(t.asset)"
+          :disabled="store.isReadOnly || Number(tl.balance) > 0"
+          :title="Number(tl.balance) > 0 ? t('trustlines.sellToZeroFirst') : t('trustlines.actions.remove')"
+          @click="remove(tl.asset)"
         >
-          Remove
+          {{ t("trustlines.actions.remove") }}
         </button>
       </li>
     </ul>
@@ -63,15 +64,15 @@ async function remove(asset: string): Promise<void> {
       <AssetSelect
         v-model="selected"
         :options="addable"
-        placeholder="Pick a token to add"
-        aria-label="Trustline asset"
+        :placeholder="t('trustlines.pickToAdd')"
+        :aria-label="t('trustlines.assetAriaLabel')"
       />
       <button
         class="btn primary"
         :disabled="busy || store.isReadOnly || !selected"
         @click="add"
       >
-        {{ busy ? "Adding…" : "Add trustline" }}
+        {{ busy ? t("trustlines.actions.adding") : t("trustlines.actions.add") }}
       </button>
     </div>
     <p v-if="store.trustlineError" class="violations">{{ store.trustlineError }}</p>

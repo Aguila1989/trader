@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, timeStr, explorerTx } from "../format";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 function statusText(s: string): string {
@@ -38,9 +40,9 @@ function statusText(s: string): string {
 
 <template>
   <section class="panel">
-    <h2>Proposals</h2>
+    <h2>{{ t("proposals.title") }}</h2>
     <div class="proposals">
-      <p v-if="store.proposals.length === 0" class="muted">No proposals yet.</p>
+      <p v-if="store.proposals.length === 0" class="muted">{{ t("proposals.empty") }}</p>
 
       <div v-for="p in store.proposals" :key="p.id" class="card">
         <div class="row">
@@ -62,9 +64,9 @@ function statusText(s: string): string {
         <div class="reason">{{ p.reason }}</div>
 
         <div v-if="p.policyViolations && p.policyViolations.length" class="violations">
-          Blocked: {{ p.policyViolations.join("; ") }}
+          {{ t("proposals.blocked") }}: {{ p.policyViolations.join("; ") }}
         </div>
-        <div v-if="p.error" class="violations">Error: {{ p.error }}</div>
+        <div v-if="p.error" class="violations">{{ t("proposals.error") }}: {{ p.error }}</div>
 
         <div v-if="p.txHash" class="meta">
           <a
@@ -72,7 +74,7 @@ function statusText(s: string): string {
             target="_blank"
             rel="noopener"
           >
-            tx {{ p.txHash.slice(0, 12) }}...
+            {{ t("proposals.tx") }} {{ p.txHash.slice(0, 12) }}...
           </a>
         </div>
 
@@ -80,16 +82,16 @@ function statusText(s: string): string {
           <button
             class="btn ok"
             :disabled="store.isReadOnly"
-            :title="store.isReadOnly ? 'Read-only: switch to Live trading to submit' : ''"
+            :title="store.isReadOnly ? t('proposals.readOnlyHint') : ''"
             @click="store.approve(p.id)"
           >
-            Approve &amp; submit
+            {{ t("proposals.actions.approve") }}
           </button>
-          <button class="btn danger" @click="store.reject(p.id)">Reject</button>
+          <button class="btn danger" @click="store.reject(p.id)">{{ t("proposals.actions.reject") }}</button>
         </div>
 
         <div class="meta">
-          {{ shortKey(p.id) }} - max slip {{ p.maxSlippageBps }} bps -
+          {{ shortKey(p.id) }} - {{ t("proposals.maxSlip", { n: p.maxSlippageBps }) }} -
           {{ timeStr(p.createdAt) }}
         </div>
       </div>

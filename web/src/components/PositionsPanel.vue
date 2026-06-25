@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const positions = computed(() => store.positions);
@@ -15,24 +17,24 @@ function assetCode(spec: string): string {
 
 <template>
   <section class="panel">
-    <h2>Open positions</h2>
+    <h2>{{ t("positions.title") }}</h2>
     <p class="muted pos-note">
-      Net exposure from this system's own fills (signed-FIFO, quote-denominated).
+      {{ t("positions.note") }}
     </p>
     <div class="table-wrap">
       <table class="hist">
         <thead>
           <tr>
-            <th>Pair</th>
-            <th>Side</th>
-            <th class="num">Net qty</th>
-            <th class="num">Avg price</th>
+            <th>{{ t("positions.pair") }}</th>
+            <th>{{ t("positions.side") }}</th>
+            <th class="num">{{ t("positions.netQty") }}</th>
+            <th class="num">{{ t("positions.avgPrice") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="positions.length === 0">
             <td colspan="4" class="muted center">
-              Flat - no open positions from trading.
+              {{ t("positions.empty") }}
             </td>
           </tr>
           <tr v-for="p in positions" :key="p.pair">
@@ -40,7 +42,7 @@ function assetCode(spec: string): string {
               {{ assetCode(p.base) }}/{{ assetCode(p.quote) }}
             </td>
             <td :class="p.netQty >= 0 ? 'side-buy' : 'side-sell'">
-              {{ p.netQty >= 0 ? "LONG" : "SHORT" }}
+              {{ p.netQty >= 0 ? t("positions.long") : t("positions.short") }}
             </td>
             <td class="num mono">{{ fmtNum(Math.abs(p.netQty)) }}</td>
             <td class="num mono">{{ fmtNum(p.avgPrice) }}</td>

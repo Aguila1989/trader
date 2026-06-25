@@ -5,6 +5,7 @@
 // as "sell the YOU-SELL asset for the YOU-BUY asset" — base = sell, quote =
 // buy, side = sell — which maps directly onto placeManualOrder.
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import type { ManualOrderInput } from "../types";
@@ -12,21 +13,16 @@ import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 
 const store = useTraderStore();
+const { t } = useI18n();
 
-const TIPS = {
-  target:
-    "The price at which you want to take profit. The bot will automatically close the position when this price is reached.",
-  invalidation:
-    "If the price drops to this level, the trade idea is considered invalid. This is typically used to set a stop loss.",
-  slippage:
-    "The maximum % difference between the expected price and the actual execution price you are willing to accept.",
-  spread:
-    "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
-  orderType:
-    "Limit: rests at the price you set and fills only at that price or better. Market: fills immediately against the current best price in the book.",
-  price:
-    "How many YOU BUY tokens you receive per 1 YOU SELL token. For a limit order it's the minimum you'll accept.",
-};
+const TIPS = computed(() => ({
+  target: t("manualTrade.tips.target"),
+  invalidation: t("manualTrade.tips.invalidation"),
+  slippage: t("manualTrade.tips.slippage"),
+  spread: t("manualTrade.tips.spread"),
+  orderType: t("manualTrade.tips.orderType"),
+  price: t("manualTrade.tips.price"),
+}));
 
 // YOU SELL = base (held-only); YOU BUY = quote (whole whitelist).
 const sellToken = ref("XLM");
@@ -40,7 +36,9 @@ const targetPrice = ref("");
 const invalidationPrice = ref("");
 
 const sellCode = computed(() => store.tokenFor(sellToken.value).code);
-const buyCode = computed(() => (buyToken.value ? store.tokenFor(buyToken.value).code : "token"));
+const buyCode = computed(() =>
+  buyToken.value ? store.tokenFor(buyToken.value).code : t("manualTrade.tokenFallback"),
+);
 const available = computed(() => store.heldBalance(sellToken.value));
 
 // Pull the book for the chosen pair whenever it changes.
@@ -70,7 +68,7 @@ const effectivePrice = computed<number | null>(() => {
   return marketPrice.value;
 });
 const pricePlaceholder = computed(() =>
-  marketPrice.value != null ? fmtNum(marketPrice.value, 7) : "price",
+  marketPrice.value != null ? fmtNum(marketPrice.value, 7) : t("manualTrade.pricePlaceholder"),
 );
 
 const amountNum = computed(() => Number(amount.value));
@@ -113,17 +111,17 @@ const orderResult = computed(() => {
   if (!o) return null;
   if (o.error) return { ok: false, text: o.error };
   if (o.policyViolations && o.policyViolations.length) {
-    return { ok: false, text: `Blocked: ${o.policyViolations.join("; ")}` };
+    return { ok: false, text: t("manualTrade.result.blocked", { reasons: o.policyViolations.join("; ") }) };
   }
   switch (o.status) {
     case "submitted":
-      return { ok: true, text: "Submitted" };
+      return { ok: true, text: t("manualTrade.result.submitted") };
     case "pending_approval":
-      return { ok: true, text: "Pending approval" };
+      return { ok: true, text: t("manualTrade.result.pendingApproval") };
     case "proposed":
-      return { ok: true, text: "Resting" };
+      return { ok: true, text: t("manualTrade.result.resting") };
     case "submitting":
-      return { ok: true, text: "Submitting..." };
+      return { ok: true, text: t("manualTrade.result.submitting") };
     default:
       return { ok: false, text: o.status };
   }
@@ -173,32 +171,32 @@ async function cancel(id: string): Promise<void> {
 <template>
   <div class="grid">
     <section class="panel">
-      <h2>Order book</h2>
+      <h2>{{ t("manualTrade.orderBook") }}</h2>
       <div class="market-controls">
         <AssetSelect
           v-model="sellToken"
           class="sel-pair"
           :options="store.heldTokens"
-          placeholder="sell token"
-          aria-label="Pair sell token"
+          :placeholder="t('manualTrade.placeholders.sellToken')"
+          :aria-label="t('manualTrade.aria.pairSellToken')"
         />
         <span class="sep">→</span>
         <AssetSelect
           v-model="buyToken"
           class="sel-pair"
           :options="store.universe"
-          placeholder="buy token"
-          aria-label="Pair buy token"
+          :placeholder="t('manualTrade.placeholders.buyToken')"
+          :aria-label="t('manualTrade.aria.pairBuyToken')"
         />
-        <button class="btn" @click="refresh">Refresh</button>
+        <button class="btn" @click="refresh">{{ t("manualTrade.actions.refresh") }}</button>
       </div>
       <p v-if="store.marketError" class="violations">{{ store.marketError }}</p>
 
       <div class="topbook">
-        <div>Bid <span class="mono pos">{{ fmtNum(store.market?.bestBid, 7) }}</span></div>
-        <div>Ask <span class="mono neg">{{ fmtNum(store.market?.bestAsk, 7) }}</span></div>
+        <div>{{ t("manualTrade.bid") }} <span class="mono pos">{{ fmtNum(store.market?.bestBid, 7) }}</span></div>
+        <div>{{ t("manualTrade.ask") }} <span class="mono neg">{{ fmtNum(store.market?.bestAsk, 7) }}</span></div>
         <div>
-          Spread<InfoTip :text="TIPS.spread" label="What is spread?" />
+          {{ t("manualTrade.spread") }}<InfoTip :text="TIPS.spread" :label="t('manualTrade.aria.whatIsSpread')" />
           <span class="mono">
             {{ store.market?.spreadBps != null ? fmtNum(store.market.spreadBps, 1) + " bps" : "-" }}
           </span>
@@ -207,13 +205,13 @@ async function cancel(id: string): Promise<void> {
 
       <div class="book">
         <div>
-          <h3>Bids</h3>
+          <h3>{{ t("manualTrade.bids") }}</h3>
           <ul class="levels bids">
             <li
               v-for="(lv, i) in store.market?.bids ?? []"
               :key="'b' + i"
               class="book-level"
-              title="Click to fill this price"
+              :title="t('manualTrade.aria.clickToFill')"
               @click="fillFromBook(lv.price)"
             >
               <span class="px">{{ fmtNum(lv.price, 7) }}</span>
@@ -222,7 +220,7 @@ async function cancel(id: string): Promise<void> {
           </ul>
         </div>
         <div>
-          <h3>Asks</h3>
+          <h3>{{ t("manualTrade.asks") }}</h3>
           <ul class="levels asks">
             <li v-for="(lv, i) in store.market?.asks ?? []" :key="'a' + i">
               <span class="px">{{ fmtNum(lv.price, 7) }}</span>
@@ -232,10 +230,10 @@ async function cancel(id: string): Promise<void> {
         </div>
       </div>
 
-      <h3>Open orders</h3>
+      <h3>{{ t("manualTrade.openOrders") }}</h3>
       <ul class="levels">
         <li v-if="store.openOffers.length === 0" class="muted-row">
-          <span class="muted">(no resting orders)</span>
+          <span class="muted">{{ t("manualTrade.noRestingOrders") }}</span>
         </li>
         <li v-for="o in store.openOffers" :key="o.id" class="oo-row">
           <span class="px">{{ offerLabel(o.selling) }} → {{ offerLabel(o.buying) }}</span>
@@ -245,30 +243,30 @@ async function cancel(id: string): Promise<void> {
             :disabled="store.isReadOnly || store.killSwitch || cancelling === o.id"
             @click="cancel(o.id)"
           >
-            {{ cancelling === o.id ? "…" : "Cancel" }}
+            {{ cancelling === o.id ? "…" : t("manualTrade.actions.cancel") }}
           </button>
         </li>
       </ul>
     </section>
 
     <section class="panel">
-      <h2>Place order</h2>
+      <h2>{{ t("manualTrade.placeOrder") }}</h2>
       <div class="order-form">
         <div class="order-toggles">
           <div class="segmented order-type">
             <button class="seg" :class="{ active: orderType === 'limit' }" @click="orderType = 'limit'">
-              Limit
+              {{ t("manualTrade.limit") }}
             </button>
             <button class="seg" :class="{ active: orderType === 'market' }" @click="orderType = 'market'">
-              Market
+              {{ t("manualTrade.market") }}
             </button>
           </div>
-          <InfoTip :text="TIPS.orderType" label="Order type" placement="right" />
+          <InfoTip :text="TIPS.orderType" :label="t('manualTrade.aria.orderType')" placement="right" />
         </div>
 
         <div class="trade-summary">
           <div class="trade-side sell">
-            <span class="k">You sell</span>
+            <span class="k">{{ t("manualTrade.youSell") }}</span>
             <span class="v">
               {{ amountNum > 0 ? fmtNum(amountNum, 7) : "—" }}
               <span class="unit">{{ sellCode }}</span>
@@ -276,7 +274,7 @@ async function cancel(id: string): Promise<void> {
           </div>
           <div class="trade-arrow" aria-hidden="true">⇄</div>
           <div class="trade-side buy">
-            <span class="k">You buy</span>
+            <span class="k">{{ t("manualTrade.youBuy") }}</span>
             <span class="v">
               {{ youBuyAmount != null ? fmtNum(youBuyAmount, 7) : "—" }}
               <span class="unit">{{ buyCode }}</span>
@@ -286,28 +284,28 @@ async function cancel(id: string): Promise<void> {
 
         <div class="order-fields">
           <label class="order-field">
-            <span class="order-label">You sell</span>
+            <span class="order-label">{{ t("manualTrade.youSell") }}</span>
             <AssetSelect
               v-model="sellToken"
               :options="store.heldTokens"
-              placeholder="held token"
-              aria-label="Sell token"
+              :placeholder="t('manualTrade.placeholders.heldToken')"
+              :aria-label="t('manualTrade.aria.sellToken')"
             />
           </label>
           <label class="order-field">
-            <span class="order-label">You buy</span>
+            <span class="order-label">{{ t("manualTrade.youBuy") }}</span>
             <AssetSelect
               v-model="buyToken"
               :options="store.universe"
-              placeholder="token to receive"
-              aria-label="Buy token"
+              :placeholder="t('manualTrade.placeholders.tokenToReceive')"
+              :aria-label="t('manualTrade.aria.buyToken')"
             />
           </label>
         </div>
 
         <div class="order-fields">
           <label class="order-field">
-            <span class="order-label">Amount ({{ sellCode }})</span>
+            <span class="order-label">{{ t("manualTrade.amount") }} ({{ sellCode }})</span>
             <input
               v-model="amount"
               class="order-input"
@@ -315,16 +313,16 @@ async function cancel(id: string): Promise<void> {
               type="text"
               inputmode="decimal"
               placeholder="0.00"
-              aria-label="sell amount"
+              :aria-label="t('manualTrade.aria.sellAmount')"
             />
             <span v-if="insufficient" class="field-error">
-              Insufficient balance. You have {{ fmtNum(available) }} {{ sellCode }} available.
+              {{ t("manualTrade.insufficientBalance", { amount: fmtNum(available), code: sellCode }) }}
             </span>
-            <span v-else class="field-help">Available: {{ fmtNum(available) }} {{ sellCode }}</span>
+            <span v-else class="field-help">{{ t("manualTrade.available") }}: {{ fmtNum(available) }} {{ sellCode }}</span>
           </label>
           <label class="order-field" :class="{ hidden: orderType === 'market' }">
             <span class="order-label">
-              Price ({{ buyCode }}/{{ sellCode }})<InfoTip :text="TIPS.price" label="Price" />
+              {{ t("manualTrade.price") }} ({{ buyCode }}/{{ sellCode }})<InfoTip :text="TIPS.price" :label="t('manualTrade.aria.price')" />
             </span>
             <input
               v-model="limitPrice"
@@ -332,15 +330,15 @@ async function cancel(id: string): Promise<void> {
               type="text"
               inputmode="decimal"
               :placeholder="pricePlaceholder"
-              aria-label="limit price"
+              :aria-label="t('manualTrade.aria.limitPrice')"
               @keyup.enter="placeOrder"
             />
           </label>
           <p v-if="noMarketBook" class="violations market-note">
-            No live order book for this pair — switch to Limit or pick another pair.
+            {{ t("manualTrade.noLiveBook") }}
           </p>
           <p v-else-if="orderType === 'market'" class="muted market-note">
-            Market order — fills at the current best price
+            {{ t("manualTrade.marketOrderNote") }}
             <span class="mono">{{ pricePlaceholder }}</span>.
           </p>
         </div>
@@ -348,34 +346,34 @@ async function cancel(id: string): Promise<void> {
         <div class="order-fields">
           <label class="order-field">
             <span class="order-label">
-              Slippage tolerance (%)<InfoTip :text="TIPS.slippage" label="Slippage tolerance" />
+              {{ t("manualTrade.slippageTolerance") }}<InfoTip :text="TIPS.slippage" :label="t('manualTrade.aria.slippageTolerance')" />
             </span>
             <input
               v-model="slippagePct"
               class="order-input"
               type="text"
               inputmode="decimal"
-              :placeholder="store.limits ? `default ${store.limits.maxSlippageBps / 100}%` : 'e.g. 0.5'"
-              aria-label="slippage tolerance percent"
+              :placeholder="store.limits ? t('manualTrade.placeholders.defaultSlippage', { pct: store.limits.maxSlippageBps / 100 }) : t('manualTrade.placeholders.slippageExample')"
+              :aria-label="t('manualTrade.aria.slippageTolerancePercent')"
             />
           </label>
         </div>
 
         <button class="order-disclosure" type="button" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? "▾" : "▸" }} Advanced
+          {{ showAdvanced ? "▾" : "▸" }} {{ t("manualTrade.advanced") }}
         </button>
         <div v-if="showAdvanced" class="order-fields">
           <label class="order-field">
             <span class="order-label">
-              Target price<InfoTip :text="TIPS.target" label="Target price" />
+              {{ t("manualTrade.targetPrice") }}<InfoTip :text="TIPS.target" :label="t('manualTrade.aria.targetPrice')" />
             </span>
-            <input v-model="targetPrice" class="order-input" type="text" inputmode="decimal" placeholder="optional" aria-label="target price" />
+            <input v-model="targetPrice" class="order-input" type="text" inputmode="decimal" :placeholder="t('manualTrade.placeholders.optional')" :aria-label="t('manualTrade.aria.targetPrice')" />
           </label>
           <label class="order-field">
             <span class="order-label">
-              Invalidation price<InfoTip :text="TIPS.invalidation" label="Invalidation price" />
+              {{ t("manualTrade.invalidationPrice") }}<InfoTip :text="TIPS.invalidation" :label="t('manualTrade.aria.invalidationPrice')" />
             </span>
-            <input v-model="invalidationPrice" class="order-input" type="text" inputmode="decimal" placeholder="optional" aria-label="invalidation price" />
+            <input v-model="invalidationPrice" class="order-input" type="text" inputmode="decimal" :placeholder="t('manualTrade.placeholders.optional')" :aria-label="t('manualTrade.aria.invalidationPrice')" />
           </label>
         </div>
 
@@ -384,16 +382,14 @@ async function cancel(id: string): Promise<void> {
           :disabled="!orderValid || store.placingOrder"
           @click="placeOrder"
         >
-          {{ store.placingOrder ? "Placing..." : "Place Order" }}
+          {{ store.placingOrder ? t("manualTrade.placing") : t("manualTrade.placeOrderBtn") }}
         </button>
 
         <p v-if="orderResult" class="order-result" :class="orderResult.ok ? 'pos' : 'neg'">
           {{ orderResult.text }}
         </p>
         <p class="muted order-hint">
-          Manual orders bypass the AI size, daily-volume and exposure caps — trade
-          any amount you hold. The safety gates (slippage, balance, kill switch)
-          still apply.
+          {{ t("manualTrade.orderHint") }}
         </p>
       </div>
     </section>

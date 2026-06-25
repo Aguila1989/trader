@@ -4,9 +4,11 @@
 // Filter All/Trades/AI, pause/resume (freezes the list so it doesn't jump), and
 // click an entry to open it in the Logs tab.
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import type { LiveLogItem } from "../stores/trader";
 
+const { t } = useI18n();
 const store = useTraderStore();
 const open = ref(true);
 const paused = ref(false);
@@ -50,29 +52,29 @@ function desc(i: LiveLogItem): string {
   <div class="livelog" :class="{ collapsed: !open }">
     <div class="livelog-head">
       <button class="livelog-toggle" @click="open = !open">
-        {{ open ? "▾" : "▸" }} Live log
+        {{ open ? "▾" : "▸" }} {{ t("liveLog.title") }}
         <span class="muted livelog-count">({{ items.length }})</span>
       </button>
       <div v-if="open" class="livelog-controls">
-        <div class="segmented livelog-filter" role="group" aria-label="Live log filter">
-          <button class="seg" :class="{ active: filter === 'all' }" @click="filter = 'all'">All</button>
-          <button class="seg" :class="{ active: filter === 'trade' }" @click="filter = 'trade'">Trades</button>
+        <div class="segmented livelog-filter" role="group" :aria-label="t('liveLog.filterAria')">
+          <button class="seg" :class="{ active: filter === 'all' }" @click="filter = 'all'">{{ t("liveLog.filter.all") }}</button>
+          <button class="seg" :class="{ active: filter === 'trade' }" @click="filter = 'trade'">{{ t("liveLog.filter.trades") }}</button>
           <button class="seg" :class="{ active: filter === 'ai' }" @click="filter = 'ai'">AI</button>
         </div>
-        <button class="btn livelog-pause" @click="togglePause">{{ paused ? "Resume" : "Pause" }}</button>
+        <button class="btn livelog-pause" @click="togglePause">{{ paused ? t("liveLog.actions.resume") : t("liveLog.actions.pause") }}</button>
       </div>
     </div>
     <ul v-if="open" class="livelog-list">
-      <li v-if="items.length === 0" class="muted livelog-empty">No events yet.</li>
+      <li v-if="items.length === 0" class="muted livelog-empty">{{ t("liveLog.empty") }}</li>
       <li
         v-for="i in items"
         :key="i.entry.id"
         class="livelog-row"
-        title="Open in the Logs tab"
+        :title="t('liveLog.openInLogs')"
         @click="store.focusLog(i.stream, i.entry.id)"
       >
         <span class="mono livelog-time">{{ hhmmss(i.entry.ts) }}</span>
-        <span class="livelog-stream" :class="i.stream">{{ i.stream === "trade" ? "TRADE" : "AI" }}</span>
+        <span class="livelog-stream" :class="i.stream">{{ i.stream === "trade" ? t("liveLog.streamTrade") : "AI" }}</span>
         <span v-if="i.stream === 'trade'" class="ini-badge" :class="i.entry.initiator.toLowerCase()">
           {{ i.entry.initiator }}
         </span>

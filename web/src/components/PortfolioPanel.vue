@@ -8,12 +8,14 @@ import {
   Legend,
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, timeStr } from "../format";
 import type { PortfolioHolding } from "../types";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const PALETTE = [
@@ -53,10 +55,10 @@ function pct(h: PortfolioHolding): string {
 // the no-price fallback — never an XLM string under a "(USDC)" header. The
 // XLM-equivalent still surfaces in the prominent total ("≈ … XLM").
 function priceCell(h: PortfolioHolding): string {
-  return h.priceUsd != null ? fmtNum(h.priceUsd, 6) : "— (no price data)";
+  return h.priceUsd != null ? fmtNum(h.priceUsd, 6) : `— ${t("portfolio.noPriceData")}`;
 }
 function valueCell(h: PortfolioHolding): string {
-  return h.usdValue != null ? fmtNum(h.usdValue, 2) : "— (no price data)";
+  return h.usdValue != null ? fmtNum(h.usdValue, 2) : `— ${t("portfolio.noPriceData")}`;
 }
 function noPrice(h: PortfolioHolding): boolean {
   return h.usdValue == null;
@@ -127,26 +129,26 @@ const options: ChartOptions<"doughnut"> = {
 
 <template>
   <section class="panel">
-    <h2>Portfolio</h2>
+    <h2>{{ t("portfolio.title") }}</h2>
 
     <div class="pf-total-head">
       <span class="pf-total-value">
         {{ totalUsd != null ? fmtNum(totalUsd, 2) + " USDC" : fmtNum(totalXlm) + " XLM" }}
       </span>
       <span class="pf-total-sub">
-        Total Portfolio Value<template v-if="totalUsd != null"> · ≈ {{ fmtNum(totalXlm) }} XLM</template>
+        {{ t("portfolio.totalValue") }}<template v-if="totalUsd != null"> · ≈ {{ fmtNum(totalXlm) }} XLM</template>
       </span>
     </div>
     <div class="pf-meta">
-      <span class="muted">Updated {{ timeStr(updatedAt) }}</span>
-      <span v-if="store.portfolioLoading" class="muted">refreshing…</span>
+      <span class="muted">{{ t("portfolio.updated") }} {{ timeStr(updatedAt) }}</span>
+      <span v-if="store.portfolioLoading" class="muted">{{ t("portfolio.refreshing") }}</span>
       <button class="btn pf-refresh" :disabled="store.portfolioLoading" @click="refresh">
-        Refresh
+        {{ t("portfolio.refresh") }}
       </button>
     </div>
 
     <p v-if="rows.length === 0" class="muted">
-      No holdings yet. Fund the account or add a trustline to see values here.
+      {{ t("portfolio.empty") }}
     </p>
 
     <div v-else class="pf-body">
@@ -157,11 +159,11 @@ const options: ChartOptions<"doughnut"> = {
         <table class="pf-table">
           <thead>
             <tr>
-              <th>Token</th>
-              <th class="num">Balance</th>
-              <th class="num">Price (USDC)</th>
-              <th class="num">Value (USDC)</th>
-              <th class="num">% of Portfolio</th>
+              <th>{{ t("portfolio.col.token") }}</th>
+              <th class="num">{{ t("portfolio.col.balance") }}</th>
+              <th class="num">{{ t("portfolio.col.price") }} (USDC)</th>
+              <th class="num">{{ t("portfolio.col.value") }} (USDC)</th>
+              <th class="num">{{ t("portfolio.col.percent") }}</th>
             </tr>
           </thead>
           <tbody>

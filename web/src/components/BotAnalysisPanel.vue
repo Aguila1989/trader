@@ -4,26 +4,28 @@
 // editable config lands with the Settings store). The trading cap shown here
 // applies to AI trades only; manual orders bypass it.
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
-const TIPS = {
-  cap: "The maximum amount the AI is allowed to trade in a single order. Manual trades are not subject to this limit.",
-  cooldown: "Minimum time the AI must wait between opening new positions.",
-  exposure: "Cap on total open position value across all pairs (XLM-equivalent).",
-  risk: "Minimum reward-to-risk ratio the AI must state (target vs invalidation) to open a trade.",
-};
+const TIPS = computed(() => ({
+  cap: t("botAnalysis.tips.cap"),
+  cooldown: t("botAnalysis.tips.cooldown"),
+  exposure: t("botAnalysis.tips.exposure"),
+  risk: t("botAnalysis.tips.risk"),
+}));
 
 const aiBase = ref("XLM");
 const aiQuote = ref("");
 
 function ask(): void {
   if (!aiQuote.value.trim()) {
-    store.reasoning = "Pick a quote asset to analyze.";
+    store.reasoning = t("botAnalysis.pickQuote");
     return;
   }
   void store.analyze(aiBase.value.trim(), aiQuote.value.trim());
@@ -38,16 +40,16 @@ const configRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
   return [
-    ["Trading cap / order (std)", fmtNum(l.maxAmountPerTrade), TIPS.cap],
-    ["Trading cap / order (high tier)", fmtNum(l.maxAmountPerTradeHigh), TIPS.cap],
-    ["Max open exposure", fmtNum(l.maxOpenExposure), TIPS.exposure],
-    ["Per-pair exposure ×", String(l.pairExposureMultiplier), TIPS.exposure],
-    ["Cooldown between entries", `${l.cooldownSeconds} s`, TIPS.cooldown],
-    ["Min reward / risk", String(l.minRiskReward), TIPS.risk],
-    ["Max slippage", `${l.maxSlippageBps} bps`, ""],
-    ["Max daily volume", fmtNum(l.maxDailyVolume), ""],
-    ["Max trades / day", String(l.maxTradesPerDay), ""],
-    ["Max daily loss", fmtNum(l.maxDailyLoss), ""],
+    [t("botAnalysis.config.capStd"), fmtNum(l.maxAmountPerTrade), TIPS.value.cap],
+    [t("botAnalysis.config.capHigh"), fmtNum(l.maxAmountPerTradeHigh), TIPS.value.cap],
+    [t("botAnalysis.config.maxOpenExposure"), fmtNum(l.maxOpenExposure), TIPS.value.exposure],
+    [t("botAnalysis.config.perPairExposure"), String(l.pairExposureMultiplier), TIPS.value.exposure],
+    [t("botAnalysis.config.cooldown"), `${l.cooldownSeconds} s`, TIPS.value.cooldown],
+    [t("botAnalysis.config.minRiskReward"), String(l.minRiskReward), TIPS.value.risk],
+    [t("botAnalysis.config.maxSlippage"), `${l.maxSlippageBps} bps`, ""],
+    [t("botAnalysis.config.maxDailyVolume"), fmtNum(l.maxDailyVolume), ""],
+    [t("botAnalysis.config.maxTradesPerDay"), String(l.maxTradesPerDay), ""],
+    [t("botAnalysis.config.maxDailyLoss"), fmtNum(l.maxDailyLoss), ""],
   ] as const;
 });
 </script>
@@ -55,52 +57,48 @@ const configRows = computed(() => {
 <template>
   <div class="grid">
     <section class="panel">
-      <h2>AI analysis</h2>
+      <h2>{{ t("botAnalysis.aiAnalysis") }}</h2>
       <div class="market-controls">
-        <AssetSelect v-model="aiBase" class="sel-pair" :options="store.universe" aria-label="Analysis base asset" />
+        <AssetSelect v-model="aiBase" class="sel-pair" :options="store.universe" :aria-label="t('botAnalysis.baseAssetAria')" />
         <span class="sep">/</span>
         <AssetSelect
           v-model="aiQuote"
           class="sel-pair"
           :options="store.universe"
-          placeholder="quote token"
-          aria-label="Analysis quote asset"
+          :placeholder="t('botAnalysis.quoteTokenPlaceholder')"
+          :aria-label="t('botAnalysis.quoteAssetAria')"
         />
         <button class="btn primary" :disabled="store.analyzing || store.scanning" @click="ask">
-          Ask AI
+          {{ t("botAnalysis.askAi") }}
         </button>
         <button class="btn accent" :disabled="store.analyzing || store.scanning" @click="store.scanChain()">
-          {{ store.scanning ? "Scanning..." : "Scan chain" }}
+          {{ store.scanning ? t("botAnalysis.scanning") : t("botAnalysis.scanChain") }}
         </button>
       </div>
 
       <div class="reasoning" :class="{ loading: store.analyzing || store.scanning }">
-        {{
-          store.reasoning ||
-          "Pick a pair and hit “Ask AI”, or “Scan chain” to sweep the reputable-token universe."
-        }}
+        {{ store.reasoning || t("botAnalysis.reasoningPlaceholder") }}
       </div>
 
-      <h3>Tokens</h3>
+      <h3>{{ t("botAnalysis.tokens") }}</h3>
       <div class="token-list">
         <button
-          v-for="t in tokenChips"
-          :key="t.spec"
+          v-for="tok in tokenChips"
+          :key="tok.spec"
           class="btn token-chip"
-          :title="t.name || t.spec"
-          @click="store.openToken(t.spec)"
+          :title="tok.name || tok.spec"
+          @click="store.openToken(tok.spec)"
         >
-          {{ t.code }}
+          {{ tok.code }}
         </button>
-        <span v-if="tokenChips.length === 0" class="muted">(none)</span>
+        <span v-if="tokenChips.length === 0" class="muted">{{ t("botAnalysis.none") }}</span>
       </div>
     </section>
 
     <section class="panel">
-      <h2>AI trading config<InfoTip :text="TIPS.cap" label="Trading cap" /></h2>
+      <h2>{{ t("botAnalysis.tradingConfig") }}<InfoTip :text="TIPS.cap" :label="t('botAnalysis.tradingCap')" /></h2>
       <p class="muted cfg-note">
-        Applies to AI-initiated trades. Manual orders bypass the size caps.
-        Editing these live arrives with the settings update.
+        {{ t("botAnalysis.cfgNote") }}
       </p>
       <ul class="limits">
         <li v-for="[k, v, tip] in configRows" :key="k">

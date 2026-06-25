@@ -2,7 +2,10 @@
 // Small, non-blocking info popover. Shown on hover (desktop) and on tap
 // (mobile); dismisses on mouse-out or tap-outside. Deliberately NOT the native
 // title= attribute — those can't be styled and don't work well on touch.
-import { ref, watch, onBeforeUnmount, useId } from "vue";
+import { ref, watch, onBeforeUnmount, useId, computed } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -13,8 +16,11 @@ const props = withDefaults(
     /** Which edge the popover aligns to (avoids clipping near a panel edge). */
     placement?: "left" | "right";
   }>(),
-  { label: "More information", placement: "left" },
+  { label: "", placement: "left" },
 );
+
+// Fall back to the translated default when no explicit label is supplied.
+const ariaLabel = computed(() => props.label || t("infoTip.moreInformation"));
 
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
@@ -54,7 +60,7 @@ onBeforeUnmount(() =>
     <button
       type="button"
       class="infotip-icon"
-      :aria-label="label"
+      :aria-label="ariaLabel"
       :aria-describedby="open ? popId : undefined"
       :aria-expanded="open"
       @click.stop="toggle"

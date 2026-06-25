@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // Trade History sub-tab: paginated/filterable structured trade log + CSV export.
 import { computed, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, dateTimeStr, shortKey } from "../format";
 import type { TradeLogEntry } from "../types";
 
 const store = useTraderStore();
+const { t } = useI18n();
 
 const rows = ref<TradeLogEntry[]>([]);
 const total = ref(0);
@@ -106,49 +108,49 @@ function exportCsv(): void {
 <template>
   <div class="logs-pane">
     <div class="logs-filters">
-      <select v-model="initiator" aria-label="Initiator filter">
-        <option value="">All initiators</option>
-        <option value="MANUAL">Manual</option>
+      <select v-model="initiator" :aria-label="t('tradeLog.filters.initiatorAria')">
+        <option value="">{{ t("tradeLog.filters.allInitiators") }}</option>
+        <option value="MANUAL">{{ t("tradeLog.filters.manual") }}</option>
         <option value="AI">AI</option>
       </select>
-      <select v-model="action" aria-label="Action filter">
-        <option v-for="a in ACTIONS" :key="a || 'all'" :value="a">{{ a || "All actions" }}</option>
+      <select v-model="action" :aria-label="t('tradeLog.filters.actionAria')">
+        <option v-for="a in ACTIONS" :key="a || 'all'" :value="a">{{ a || t("tradeLog.filters.allActions") }}</option>
       </select>
-      <select v-model="token" aria-label="Token filter">
-        <option value="">All tokens</option>
+      <select v-model="token" :aria-label="t('tradeLog.filters.tokenAria')">
+        <option value="">{{ t("tradeLog.filters.allTokens") }}</option>
         <option v-for="t in store.universe" :key="t.spec" :value="t.spec">{{ t.code }}</option>
       </select>
-      <label class="logs-date">From <input v-model="from" type="date" /></label>
-      <label class="logs-date">To <input v-model="to" type="date" /></label>
-      <select v-model.number="limit" aria-label="Page size">
-        <option :value="50">50 / page</option>
-        <option :value="100">100 / page</option>
-        <option :value="200">200 / page</option>
+      <label class="logs-date">{{ t("tradeLog.filters.from") }} <input v-model="from" type="date" /></label>
+      <label class="logs-date">{{ t("tradeLog.filters.to") }} <input v-model="to" type="date" /></label>
+      <select v-model.number="limit" :aria-label="t('tradeLog.filters.pageSizeAria')">
+        <option :value="50">{{ t("tradeLog.filters.perPage", { n: 50 }) }}</option>
+        <option :value="100">{{ t("tradeLog.filters.perPage", { n: 100 }) }}</option>
+        <option :value="200">{{ t("tradeLog.filters.perPage", { n: 200 }) }}</option>
       </select>
-      <span class="muted page-info">{{ rangeStart }}-{{ rangeEnd }} of {{ total }}</span>
-      <button class="btn" :disabled="offset === 0" @click="prev">Prev</button>
-      <button class="btn" :disabled="rangeEnd >= total" @click="next">Next</button>
-      <button class="btn" :disabled="rows.length === 0" @click="exportCsv">Export CSV</button>
+      <span class="muted page-info">{{ rangeStart }}-{{ rangeEnd }} {{ t("tradeLog.of") }} {{ total }}</span>
+      <button class="btn" :disabled="offset === 0" @click="prev">{{ t("tradeLog.actions.prev") }}</button>
+      <button class="btn" :disabled="rangeEnd >= total" @click="next">{{ t("tradeLog.actions.next") }}</button>
+      <button class="btn" :disabled="rows.length === 0" @click="exportCsv">{{ t("tradeLog.actions.exportCsv") }}</button>
     </div>
 
     <div class="table-wrap">
       <table class="hist">
         <thead>
           <tr>
-            <th>Timestamp</th>
-            <th>Initiator</th>
-            <th>Token</th>
-            <th>Action</th>
-            <th class="num">Amount</th>
-            <th class="num">Price</th>
-            <th class="num">Total Value</th>
-            <th>Status</th>
-            <th>TX Hash</th>
+            <th>{{ t("tradeLog.columns.timestamp") }}</th>
+            <th>{{ t("tradeLog.columns.initiator") }}</th>
+            <th>{{ t("tradeLog.columns.token") }}</th>
+            <th>{{ t("tradeLog.columns.action") }}</th>
+            <th class="num">{{ t("tradeLog.columns.amount") }}</th>
+            <th class="num">{{ t("tradeLog.columns.price") }}</th>
+            <th class="num">{{ t("tradeLog.columns.totalValue") }}</th>
+            <th>{{ t("tradeLog.columns.status") }}</th>
+            <th>{{ t("tradeLog.columns.txHash") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
-            <td colspan="9" class="muted center">{{ loading ? "Loading…" : "No trade-log entries." }}</td>
+            <td colspan="9" class="muted center">{{ loading ? t("tradeLog.loading") : t("tradeLog.empty") }}</td>
           </tr>
           <tr v-for="r in rows" :key="r.id" :class="{ 'row-focus': store.logsFocus?.sub === 'trade' && store.logsFocus?.id === r.id }">
             <td class="mono">{{ dateTimeStr(r.ts) }}</td>

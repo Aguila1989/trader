@@ -12,6 +12,7 @@ import {
   Filler,
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { timeStr } from "../format";
 
@@ -25,6 +26,7 @@ ChartJS.register(
   Filler,
 );
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const labels = computed(() => store.evolution.map((p) => timeStr(p.ts)));
@@ -34,7 +36,7 @@ const volumeData = computed<ChartData<"line">>(() => ({
   labels: labels.value,
   datasets: [
     {
-      label: "Cumulative volume",
+      label: t("evolution.cumulativeVolume"),
       data: store.evolution.map((p) => p.cumulativeVolume),
       borderColor: "#5b8cff",
       backgroundColor: "rgba(91, 140, 255, 0.15)",
@@ -49,7 +51,7 @@ const tradesData = computed<ChartData<"line">>(() => ({
   labels: labels.value,
   datasets: [
     {
-      label: "Cumulative trades",
+      label: t("evolution.cumulativeTrades"),
       data: store.evolution.map((p) => p.cumulativeTrades),
       borderColor: "#2fbf71",
       backgroundColor: "rgba(47, 191, 113, 0.15)",
@@ -84,9 +86,9 @@ const options: ChartOptions<"line"> = {
 
 <template>
   <section class="panel">
-    <h2>Evolution</h2>
+    <h2>{{ t("evolution.title") }}</h2>
     <p v-if="!hasData" class="muted">
-      No submitted trades yet - charts fill in as trades execute.
+      {{ t("evolution.emptyState") }}
     </p>
     <div v-else class="charts">
       <div class="chart-box">

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, timeStr } from "../format";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const pnlClass = computed(() => {
@@ -14,36 +16,36 @@ const pnlClass = computed(() => {
 <template>
   <section class="panel stats">
     <div class="stat">
-      <span class="k">Account</span>
+      <span class="k">{{ t("stats.account") }}</span>
       <span class="v mono" :title="store.snapshot?.account ?? ''">
         {{ shortKey(store.snapshot?.account) }}
       </span>
     </div>
     <div class="stat">
-      <span class="k">Daily volume</span>
+      <span class="k">{{ t("stats.dailyVolume") }}</span>
       <span class="v">
         {{ fmtNum(store.daily?.volume) }} /
         {{ fmtNum(store.limits?.maxDailyVolume) }}
       </span>
     </div>
     <div class="stat">
-      <span class="k">Trades today</span>
+      <span class="k">{{ t("stats.tradesToday") }}</span>
       <span class="v">
         {{ store.daily?.tradeCount ?? 0 }} / {{ store.limits?.maxTradesPerDay ?? "-" }}
       </span>
     </div>
     <div class="stat">
-      <span class="k">Realized PnL</span>
+      <span class="k">{{ t("stats.realizedPnl") }}</span>
       <span
         class="v"
         :class="pnlClass"
-        :title="`Daily loss halts at -${fmtNum(store.limits?.maxDailyLoss)} XLM`"
+        :title="t('stats.dailyLossHalt', { n: fmtNum(store.limits?.maxDailyLoss) })"
       >
         {{ fmtNum(store.daily?.realizedPnl, 2) }} XLM
       </span>
     </div>
     <div class="stat">
-      <span class="k">Last trade</span>
+      <span class="k">{{ t("stats.lastTrade") }}</span>
       <span class="v">{{ timeStr(store.daily?.lastTradeAt) }}</span>
     </div>
   </section>

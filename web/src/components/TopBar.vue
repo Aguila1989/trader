@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 // Live total wallet value — USDC when priceable, else the XLM-equivalent.
@@ -21,8 +23,11 @@ const networkBadge = computed(() => {
     : { text: "TESTNET", cls: "live" };
 });
 
-const modeBadgeClass = computed(() =>
-  store.modeLabel === "AUTO-TRADE" ? "warn" : "",
+const modeBadgeClass = computed(() => (store.isAutoTrade ? "warn" : ""));
+// Localized mode badge (replaces the English store.modeLabel). The .badge CSS
+// uppercases it, matching the original "AUTO-TRADE" / "APPROVE EVERY TRADE".
+const modeLabel = computed(() =>
+  store.isAutoTrade ? t("topBar.autoTrade") : t("topBar.approveEveryTrade"),
 );
 
 // Providers with a configured API key — the dropdown's options. When none are
@@ -57,40 +62,40 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
 
 <template>
   <header class="topbar">
-    <div class="brand"><span class="logo">&#10022;</span> Stellar AI Trading Bot</div>
+    <div class="brand"><span class="logo">&#10022;</span> {{ t("topBar.brand") }}</div>
 
     <div class="badges">
       <span class="badge" :class="networkBadge.cls">{{ networkBadge.text }}</span>
-      <span class="badge" :class="modeBadgeClass">{{ store.modeLabel }}</span>
-      <span v-if="store.isPaper" class="badge warn">PAPER</span>
-      <span v-else-if="store.snapshot?.readOnly" class="badge warn">read-only</span>
+      <span class="badge" :class="modeBadgeClass">{{ modeLabel }}</span>
+      <span v-if="store.isPaper" class="badge warn">{{ t("topBar.paper") }}</span>
+      <span v-else-if="store.snapshot?.readOnly" class="badge warn">{{ t("topBar.readOnly") }}</span>
       <!-- AI provider picker: lists every provider that has a key configured.
            Switching is live; the model shown updates from the next snapshot. -->
       <select
         v-if="providers.length"
         class="ai-select"
         :value="activeProvider"
-        aria-label="AI provider"
-        title="Active AI provider (only providers with an API key appear here)"
+        :aria-label="t('topBar.aiProviderAria')"
+        :title="t('topBar.aiProviderTitle')"
         @change="onProviderChange"
       >
         <option v-for="p in providers" :key="p.id" :value="p.id">
           {{ p.label }} &middot; {{ p.model }}
         </option>
       </select>
-      <span v-else class="badge danger">no api key</span>
+      <span v-else class="badge danger">{{ t("topBar.noApiKey") }}</span>
       <span class="badge" :class="store.connected ? 'live' : 'danger'">
-        {{ store.connected ? "live" : "offline" }}
+        {{ store.connected ? t("topBar.connLive") : t("topBar.connOffline") }}
       </span>
       <span class="badge" :class="store.snapshot?.dbConnected ? 'live' : ''">
-        {{ store.snapshot?.dbConnected ? "db on" : "in-memory" }}
+        {{ store.snapshot?.dbConnected ? t("topBar.dbOn") : t("topBar.dbInMemory") }}
       </span>
       <span
         v-if="store.portfolio"
         class="value-pill"
-        :title="totalUsd != null ? `≈ ${fmtNum(totalXlm)} XLM` : 'Total wallet value'"
+        :title="totalUsd != null ? `≈ ${fmtNum(totalXlm)} XLM` : t('topBar.totalWalletValue')"
       >
-        <span class="vp-k">Value</span>
+        <span class="vp-k">{{ t("topBar.value") }}</span>
         <span class="vp-amt">{{ totalText }}</span>
       </span>
     </div>
@@ -98,21 +103,21 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
     <div class="controls">
       <!-- Master arm switch: observe / simulate / submit. Read-only, Paper and
            Live are mutually exclusive. Paper needs no key - it never submits. -->
-      <div class="segmented" role="group" aria-label="Trading access">
+      <div class="segmented" role="group" :aria-label="t('topBar.tradingAccessAria')">
         <button
           class="seg"
           :class="{ active: !store.isLive && !store.isPaper }"
           @click="setAccess('readonly')"
         >
-          Read-only
+          {{ t("topBar.readonlyBtn") }}
         </button>
         <button
           class="seg auto"
           :class="{ active: store.isPaper }"
-          title="Paper trading: fill proposals in SIMULATION against the live book. Forward-test the strategy with zero risk - no signing key needed."
+          :title="t('topBar.paperTitle')"
           @click="setAccess('paper')"
         >
-          Paper
+          {{ t("topBar.paperBtn") }}
         </button>
         <button
           class="seg live"
@@ -120,30 +125,30 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
           :disabled="!store.canGoLive"
           :title="
             store.canGoLive
-              ? 'Allow policy-passing trades to submit on-chain (REAL orders)'
-              : 'Add a STELLAR_SECRET to enable live trading'
+              ? t('topBar.liveTitleEnabled')
+              : t('topBar.liveTitleDisabled')
           "
           @click="setAccess('live')"
         >
-          Live trading
+          {{ t("topBar.liveBtn") }}
         </button>
       </div>
 
       <!-- The headline toggle: approve each trade vs. fully automated. -->
-      <div class="segmented" role="group" aria-label="Trading mode">
+      <div class="segmented" role="group" :aria-label="t('topBar.tradingModeAria')">
         <button
           class="seg"
           :class="{ active: !store.isAutoTrade }"
           @click="setMode(false)"
         >
-          Approve every trade
+          {{ t("topBar.approveEveryTrade") }}
         </button>
         <button
           class="seg auto"
           :class="{ active: store.isAutoTrade }"
           @click="setMode(true)"
         >
-          Auto-trade
+          {{ t("topBar.autoTrade") }}
         </button>
       </div>
 
@@ -152,7 +157,7 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
         :class="{ active: killOn }"
         @click="store.setKill(!killOn)"
       >
-        {{ killOn ? "Kill switch ON" : "Kill switch" }}
+        {{ killOn ? t("topBar.killSwitchOn") : t("topBar.killSwitch") }}
       </button>
     </div>
   </header>

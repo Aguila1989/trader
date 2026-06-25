@@ -4,6 +4,7 @@
 // cancel view of AI-set stops (with the AI's reasoning in notes). Trailing stops
 // are badged and show their live trail price + high-water mark.
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { api } from "../api";
 import { fmtNum, dateTimeStr } from "../format";
@@ -12,11 +13,11 @@ import InfoTip from "./InfoTip.vue";
 
 const props = defineProps<{ mode: "manual" | "ai" }>();
 const store = useTraderStore();
+const { t } = useI18n();
 
-const TIPS = {
-  trailing:
-    "A trailing stop moves up automatically as the price rises (locking in profit) but never moves down. Set the distance to trail by, in price units or percent.",
-};
+const TIPS = computed(() => ({
+  trailing: t("stopLoss.tips.trailing"),
+}));
 
 const stops = computed(() =>
   store.stopLosses.filter((s) => s.status === "active" && s.setBy === props.mode),
@@ -117,71 +118,71 @@ async function submit(): Promise<void> {
 
 <template>
   <section class="panel">
-    <h2>{{ mode === "manual" ? "Manual stop losses" : "AI stop losses" }}</h2>
+    <h2>{{ mode === "manual" ? t("stopLoss.titleManual") : t("stopLoss.titleAi") }}</h2>
 
     <template v-if="mode === 'manual'">
       <div class="segmented sl-type">
         <button class="seg" :class="{ active: stopType === 'regular' }" @click="stopType = 'regular'">
-          Regular Stop Loss
+          {{ t("stopLoss.regularStopLoss") }}
         </button>
         <button class="seg" :class="{ active: stopType === 'trailing' }" @click="stopType = 'trailing'">
-          Trailing Stop Loss<InfoTip :text="TIPS.trailing" label="Trailing stop loss" placement="right" />
+          {{ t("stopLoss.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('stopLoss.trailingStopLoss')" placement="right" />
         </button>
       </div>
 
       <div class="sl-form">
         <label class="order-field">
-          <span class="order-label">Token</span>
-          <AssetSelect v-model="base" :options="store.universe" placeholder="token" aria-label="Stop-loss token" />
+          <span class="order-label">{{ t("stopLoss.token") }}</span>
+          <AssetSelect v-model="base" :options="store.universe" :placeholder="t('stopLoss.tokenPlaceholder')" :aria-label="t('stopLoss.tokenAria')" />
         </label>
         <label class="order-field">
-          <span class="order-label">Quote</span>
-          <AssetSelect v-model="quote" :options="store.universe" aria-label="Stop-loss quote" />
+          <span class="order-label">{{ t("stopLoss.quote") }}</span>
+          <AssetSelect v-model="quote" :options="store.universe" :aria-label="t('stopLoss.quoteAria')" />
         </label>
 
         <label v-if="stopType === 'regular'" class="order-field">
-          <span class="order-label">Trigger price</span>
+          <span class="order-label">{{ t("stopLoss.triggerPrice") }}</span>
           <input v-model="trigger" class="order-input" type="text" inputmode="decimal" placeholder="0.00" @keyup.enter="submit" />
         </label>
 
         <template v-else>
           <div class="order-field">
-            <span class="order-label">Trail by</span>
+            <span class="order-label">{{ t("stopLoss.trailBy") }}</span>
             <div class="segmented sl-trailby">
               <button class="seg" :class="{ active: trailBy === 'pct' }" @click="trailBy = 'pct'">%</button>
-              <button class="seg" :class="{ active: trailBy === 'amount' }" @click="trailBy = 'amount'">Amount</button>
+              <button class="seg" :class="{ active: trailBy === 'amount' }" @click="trailBy = 'amount'">{{ t("stopLoss.amount") }}</button>
             </div>
           </div>
           <label class="order-field">
-            <span class="order-label">{{ trailBy === "pct" ? "Trail percent" : "Trail amount" }}</span>
+            <span class="order-label">{{ trailBy === "pct" ? t("stopLoss.trailPercent") : t("stopLoss.trailAmount") }}</span>
             <input
               v-model="trailValue"
               class="order-input"
               type="text"
               inputmode="decimal"
-              :placeholder="trailBy === 'pct' ? 'e.g. 5' : '0.00'"
+              :placeholder="trailBy === 'pct' ? t('stopLoss.trailPercentPlaceholder') : '0.00'"
               @keyup.enter="submit"
             />
           </label>
         </template>
 
-        <label class="sl-checkbox"><input v-model="sellAll" type="checkbox" /> Sell all</label>
+        <label class="sl-checkbox"><input v-model="sellAll" type="checkbox" /> {{ t("stopLoss.sellAll") }}</label>
         <label v-if="!sellAll" class="order-field">
-          <span class="order-label">Quantity</span>
+          <span class="order-label">{{ t("stopLoss.quantity") }}</span>
           <input v-model="quantity" class="order-input" type="text" inputmode="decimal" placeholder="0.00" />
         </label>
         <button class="btn primary" :disabled="!formValid || submitting" @click="submit">
-          {{ submitting ? "Setting…" : "Set stop loss" }}
+          {{ submitting ? t("stopLoss.setting") : t("stopLoss.setStopLoss") }}
         </button>
       </div>
 
       <p v-if="stopType === 'trailing' && initialTrailPrice != null" class="muted sl-preview">
-        Initial stop price: <span class="mono">{{ fmtNum(initialTrailPrice, 7) }}</span>
-        (current <span class="mono">{{ fmtNum(mid, 7) }}</span> − trail
+        {{ t("stopLoss.initialStopPrice") }}: <span class="mono">{{ fmtNum(initialTrailPrice, 7) }}</span>
+        ({{ t("stopLoss.current") }} <span class="mono">{{ fmtNum(mid, 7) }}</span> − {{ t("stopLoss.trail") }}
         {{ trailBy === "pct" ? trailValue + "%" : trailValue }})
       </p>
       <p v-else-if="stopType === 'trailing'" class="muted sl-preview">
-        Pick a pair with a live market and a trail distance to preview the initial stop.
+        {{ t("stopLoss.trailHint") }}
       </p>
     </template>
     <p v-if="mode === 'manual' && store.stopLossError" class="violations">{{ store.stopLossError }}</p>
@@ -189,23 +190,23 @@ async function submit(): Promise<void> {
     <table class="sl-table">
       <thead>
         <tr>
-          <th>Token</th>
-          <th class="num">Trigger</th>
-          <th class="num">High-water</th>
-          <th>Quantity</th>
-          <th v-if="mode === 'ai'">Reasoning</th>
-          <th>Created</th>
+          <th>{{ t("stopLoss.token") }}</th>
+          <th class="num">{{ t("stopLoss.trigger") }}</th>
+          <th class="num">{{ t("stopLoss.highWater") }}</th>
+          <th>{{ t("stopLoss.quantity") }}</th>
+          <th v-if="mode === 'ai'">{{ t("stopLoss.reasoning") }}</th>
+          <th>{{ t("stopLoss.created") }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="stops.length === 0">
-          <td :colspan="mode === 'ai' ? 7 : 6" class="muted">(none)</td>
+          <td :colspan="mode === 'ai' ? 7 : 6" class="muted">{{ t("stopLoss.none") }}</td>
         </tr>
         <tr v-for="s in stops" :key="s.id">
           <td :title="s.baseAsset">
             {{ code(s.baseAsset) }}/{{ code(s.quoteAsset) }}
-            <span v-if="s.isTrailing" class="tag trailing">trailing</span>
+            <span v-if="s.isTrailing" class="tag trailing">{{ t("stopLoss.trailingTag") }}</span>
           </td>
           <td class="num mono">
             {{ fmtNum(liveTrigger(s), 7) }}
@@ -213,12 +214,12 @@ async function submit(): Promise<void> {
             <span v-else-if="s.isTrailing && s.trailAmount != null" class="muted sl-traildesc">(−{{ fmtNum(s.trailAmount, 7) }})</span>
           </td>
           <td class="num mono">{{ s.isTrailing ? fmtNum(s.highWaterMark, 7) : "—" }}</td>
-          <td>{{ s.sellAll ? "all" : s.quantityToSell }}</td>
+          <td>{{ s.sellAll ? t("stopLoss.allQty") : s.quantityToSell }}</td>
           <td v-if="mode === 'ai'" class="muted sl-notes">{{ s.notes || "—" }}</td>
           <td class="muted">{{ dateTimeStr(s.createdAt) }}</td>
           <td>
             <button class="btn sl-cancel" :disabled="store.isReadOnly" @click="store.cancelStopLoss(s.id)">
-              Cancel
+              {{ t("stopLoss.cancel") }}
             </button>
           </td>
         </tr>

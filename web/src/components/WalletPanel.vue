@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, assetCode as code } from "../format";
 import type { UniverseToken } from "../types";
 import AssetSelect from "./AssetSelect.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const account = computed(() => store.snapshot?.account ?? null);
@@ -129,87 +131,84 @@ async function doSwap(): Promise<void> {
 
 <template>
   <section class="panel">
-    <h2>Wallet</h2>
+    <h2>{{ t("wallet.title") }}</h2>
     <p v-if="store.isReadOnly" class="muted w-note">
-      Receiving works in any mode. Sending, swapping and claiming require live
-      trading to be armed.
+      {{ t("wallet.readOnlyNote") }}
     </p>
 
-    <h3>Receive</h3>
+    <h3>{{ t("wallet.receive") }}</h3>
     <div v-if="account" class="w-receive">
       <span class="mono w-addr" :title="account">{{ shortKey(account) }}</span>
-      <button class="btn" @click="copyAddress">Copy address</button>
+      <button class="btn" @click="copyAddress">{{ t("wallet.copyAddress") }}</button>
     </div>
-    <p v-else class="muted">(no account configured)</p>
+    <p v-else class="muted">{{ t("wallet.noAccount") }}</p>
 
-    <h3>Send</h3>
+    <h3>{{ t("wallet.send") }}</h3>
     <div class="w-form">
-      <input v-model="sendTo" class="w-input wide" placeholder="destination G... or name*domain" />
+      <input v-model="sendTo" class="w-input wide" :placeholder="t('wallet.destinationPlaceholder')" />
       <AssetSelect
         v-model="sendAsset"
         :options="heldTokens"
-        placeholder="asset"
-        aria-label="Send asset"
+        :placeholder="t('wallet.assetPlaceholder')"
+        :aria-label="t('wallet.sendAssetAria')"
       />
-      <input v-model="sendAmount" class="w-input" inputmode="decimal" placeholder="amount" />
-      <input v-model="sendMemo" class="w-input" placeholder="memo (optional)" />
+      <input v-model="sendAmount" class="w-input" inputmode="decimal" :placeholder="t('wallet.amountPlaceholder')" />
+      <input v-model="sendMemo" class="w-input" :placeholder="t('wallet.memoPlaceholder')" />
       <button
         class="btn primary"
         :disabled="sending || store.isReadOnly || !sendValid"
         @click="send"
       >
-        {{ sending ? "Sending…" : "Send" }}
+        {{ sending ? t("wallet.sending") : t("wallet.send") }}
       </button>
     </div>
     <p v-if="sendInsufficient" class="violations">
-      Insufficient {{ store.tokenFor(sendAsset).code }}: you hold
-      {{ fmtNum(sendHeld) }}.
+      {{ t("wallet.insufficient", { code: store.tokenFor(sendAsset).code, held: fmtNum(sendHeld) }) }}
     </p>
 
-    <h3>Swap</h3>
+    <h3>{{ t("wallet.swap") }}</h3>
     <div class="w-form">
       <AssetSelect
         v-model="swapFrom"
         :options="heldTokens"
-        placeholder="from (held)"
-        aria-label="Swap from"
+        :placeholder="t('wallet.fromHeldPlaceholder')"
+        :aria-label="t('wallet.swapFromAria')"
       />
-      <input v-model="swapAmount" class="w-input" inputmode="decimal" placeholder="amount" />
+      <input v-model="swapAmount" class="w-input" inputmode="decimal" :placeholder="t('wallet.amountPlaceholder')" />
       <AssetSelect
         v-model="swapTo"
         :options="swapToOptions"
-        placeholder="to"
-        aria-label="Swap to"
+        :placeholder="t('wallet.toPlaceholder')"
+        :aria-label="t('wallet.swapToAria')"
       />
       <button
         class="btn"
         :disabled="quoting || !swapValid"
         @click="getQuote"
       >
-        {{ quoting ? "Quoting…" : "Quote" }}
+        {{ quoting ? t("wallet.quoting") : t("wallet.quote") }}
       </button>
       <button class="btn primary" :disabled="swapping || store.isReadOnly || !quote" @click="doSwap">
-        {{ swapping ? "Swapping…" : "Swap" }}
+        {{ swapping ? t("wallet.swapping") : t("wallet.swap") }}
       </button>
     </div>
     <p v-if="swapInsufficient" class="violations">
-      Insufficient {{ store.tokenFor(swapFrom).code }}: you hold
-      {{ fmtNum(swapHeld) }}.
+      {{ t("wallet.insufficient", { code: store.tokenFor(swapFrom).code, held: fmtNum(swapHeld) }) }}
     </p>
     <p v-if="quote" class="muted w-quote">
       ≈ <span class="mono">{{ fmtNum(quote.destAmount) }}</span> {{ code(quote.destAsset) }}
-      for {{ fmtNum(quote.sendAmount) }} {{ code(quote.sendAsset) }}
-      <span v-if="quote.path.length">via {{ quote.path.map(code).join(" → ") }}</span>
+      {{ t("wallet.for") }} {{ fmtNum(quote.sendAmount) }} {{ code(quote.sendAsset) }}
+      <span v-if="quote.path.length">{{ t("wallet.via") }} {{ quote.path.map(code).join(" → ") }}</span>
     </p>
 
-    <h3>Pending payments</h3>
+    <h3>{{ t("wallet.pendingPayments") }}</h3>
     <ul class="levels">
       <li v-if="store.claimables.length === 0" class="muted-row">
-        <span class="muted">(none)</span>
+        <span class="muted">{{ t("wallet.none") }}</span>
       </li>
       <li v-for="c in store.claimables" :key="c.id" class="w-claim">
         <span class="px">{{ fmtNum(c.amount) }} {{ code(c.asset) }}</span>
-        <button class="btn w-claim-btn" :disabled="store.isReadOnly" @click="store.claim(c.id)">Claim</button>
+        <button class="btn w-claim-btn" :disabled="store.isReadOnly" @click="store.claim(c.id)">{{ t("wallet.claim") }}</button>
       </li>
     </ul>
 

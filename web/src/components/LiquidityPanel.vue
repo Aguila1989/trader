@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import type { RankTrend, VolumeTrend } from "../types";
 import InfoTip from "./InfoTip.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
-const TIPS = {
-  liquidity:
-    "A measure of how actively a token is traded. Higher liquidity means easier entry and exit without moving the price.",
-  spread:
-    "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
-};
+const TIPS = computed(() => ({
+  liquidity: t("liquidity.tips.liquidity"),
+  spread: t("liquidity.tips.spread"),
+}));
 
 const recs = computed(() => store.liquidityRecs);
 
@@ -33,32 +33,31 @@ function trendClass(t?: string): string {
 
 <template>
   <section class="panel">
-    <h2>Liquidity scanner</h2>
+    <h2>{{ t("liquidity.title") }}</h2>
     <p class="muted scanner-note">
-      Top assets by 24h XLM-pair volume. Observe-only — it never trades; promote
-      a “watch” candidate by hand via SCAN_ASSETS / ASSET_WHITELIST.
+      {{ t("liquidity.scannerNote") }}
     </p>
 
     <p v-if="recs.length === 0" class="muted">
-      No data yet. Enable the scanner with
-      <span class="mono">LIQUIDITY_SCAN_INTERVAL_SECONDS</span> &gt; 0; trend data
-      fills in after ~24 hourly snapshots.
+      {{ t("liquidity.empty.before") }}
+      <span class="mono">LIQUIDITY_SCAN_INTERVAL_SECONDS</span> &gt; 0;
+      {{ t("liquidity.empty.after") }}
     </p>
 
     <table v-else class="liq-table">
       <thead>
         <tr>
           <th>#</th>
-          <th>Asset</th>
+          <th>{{ t("liquidity.cols.asset") }}</th>
           <th class="num">
-            24h vol (XLM)<InfoTip :text="TIPS.liquidity" label="Liquidity score" placement="right" />
+            {{ t("liquidity.cols.vol24h") }}<InfoTip :text="TIPS.liquidity" :label="t('liquidity.labels.liquidityScore')" placement="right" />
           </th>
           <th class="num">
-            Spread<InfoTip :text="TIPS.spread" label="Spread" placement="right" />
+            {{ t("liquidity.cols.spread") }}<InfoTip :text="TIPS.spread" :label="t('liquidity.labels.spread')" placement="right" />
           </th>
-          <th>Rank trend</th>
-          <th>Volume</th>
-          <th class="num">Consistency</th>
+          <th>{{ t("liquidity.cols.rankTrend") }}</th>
+          <th>{{ t("liquidity.cols.volume") }}</th>
+          <th class="num">{{ t("liquidity.cols.consistency") }}</th>
           <th></th>
         </tr>
       </thead>
@@ -84,7 +83,7 @@ function trendClass(t?: string): string {
             {{ r.consistencyPct != null ? r.consistencyPct + "%" : "-" }}
           </td>
           <td>
-            <span v-if="r.recommended" class="watch-badge">watch</span>
+            <span v-if="r.recommended" class="watch-badge">{{ t("liquidity.watch") }}</span>
           </td>
         </tr>
       </tbody>

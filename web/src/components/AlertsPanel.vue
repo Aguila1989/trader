@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, assetCode as code } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 const base = ref("XLM");
 const quote = ref("");
@@ -31,45 +33,44 @@ async function add(): Promise<void> {
 
 <template>
   <section class="panel">
-    <h2>Price alerts</h2>
+    <h2>{{ t("alerts.title") }}</h2>
     <p class="muted al-note">
-      Notify when a pair's mid crosses a price. Evaluated by the position
-      monitor each tick; grant notification permission for a desktop toast.
+      {{ t("alerts.note") }}
     </p>
     <div class="al-form">
       <AssetSelect
         v-model="base"
         :options="store.universe"
-        aria-label="Alert base asset"
+        :aria-label="t('alerts.baseAria')"
       />
       <AssetSelect
         v-model="quote"
         :options="store.universe"
-        placeholder="quote token"
-        aria-label="Alert quote asset"
+        :placeholder="t('alerts.quotePlaceholder')"
+        :aria-label="t('alerts.quoteAria')"
       />
       <select v-model="direction" class="al-input">
-        <option value="above">above</option>
-        <option value="below">below</option>
+        <option value="above">{{ t("alerts.above") }}</option>
+        <option value="below">{{ t("alerts.below") }}</option>
       </select>
-      <input v-model="price" class="al-input" inputmode="decimal" placeholder="price" />
+      <input v-model="price" class="al-input" inputmode="decimal" :placeholder="t('alerts.pricePlaceholder')" />
       <button
         class="btn primary"
         :disabled="busy || !quote.trim() || !(Number(price) > 0)"
         @click="add"
       >
-        {{ busy ? "Adding…" : "Add alert" }}
+        {{ busy ? t("alerts.adding") : t("alerts.addAlert") }}
       </button>
     </div>
     <p v-if="store.alertError" class="violations">{{ store.alertError }}</p>
     <ul class="levels">
       <li v-if="store.priceAlerts.length === 0" class="muted-row">
-        <span class="muted">(none)</span>
+        <span class="muted">{{ t("alerts.none") }}</span>
       </li>
       <li v-for="a in store.priceAlerts" :key="a.id" class="al-row">
         <span class="px">{{ code(a.baseAsset) }}/{{ code(a.quoteAsset) }}</span>
         <span class="mono">{{ a.direction }} {{ fmtNum(a.price, 7) }}</span>
-        <button class="btn al-cancel" @click="store.cancelAlert(a.id)">Cancel</button>
+        <button class="btn al-cancel" @click="store.cancelAlert(a.id)">{{ t("alerts.cancel") }}</button>
       </li>
     </ul>
   </section>

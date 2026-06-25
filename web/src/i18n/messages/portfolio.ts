@@ -1,0 +1,68 @@
+// Strings for the Portfolio panel (holdings table, totals, doughnut chart).
+// One namespace per file; the i18n index auto-merges this under `portfolio.*`.
+export default {
+  en: {
+    title: "Portfolio",
+    totalValue: "Total Portfolio Value",
+    updated: "Updated",
+    refreshing: "refreshing…",
+    refresh: "Refresh",
+    empty: "No holdings yet. Fund the account or add a trustline to see values here.",
+    noPriceData: "(no price data)",
+    col: {
+      token: "Token",
+      balance: "Balance",
+      price: "Price",
+      value: "Value",
+      percent: "% of Portfolio",
+    },
+  },
+  nl: {
+    title: "Portefeuille",
+    totalValue: "Totale portefeuillewaarde",
+    updated: "Bijgewerkt",
+    refreshing: "vernieuwen…",
+    refresh: "Vernieuwen",
+    empty: "Nog geen posities. Stort op de account of voeg een trustline toe om hier waarden te zien.",
+    noPriceData: "(geen prijsgegevens)",
+    col: {
+      token: "Token",
+      balance: "Saldo",
+      price: "Prijs",
+      value: "Waarde",
+      percent: "% van portefeuille",
+    },
+  },
+  fr: {
+    title: "Portefeuille",
+    totalValue: "Valeur totale du portefeuille",
+    updated: "Mis à jour",
+    refreshing: "actualisation…",
+    refresh: "Actualiser",
+    empty: "Aucune position pour le moment. Approvisionnez le compte ou ajoutez une ligne de confiance pour voir les valeurs ici.",
+    noPriceData: "(pas de données de prix)",
+    col: {
+      token: "Token",
+      balance: "Solde",
+      price: "Prix",
+      value: "Valeur",
+      percent: "% du portefeuille",
+    },
+  },
+  es: {
+    title: "Cartera",
+    totalValue: "Valor total de la cartera",
+    updated: "Actualizado",
+    refreshing: "actualizando…",
+    refresh: "Actualizar",
+    empty: "Aún no tienes posiciones. Deposita fondos en la cuenta o añade una línea de confianza para ver los valores aquí.",
+    noPriceData: "(sin datos de precio)",
+    col: {
+      token: "Token",
+      balance: "Saldo",
+      price: "Precio",
+      value: "Valor",
+      percent: "% de la cartera",
+    },
+  },
+};

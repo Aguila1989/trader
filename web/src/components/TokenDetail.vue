@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, dateTimeStr } from "../format";
 import TokenChart from "./TokenChart.vue";
@@ -7,25 +8,26 @@ import InfoTip from "./InfoTip.vue";
 import AssetSelect from "./AssetSelect.vue";
 
 const store = useTraderStore();
+const { t } = useI18n();
 
-const TIMEFRAMES = [
-  { key: "hour", label: "Hour" },
-  { key: "day", label: "Day" },
-  { key: "week", label: "Week" },
-  { key: "year", label: "Year" },
-] as const;
+const TIMEFRAMES = computed(
+  () =>
+    [
+      { key: "hour", label: t("tokenDetail.timeframe.hour") },
+      { key: "day", label: t("tokenDetail.timeframe.day") },
+      { key: "week", label: t("tokenDetail.timeframe.week") },
+      { key: "year", label: t("tokenDetail.timeframe.year") },
+    ] as const,
+);
 
-const TIPS = {
-  spread:
-    "The difference between the best buy and best sell price in the order book. A wider spread means higher implicit cost per trade.",
-  trigger:
-    "If the price reaches this level, the position is closed. For a long this is below the current price; for a short, above it — it caps the loss if the trade goes against you.",
-  trailing:
-    "A trailing stop moves toward profit automatically as the price moves in your favor (up for a long), but never the other way — locking in gains while giving the trade room.",
-};
+const TIPS = computed(() => ({
+  spread: t("tokenDetail.tips.spread"),
+  trigger: t("tokenDetail.tips.trigger"),
+  trailing: t("tokenDetail.tips.trailing"),
+}));
 
 function auditLabel(action: string): string {
-  return action === "trail_updated" ? "↑ trail updated" : action;
+  return action === "trail_updated" ? t("tokenDetail.audit.trailUpdated") : action;
 }
 function liveTrigger(s: { isTrailing?: boolean; currentTrailPrice?: string; triggerPrice: string }): string {
   return s.isTrailing && s.currentTrailPrice != null ? s.currentTrailPrice : s.triggerPrice;
@@ -122,16 +124,20 @@ const formValid = computed(() => {
 const triggerHint = computed(() => {
   const m = mid.value;
   if (stopType.value === "trailing") {
-    if (initialTrailPrice.value == null) return "Set a trail distance.";
-    return (
-      `Initial stop @ ${fmtNum(initialTrailPrice.value, 7)} (current ${fmtNum(m, 7)}); ` +
-      `trails ${effectiveSide.value === "long" ? "up" : "down"} as the price moves in your favor.`
-    );
+    if (initialTrailPrice.value == null) return t("tokenDetail.hint.setTrailDistance");
+    return t("tokenDetail.hint.trailingPreview", {
+      initial: fmtNum(initialTrailPrice.value, 7),
+      current: fmtNum(m, 7),
+      direction:
+        effectiveSide.value === "long"
+          ? t("tokenDetail.hint.up")
+          : t("tokenDetail.hint.down"),
+    });
   }
-  if (m == null) return "Set a trigger price.";
+  if (m == null) return t("tokenDetail.hint.setTriggerPrice");
   return effectiveSide.value === "long"
-    ? `Long stop: trigger must be BELOW the current price (${fmtNum(m, 7)}).`
-    : `Short stop: trigger must be ABOVE the current price (${fmtNum(m, 7)}).`;
+    ? t("tokenDetail.hint.longStop", { price: fmtNum(m, 7) })
+    : t("tokenDetail.hint.shortStop", { price: fmtNum(m, 7) });
 });
 
 async function submit(): Promise<void> {
@@ -192,18 +198,18 @@ onUnmounted(() => {
 <template>
   <section class="panel token-detail">
     <div class="detail-head">
-      <button class="btn" @click="store.closeToken()">← Back</button>
+      <button class="btn" @click="store.closeToken()">← {{ t("tokenDetail.back") }}</button>
       <h2>{{ code }} <span class="muted">/ {{ quoteCode }}</span></h2>
-      <span v-if="store.tokenLoading" class="muted refreshing">refreshing…</span>
+      <span v-if="store.tokenLoading" class="muted refreshing">{{ t("tokenDetail.refreshing") }}</span>
     </div>
 
     <p v-if="store.tokenError" class="violations">{{ store.tokenError }}</p>
 
     <div class="topbook">
-      <div>Bid <span class="mono pos">{{ fmtNum(store.tokenBook?.bestBid, 7) }}</span></div>
-      <div>Ask <span class="mono neg">{{ fmtNum(store.tokenBook?.bestAsk, 7) }}</span></div>
+      <div>{{ t("tokenDetail.bid") }} <span class="mono pos">{{ fmtNum(store.tokenBook?.bestBid, 7) }}</span></div>
+      <div>{{ t("tokenDetail.ask") }} <span class="mono neg">{{ fmtNum(store.tokenBook?.bestAsk, 7) }}</span></div>
       <div>
-        Spread<InfoTip :text="TIPS.spread" label="What is spread?" />
+        {{ t("tokenDetail.spread") }}<InfoTip :text="TIPS.spread" :label="t('tokenDetail.tips.spreadLabel')" />
         <span class="mono">
           {{ store.tokenBook?.spreadBps != null ? fmtNum(store.tokenBook.spreadBps, 1) + " bps" : "-" }}
         </span>
@@ -212,10 +218,10 @@ onUnmounted(() => {
 
     <div class="book">
       <div>
-        <h3>Bids</h3>
+        <h3>{{ t("tokenDetail.bids") }}</h3>
         <ul class="levels bids">
           <li v-if="!(store.tokenBook?.bids?.length)" class="muted-row">
-            <span class="muted">(empty)</span>
+            <span class="muted">{{ t("tokenDetail.empty") }}</span>
           </li>
           <li v-for="(lv, i) in store.tokenBook?.bids ?? []" :key="'b' + i">
             <span class="px">{{ fmtNum(lv.price, 7) }}</span>
@@ -224,10 +230,10 @@ onUnmounted(() => {
         </ul>
       </div>
       <div>
-        <h3>Asks</h3>
+        <h3>{{ t("tokenDetail.asks") }}</h3>
         <ul class="levels asks">
           <li v-if="!(store.tokenBook?.asks?.length)" class="muted-row">
-            <span class="muted">(empty)</span>
+            <span class="muted">{{ t("tokenDetail.empty") }}</span>
           </li>
           <li v-for="(lv, i) in store.tokenBook?.asks ?? []" :key="'a' + i">
             <span class="px">{{ fmtNum(lv.price, 7) }}</span>
@@ -238,7 +244,7 @@ onUnmounted(() => {
     </div>
 
     <div class="chart-head">
-      <h3>Price</h3>
+      <h3>{{ t("tokenDetail.price") }}</h3>
       <div class="segmented">
         <button
           v-for="tf in TIMEFRAMES"
@@ -254,41 +260,39 @@ onUnmounted(() => {
     <TokenChart :candles="store.tokenCandles" :timeframe="store.tokenTimeframe" />
 
     <!-- Stop loss ------------------------------------------------------- -->
-    <h3>Stop loss</h3>
+    <h3>{{ t("tokenDetail.stopLoss") }}</h3>
     <p v-if="store.killSwitch" class="violations sl-note">
-      Kill switch is ACTIVE — stops will not fire until it is released.
+      {{ t("tokenDetail.killSwitchActive") }}
     </p>
     <p v-else-if="store.isReadOnly" class="muted sl-note">
-      Live trading is off — a stop is recorded now but only executes once live
-      trading is armed.
+      {{ t("tokenDetail.readOnlyNote") }}
     </p>
     <p v-if="side === 'flat'" class="muted sl-note">
-      The bot holds no position on this pair yet — a stop here activates if/when
-      it opens one.
+      {{ t("tokenDetail.flatNote") }}
     </p>
 
     <div class="segmented sl-type">
       <button class="seg" :class="{ active: stopType === 'regular' }" @click="stopType = 'regular'">
-        Regular Stop Loss
+        {{ t("tokenDetail.regularStopLoss") }}
       </button>
       <button class="seg" :class="{ active: stopType === 'trailing' }" @click="stopType = 'trailing'">
-        Trailing Stop Loss<InfoTip :text="TIPS.trailing" label="Trailing stop loss" placement="right" />
+        {{ t("tokenDetail.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('tokenDetail.trailingStopLoss')" placement="right" />
       </button>
     </div>
 
     <div class="sl-form">
       <label class="order-field">
-        <span class="order-label">Asset</span>
+        <span class="order-label">{{ t("tokenDetail.asset") }}</span>
         <AssetSelect
           :model-value="store.selectedToken ?? ''"
           :options="pairOptions"
           locked
-          aria-label="Stop-loss asset"
+          :aria-label="t('tokenDetail.stopLossAsset')"
         />
       </label>
       <label v-if="stopType === 'regular'" class="order-field">
         <span class="order-label">
-          Trigger price ({{ quoteCode }})<InfoTip :text="TIPS.trigger" label="Trigger price" />
+          {{ t("tokenDetail.triggerPrice") }} ({{ quoteCode }})<InfoTip :text="TIPS.trigger" :label="t('tokenDetail.triggerPriceLabel')" />
         </span>
         <input
           v-model="trigger"
@@ -301,29 +305,29 @@ onUnmounted(() => {
       </label>
       <template v-else>
         <label class="order-field">
-          <span class="order-label">Trail by</span>
+          <span class="order-label">{{ t("tokenDetail.trailBy") }}</span>
           <div class="segmented sl-trailby">
             <button class="seg" :class="{ active: trailBy === 'pct' }" @click="trailBy = 'pct'">%</button>
-            <button class="seg" :class="{ active: trailBy === 'amount' }" @click="trailBy = 'amount'">Amount</button>
+            <button class="seg" :class="{ active: trailBy === 'amount' }" @click="trailBy = 'amount'">{{ t("tokenDetail.amount") }}</button>
           </div>
         </label>
         <label class="order-field">
-          <span class="order-label">{{ trailBy === "pct" ? "Trail percent" : `Trail amount (${quoteCode})` }}</span>
+          <span class="order-label">{{ trailBy === "pct" ? t("tokenDetail.trailPercent") : t("tokenDetail.trailAmount", { code: quoteCode }) }}</span>
           <input
             v-model="trailValue"
             class="order-input"
             type="text"
             inputmode="decimal"
-            :placeholder="trailBy === 'pct' ? 'e.g. 5' : '0.00'"
+            :placeholder="trailBy === 'pct' ? t('tokenDetail.trailPctPlaceholder') : '0.00'"
             @keyup.enter="submit"
           />
         </label>
       </template>
       <label class="sl-checkbox">
-        <input v-model="sellAll" type="checkbox" /> Sell all
+        <input v-model="sellAll" type="checkbox" /> {{ t("tokenDetail.sellAll") }}
       </label>
       <label v-if="!sellAll" class="order-field">
-        <span class="order-label">Quantity ({{ code }})</span>
+        <span class="order-label">{{ t("tokenDetail.quantity") }} ({{ code }})</span>
         <input
           v-model="quantity"
           class="order-input"
@@ -333,11 +337,11 @@ onUnmounted(() => {
         />
       </label>
       <label class="order-field sl-notes">
-        <span class="order-label">Notes (optional)</span>
-        <input v-model="notes" class="order-input" type="text" placeholder="reason / annotation" />
+        <span class="order-label">{{ t("tokenDetail.notesOptional") }}</span>
+        <input v-model="notes" class="order-input" type="text" :placeholder="t('tokenDetail.notesPlaceholder')" />
       </label>
       <button class="btn primary" :disabled="!formValid || submitting" @click="submit">
-        {{ submitting ? "Setting…" : "Set Stop Loss" }}
+        {{ submitting ? t("tokenDetail.setting") : t("tokenDetail.setStopLoss") }}
       </button>
     </div>
     <p
@@ -348,41 +352,41 @@ onUnmounted(() => {
     </p>
     <p v-if="store.stopLossError" class="violations">{{ store.stopLossError }}</p>
 
-    <h4 class="sl-sub">Active stop losses</h4>
+    <h4 class="sl-sub">{{ t("tokenDetail.activeStopLosses") }}</h4>
     <ul class="levels sl-list">
       <li v-if="pairStops.length === 0" class="muted-row">
-        <span class="muted">(none)</span>
+        <span class="muted">{{ t("tokenDetail.none") }}</span>
       </li>
       <li v-for="s in pairStops" :key="s.id" class="sl-row">
         <span class="mono">@ {{ fmtNum(liveTrigger(s), 7) }}</span>
-        <span v-if="s.isTrailing" class="tag trailing">trailing</span>
+        <span v-if="s.isTrailing" class="tag trailing">{{ t("tokenDetail.trailing") }}</span>
         <span v-if="s.isTrailing" class="muted sl-trailinfo mono">
-          HWM {{ fmtNum(s.highWaterMark, 7) }}<template v-if="mid != null"> · {{ fmtNum(Math.abs(mid - Number(liveTrigger(s))), 7) }} to trigger</template>
+          HWM {{ fmtNum(s.highWaterMark, 7) }}<template v-if="mid != null"> · {{ fmtNum(Math.abs(mid - Number(liveTrigger(s))), 7) }} {{ t("tokenDetail.toTrigger") }}</template>
         </span>
-        <span>{{ s.sellAll ? "all" : s.quantityToSell }}</span>
+        <span>{{ s.sellAll ? t("tokenDetail.all") : s.quantityToSell }}</span>
         <span class="tag" :class="s.setBy">{{ s.setBy }}</span>
         <span class="muted sl-created">{{ dateTimeStr(s.createdAt) }}</span>
-        <button class="btn sl-cancel" @click="store.cancelStopLoss(s.id)">Cancel</button>
+        <button class="btn sl-cancel" @click="store.cancelStopLoss(s.id)">{{ t("tokenDetail.cancel") }}</button>
       </li>
     </ul>
 
     <!-- Audit log (collapsible) ---------------------------------------- -->
     <button class="order-disclosure" type="button" @click="toggleAudit">
-      {{ showAudit ? "▾" : "▸" }} Audit log
+      {{ showAudit ? "▾" : "▸" }} {{ t("tokenDetail.auditLog") }}
     </button>
     <table v-if="showAudit" class="audit-table">
       <thead>
         <tr>
-          <th>Time</th>
-          <th>Action</th>
-          <th>By</th>
-          <th>Change</th>
-          <th>Note</th>
+          <th>{{ t("tokenDetail.col.time") }}</th>
+          <th>{{ t("tokenDetail.col.action") }}</th>
+          <th>{{ t("tokenDetail.col.by") }}</th>
+          <th>{{ t("tokenDetail.col.change") }}</th>
+          <th>{{ t("tokenDetail.col.note") }}</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="!store.stopLossAudit || store.stopLossAudit.rows.length === 0">
-          <td colspan="5" class="muted">No audit entries for this pair.</td>
+          <td colspan="5" class="muted">{{ t("tokenDetail.noAuditEntries") }}</td>
         </tr>
         <tr v-for="a in store.stopLossAudit?.rows ?? []" :key="a.id">
           <td class="muted">{{ dateTimeStr(a.ts) }}</td>

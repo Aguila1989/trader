@@ -1,0 +1,48 @@
+// PositionsPanel strings. One namespace per file; the i18n index auto-merges
+// every file in this folder under its filename as the namespace (positions.*).
+export default {
+  en: {
+    title: "Open positions",
+    note: "Net exposure from this system's own fills (signed-FIFO, quote-denominated).",
+    pair: "Pair",
+    side: "Side",
+    netQty: "Net qty",
+    avgPrice: "Avg price",
+    empty: "Flat - no open positions from trading.",
+    long: "LONG",
+    short: "SHORT",
+  },
+  nl: {
+    title: "Open posities",
+    note: "Netto-exposure uit de eigen fills van dit systeem (signed-FIFO, in quote uitgedrukt).",
+    pair: "Paar",
+    side: "Zijde",
+    netQty: "Netto hoeveelheid",
+    avgPrice: "Gem. prijs",
+    empty: "Vlak - geen open posities uit trading.",
+    long: "LONG",
+    short: "SHORT",
+  },
+  fr: {
+    title: "Positions ouvertes",
+    note: "Exposition nette issue des exécutions propres de ce système (signed-FIFO, exprimée en quote).",
+    pair: "Paire",
+    side: "Sens",
+    netQty: "Quantité nette",
+    avgPrice: "Prix moyen",
+    empty: "Plat - aucune position ouverte issue du trading.",
+    long: "LONG",
+    short: "SHORT",
+  },
+  es: {
+    title: "Posiciones abiertas",
+    note: "Exposición neta de las propias ejecuciones de este sistema (signed-FIFO, expresada en quote).",
+    pair: "Par",
+    side: "Lado",
+    netQty: "Cantidad neta",
+    avgPrice: "Precio medio",
+    empty: "Plano - sin posiciones abiertas del trading.",
+    long: "LONG",
+    short: "SHORT",
+  },
+};

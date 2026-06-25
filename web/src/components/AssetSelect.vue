@@ -4,8 +4,11 @@
 // user used to type an asset code. When `locked` it renders as a fixed,
 // non-interactive field (e.g. on a token's own detail page).
 import { ref, computed, watch, nextTick, onBeforeUnmount, useId } from "vue";
+import { useI18n } from "vue-i18n";
 import { shortKey } from "../format";
 import type { UniverseToken } from "../types";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -17,8 +20,12 @@ const props = withDefaults(
     placeholder?: string;
     ariaLabel?: string;
   }>(),
-  { locked: false, placeholder: "Select token", ariaLabel: "Asset" },
+  { locked: false, placeholder: undefined, ariaLabel: undefined },
 );
+
+// Default labels are translated; parents can still override via props.
+const placeholderLabel = computed(() => props.placeholder ?? t("assetSelect.selectToken"));
+const ariaLabelText = computed(() => props.ariaLabel ?? t("assetSelect.asset"));
 
 const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
 
@@ -120,7 +127,7 @@ onBeforeUnmount(() =>
       class="asset-trigger"
       :class="{ placeholder: !selected }"
       :disabled="locked"
-      :aria-label="ariaLabel"
+      :aria-label="ariaLabelText"
       aria-haspopup="listbox"
       :aria-expanded="open"
       @click="open ? close() : openPanel()"
@@ -129,7 +136,7 @@ onBeforeUnmount(() =>
         <span class="asset-code">{{ selected.code }}</span>
         <span v-if="selected.name" class="asset-name muted">{{ selected.name }}</span>
       </span>
-      <span v-else class="asset-ph muted">{{ placeholder }}</span>
+      <span v-else class="asset-ph muted">{{ placeholderLabel }}</span>
       <span v-if="!locked" class="asset-caret" aria-hidden="true">▾</span>
     </button>
 
@@ -143,13 +150,13 @@ onBeforeUnmount(() =>
         :aria-expanded="open"
         :aria-controls="listId"
         :aria-activedescendant="filtered[activeIndex] ? optId(activeIndex) : undefined"
-        :placeholder="`Search ${ariaLabel.toLowerCase()}…`"
-        :aria-label="`Search ${ariaLabel}`"
+        :placeholder="t('assetSelect.searchPlaceholder', { label: ariaLabelText.toLowerCase() })"
+        :aria-label="t('assetSelect.searchLabel', { label: ariaLabelText })"
         @keydown="onKeydown"
       />
       <ul :id="listId" class="asset-options" role="listbox">
         <li v-if="filtered.length === 0" class="asset-empty muted">
-          No matching token
+          {{ t("assetSelect.noMatch") }}
         </li>
         <li
           v-for="(o, i) in filtered"

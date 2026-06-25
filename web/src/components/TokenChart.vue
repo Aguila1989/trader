@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Line } from "vue-chartjs";
 import {
   Chart as ChartJS,
@@ -26,6 +27,8 @@ ChartJS.register(
 
 const props = defineProps<{ candles: Candle[]; timeframe: string }>();
 
+const { t } = useI18n();
+
 // Label by timeframe: intraday -> time, otherwise date. Note Horizon omits
 // empty buckets on thin markets, so spacing can be uneven - the labels make the
 // real bucket times visible rather than implying perfectly regular intervals.
@@ -43,7 +46,7 @@ const chartData = computed<ChartData<"line">>(() => ({
   labels: props.candles.map((c) => labelFor(c.time, props.timeframe)),
   datasets: [
     {
-      label: "Close",
+      label: t("tokenChart.close"),
       data: props.candles.map((c) => c.close),
       borderColor: "#5b8cff",
       backgroundColor: "rgba(91, 140, 255, 0.15)",
@@ -80,7 +83,7 @@ const options: ChartOptions<"line"> = {
 <template>
   <div class="chart-box">
     <p v-if="!hasData" class="muted">
-      No trade history for this market / timeframe.
+      {{ t("tokenChart.noHistory") }}
     </p>
     <Line v-else :data="chartData" :options="options" />
   </div>

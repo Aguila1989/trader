@@ -3,10 +3,12 @@
 // strip (all derived from existing store state), and the wallet overview
 // (PortfolioPanel). Everything here stays visible when the user switches tabs.
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import TopBar from "./TopBar.vue";
 import PortfolioPanel from "./PortfolioPanel.vue";
 
+const { t } = useI18n();
 const store = useTraderStore();
 
 const activeStops = computed(
@@ -26,14 +28,14 @@ const killOn = computed(() => store.killSwitch);
         <span class="bs-dot" :class="store.connected ? 'on' : 'off'" aria-hidden="true"></span>
         Stellar Horizon:
         <strong :class="store.connected ? 'pos' : 'neg'">
-          {{ store.connected ? "connected" : "disconnected" }}
+          {{ store.connected ? t("globalHeader.connected") : t("globalHeader.disconnected") }}
         </strong>
       </div>
       <div class="bs-item">
-        Active stop losses: <strong>{{ activeStops }}</strong>
-        <span v-if="killOn && activeStops > 0" class="neg bs-warn">(kill switch on — won't fire)</span>
+        {{ t("globalHeader.activeStopLosses") }}: <strong>{{ activeStops }}</strong>
+        <span v-if="killOn && activeStops > 0" class="neg bs-warn">{{ t("globalHeader.killSwitchWarn") }}</span>
       </div>
-      <div class="bs-item">Whitelisted tokens: <strong>{{ whitelistCount }}</strong></div>
+      <div class="bs-item">{{ t("globalHeader.whitelistedTokens") }}: <strong>{{ whitelistCount }}</strong></div>
     </section>
     <PortfolioPanel />
   </div>
