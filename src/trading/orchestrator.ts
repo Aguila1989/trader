@@ -6,6 +6,7 @@ import { checkPolicy, isRiskReducing } from "../policy/engine";
 import {
   effectiveLimits,
   minAutoConfidence,
+  minConfidenceScore,
   drawdownPausePct,
   riskProfileSummary,
 } from "../policy/riskProfile";
@@ -565,6 +566,7 @@ async function intake(
     provider: meta?.provider ?? aiProviderId(),
     model: meta?.model ?? aiModel(),
     confidence: p.confidence,
+    confidenceScore: p.confidenceScore,
     targetPrice: p.targetPrice,
     invalidationPrice: p.invalidationPrice,
     horizon: p.horizon,
@@ -596,6 +598,7 @@ async function intake(
     reasoning: p.reason,
     riskProfile: profile,
     ...(p.confidence ? { confidence: p.confidence } : {}),
+    ...(typeof p.confidenceScore === "number" ? { confidenceScore: p.confidenceScore } : {}),
     direction: p.side,
     price: p.limitPrice,
   });
@@ -699,32 +702,50 @@ async function intake(
     return current(proposal.id);
   }
 
-  // Conviction gate: even in auto-trade, a call that is not EXPLICITLY high- or
-  // medium-confidence is held for a human. This FAILS CLOSED on a missing or
-  // malformed confidence - parseProposal maps anything other than
-  // "low"/"medium"/"high" to undefined, and no client validates the tool
-  // schema's `required` fields, so a model (especially an OpenAI-compatible one
-  // like DeepSeek) can omit it. An undefined confidence must never auto-submit.
-  // TRADE FREQUENCY: the minimum AI confidence to auto-submit scales with the
-  // profile. LOW/MEDIUM require medium+ (current behavior); HIGH also allows
-  // "low". An undefined/malformed confidence ALWAYS fails closed (held).
-  const minConf = minAutoConfidence(profile); // "low" | "medium"
-  const conf = proposal.confidence;
-  const meetsConviction =
-    conf === "high" || conf === "medium" || (minConf === "low" && conf === "low");
-  if (!meetsConviction) {
-    const heldMsg = `Held for manual review: ${proposal.confidence ?? "unstated"} confidence (min to auto-submit: ${minConf}).`;
-    store.updateProposal(proposal.id, { status: "pending_approval" });
-    store.log("trade", `Proposal ${shortId(proposal.id)} ${heldMsg}`);
-    store.logAi({
-      eventType: "rejected",
-      baseAsset: proposal.baseAsset,
-      quoteAsset: proposal.quoteAsset,
-      reasoning: heldMsg,
-      riskProfile: profile,
-      ...(proposal.confidence ? { confidence: proposal.confidence } : {}),
-    });
-    return current(proposal.id);
+  // Conviction gate: even in auto-trade, a call below the confidence bar is held
+  // for a human. FAILS CLOSED on a missing/malformed confidence (parseProposal
+  // yields undefined; an undefined confidence must never auto-submit).
+  // EXPERT MODE: an exact numeric threshold (minConfidence). BASIC MODE: the
+  // legacy TRADE-FREQUENCY label gate (LOW/MEDIUM require medium+; HIGH also
+  // allows "low") — unchanged.
+  if (profile.expertMode && profile.expert) {
+    const threshold = minConfidenceScore(profile); // = expert.minConfidence
+    const score = proposal.confidenceScore;
+    if (typeof score !== "number" || score < threshold) {
+      const heldMsg = `Proposal skipped: confidence ${
+        typeof score === "number" ? score : "unstated"
+      } < threshold ${threshold}.`;
+      store.updateProposal(proposal.id, { status: "pending_approval" });
+      store.log("trade", `Proposal ${shortId(proposal.id)} ${heldMsg}`);
+      store.logAi({
+        eventType: "rejected",
+        baseAsset: proposal.baseAsset,
+        quoteAsset: proposal.quoteAsset,
+        reasoning: heldMsg,
+        riskProfile: profile,
+        ...(typeof score === "number" ? { confidenceScore: score } : {}),
+      });
+      return current(proposal.id);
+    }
+  } else {
+    const minConf = minAutoConfidence(profile); // "low" | "medium"
+    const conf = proposal.confidence;
+    const meetsConviction =
+      conf === "high" || conf === "medium" || (minConf === "low" && conf === "low");
+    if (!meetsConviction) {
+      const heldMsg = `Held for manual review: ${proposal.confidence ?? "unstated"} confidence (min to auto-submit: ${minConf}).`;
+      store.updateProposal(proposal.id, { status: "pending_approval" });
+      store.log("trade", `Proposal ${shortId(proposal.id)} ${heldMsg}`);
+      store.logAi({
+        eventType: "rejected",
+        baseAsset: proposal.baseAsset,
+        quoteAsset: proposal.quoteAsset,
+        reasoning: heldMsg,
+        riskProfile: profile,
+        ...(proposal.confidence ? { confidence: proposal.confidence } : {}),
+      });
+      return current(proposal.id);
+    }
   }
 
   store.log("trade", `Proposal ${shortId(proposal.id)} auto-approved.`);

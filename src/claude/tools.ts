@@ -101,10 +101,9 @@ export const tradingTools: AiTool[] = [
           description: "Short rationale the human operator will read.",
         },
         confidence: {
-          type: "string",
-          enum: ["low", "medium", "high"],
+          type: "number",
           description:
-            "Your conviction in this trade. Be honest - 'low' confidence trades are held for manual review even in auto-trade mode, and your calibration is tracked over time.",
+            "Your conviction in this trade as a SCORE from 0 to 100 (0 = none, 50 = coin-flip, 100 = highest). Be honest and well-calibrated: the backend enforces a minimum-confidence threshold (in Expert Mode an exact number you must clear; otherwise low scores are held for manual review even in auto-trade mode), and your calibration is tracked over time.",
         },
         target_price: {
           type: "string",

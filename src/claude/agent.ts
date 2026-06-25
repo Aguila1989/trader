@@ -38,6 +38,8 @@ export interface ProposedTrade {
   maxSlippageBps: number;
   reason: string;
   confidence?: TradeConfidence;
+  /** Numeric AI conviction 0-100 (the Expert-Mode gate compares against this). */
+  confidenceScore?: number;
   targetPrice?: string;
   invalidationPrice?: string;
   horizon?: string;
@@ -140,7 +142,7 @@ Hard rules:
 - Always ground your decision in fresh data before proposing: get_account_balances (holdings AND your open offers, for sizing and exposure), get_market (orderbook, spread, depth) AND get_price_history (trend, volatility, 24h range).
 - The data includes SERVER-COMPUTED indicators - use them instead of estimating: rsi14, ema8 vs ema24 (trend direction), atrPct/realizedVolPct (volatility), efficiencyRatio, rangePos (0=at the low, 1=at the high), volRatio, flowBuyPct (taker buy pressure) and a regime tag.
 - Adapt the playbook to the regime: "trending-up"/"trending-down" -> trade WITH the trend on pullbacks, never fade it; "ranging" -> mean-reversion entries near the range edges (rangePos near 0 or 1) only; "volatile" -> stand aside or halve your size, spreads and slippage eat the edge.
-- Set confidence honestly (low confidence is held for manual review), and ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and its position monitor manages exits from your invalidation level.
+- Set confidence as an honest, well-calibrated SCORE from 0 to 100 (50 = coin-flip, 80+ = strong conviction); the backend enforces a minimum-confidence threshold and holds low scores for manual review. ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and its position monitor manages exits from your invalidation level.
 - The backend also blocks entries when the spread exceeds ${config.limits.maxEntrySpreadBps}bps or 24h volume is under ${config.limits.minVolume24h} - don't waste proposals on illiquid books.
 - Check your open offers first: don't duplicate an order you already have resting, and account for capital already committed.
 - A "Your trading so far" summary may precede the request: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
@@ -252,7 +254,7 @@ Hard rules:
 - Each scanned market lists a 24h summary (last price, 24hΔ, range, 7dΔ/7dRange where available, vol24h, bid/ask/spread/depth) plus SERVER-COMPUTED indicators: regime, rsi, atrPct (per-candle volatility %), rangePos (0=at the low, 1=at the high) and flow (taker buy %). Trust these numbers over mental math, and use the 7d range for real support/resistance levels the 24h window can't show.
 - Adapt the playbook to each market's regime tag: "trending-up"/"trending-down" -> only trade WITH the trend (e.g. buy a pullback in an uptrend), never fade it; "ranging" -> mean-reversion entries near the range edges only (rangePos near 0 or 1); "volatile" -> stand aside or halve size; "n/a" (no tag) -> too little history, skip.
 - The backend BLOCKS entries when spread > ${config.limits.maxEntrySpreadBps}bps or 24h volume < ${config.limits.minVolume24h} XLM - don't waste proposals on those books.
-- Set confidence honestly on every proposal (low confidence is held for manual review), and ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and manages exits from your invalidation level.
+- Set confidence as an honest 0-100 SCORE on every proposal (50 = coin-flip, 80+ = strong conviction); the backend enforces a minimum-confidence threshold and holds low scores for manual review. ALWAYS give target_price and invalidation_price bracketing your entry: the backend enforces a minimum reward/risk of ${config.limits.minRiskReward} and manages exits from your invalidation level.
 - Your balances and open (resting) offers are listed above; don't duplicate an order you already have working, and account for capital already committed.
 - A "Your trading so far" summary may precede the data: respect the positions you already hold (don't blindly add to the same exposure - consider taking profit or cutting a loser instead), learn from your recent calls' outcomes, and trade more conservatively as the loss budget burns.
 - Call get_account_balances to refresh holdings/offers and ground sizing. Before proposing on a pair, call get_price_history for its candles and get_market for deeper orderbook detail. Don't chase a parabolic 24hΔ or a thin, wide-spread book.
@@ -537,6 +539,49 @@ async function runTool(
   }
 }
 
+/** Map a 0-100 confidence score to the legacy label bucket (for label-based
+ *  UI/gates that still read `confidence`). */
+export function scoreToLabel(n: number): TradeConfidence {
+  if (n >= 80) return "high";
+  if (n >= 60) return "medium";
+  return "low";
+}
+
+/** Approximate numeric score for a legacy label (back-compat fallback). */
+export function labelToScore(l: TradeConfidence): number {
+  return l === "high" ? 90 : l === "medium" ? 70 : 45;
+}
+
+/**
+ * Accept the new numeric 0-100 confidence OR a legacy "low"/"medium"/"high"
+ * label, and return BOTH a clamped score and a derived label. Returns {} when
+ * the value is missing/unparseable (the conviction gate then fails closed).
+ */
+export function coerceConfidence(raw: unknown): {
+  score?: number;
+  label?: TradeConfidence;
+} {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const n = Math.round(Math.min(100, Math.max(0, raw)));
+    return { score: n, label: scoreToLabel(n) };
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim().toLowerCase();
+    if (s === "low" || s === "medium" || s === "high") {
+      const label = s as TradeConfidence;
+      return { score: labelToScore(label), label };
+    }
+    if (s !== "") {
+      const n = Number(s);
+      if (Number.isFinite(n)) {
+        const c = Math.round(Math.min(100, Math.max(0, n)));
+        return { score: c, label: scoreToLabel(c) };
+      }
+    }
+  }
+  return {};
+}
+
 /** Exported for unit testing the fail-safe post_only / field parsing. */
 export function parseProposal(input: unknown): ProposedTrade | null {
   const o = input as Record<string, unknown>;
@@ -554,10 +599,10 @@ export function parseProposal(input: unknown): ProposedTrade | null {
     }
   };
 
-  const confidence =
-    o.confidence === "low" || o.confidence === "medium" || o.confidence === "high"
-      ? o.confidence
-      : undefined;
+  // Confidence is now a 0-100 SCORE; we still accept a legacy low/medium/high
+  // label for backward compatibility and derive the score from it (and a label
+  // from the score, so label-based code/UI keeps working).
+  const { score: confidenceScore, label: confidence } = coerceConfidence(o.confidence);
   // Fail-safe to MAKER: a model that omits post_only gets the cheaper/safer
   // resting path that captures the spread; only an explicit false opts into
   // crossing the spread as a taker.
@@ -578,6 +623,7 @@ export function parseProposal(input: unknown): ProposedTrade | null {
     maxSlippageBps: Number(o.max_slippage_bps ?? 0),
     reason: String(o.reason ?? ""),
     confidence,
+    confidenceScore,
     targetPrice: optNum(o.target_price),
     invalidationPrice: optNum(o.invalidation_price),
     horizon: o.horizon != null ? String(o.horizon).slice(0, 16) : undefined,
