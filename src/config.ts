@@ -291,6 +291,14 @@ export const config = {
     maxTradesPerDay: num("MAX_TRADES_PER_DAY", 100),
     maxDailyLoss: num("MAX_DAILY_LOSS", 25),
     maxSlippageBps: num("MAX_SLIPPAGE_BPS", 50),
+    /**
+     * Hard ceiling (bps) on the client-supplied slippage for a wallet SWAP
+     * (/api/swap path payment). Decoupled from the tight trade-slippage cap
+     * above so disposing an illiquid token to XLM can tolerate a wider spread,
+     * while still bounding destMin away from 0 (SEC-07: an unbounded value would
+     * accept any fill). Default 1000 bps = 10%.
+     */
+    maxSwapSlippageBps: num("MAX_SWAP_SLIPPAGE_BPS", 1000),
     cooldownSeconds: num("TRADE_COOLDOWN_SECONDS", 60),
     /**
      * Entry-quality gate: refuse to OPEN risk when the live top-of-book spread

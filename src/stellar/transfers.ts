@@ -169,9 +169,15 @@ export async function swap(
 ): Promise<{ hash: string; destMin: string; quoted: string }> {
   const quote = await quoteSwap(input.sendAsset, input.sendAmount, input.destAsset);
   if (!quote) throw new Error("No swap path found for this pair/size.");
-  const slip = Math.max(0, input.slippageBps ?? config.limits.maxSlippageBps) / 10_000;
+  // SEC-07: clamp the client slippage to [0, maxSwapSlippageBps]. An unbounded
+  // value (e.g. 10000 bps) would drive destMin to 0 - an accept-any-fill swap.
+  const reqBps = Math.max(0, input.slippageBps ?? config.limits.maxSlippageBps);
+  const slip = Math.min(reqBps, config.limits.maxSwapSlippageBps) / 10_000;
   // Floor to 7dp so destMin is never rounded UP into a looser bound.
   const destMin = formatAmount(Math.floor(Number(quote.destAmount) * (1 - slip) * 1e7) / 1e7);
+  if (!(Number(destMin) > 0)) {
+    throw new Error("Computed destMin is zero - refusing a swap that would accept any fill.");
+  }
   const sendAsset = parseAsset(input.sendAsset);
   const destAsset = parseAsset(input.destAsset);
   const path: Asset[] = quote.path.map((s) => parseAsset(s));

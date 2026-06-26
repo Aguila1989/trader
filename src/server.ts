@@ -421,6 +421,14 @@ app.post("/api/swap", async (req, res) => {
     res.status(400).json({ error: "sendAmount must be a positive number" });
     return;
   }
+  // SEC-07: reject an out-of-range slippage at the route (the swap() backstop
+  // also clamps). An unbounded value would let destMin fall to 0.
+  if (slippageBps != null && (slippageBps < 0 || slippageBps > config.limits.maxSwapSlippageBps)) {
+    res.status(400).json({
+      error: `slippageBps must be between 0 and ${config.limits.maxSwapSlippageBps}.`,
+    });
+    return;
+  }
   // SEC-01: both legs must be whitelisted (the swap acquires destAsset, like a
   // trade). No egress cap: a strict-send swap converts the wallet's own assets
   // to-self rather than sending value to an external destination.
@@ -429,6 +437,24 @@ app.post("/api/swap", async (req, res) => {
     const result = await runExclusive(() =>
       swap({ sendAsset, sendAmount, destAsset, slippageBps }),
     );
+    // SEC-08: book the swap to the structured trade log so wallet egress is
+    // audited (it previously emitted only an ad-hoc text line). The FIFO PnL
+    // ledger is deliberately left untouched - it tracks the bot's own
+    // round-trips with a known cost basis, which a swap of arbitrary held
+    // assets does not have.
+    const swapPx =
+      Number(sendAmount) > 0 ? (Number(result.quoted) / Number(sendAmount)).toFixed(7) : "0";
+    store.logTrade({
+      baseAsset: sendAsset,
+      quoteAsset: destAsset,
+      action: "SWAP",
+      amount: sendAmount,
+      price: swapPx,
+      totalValue: result.quoted,
+      initiator: "MANUAL",
+      status: "FILLED",
+      txHash: result.hash,
+    });
     store.log(
       "trade",
       `Swap: ${sendAmount} ${sendAsset.split(":")[0]} -> ${destAsset.split(":")[0]} (min ${result.destMin}, tx ${result.hash}).`,
