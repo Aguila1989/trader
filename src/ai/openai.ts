@@ -70,16 +70,31 @@ export class OpenAICompatibleProvider implements AiProvider {
       })),
     };
 
-    const res = await fetch(`${this.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = (await res.json().catch(() => ({}))) as ChatCompletionResponse;
+    // SEC-17: bound the call. A hung/slow provider must not stall the autopilot
+    // loop (and the whole process) indefinitely - abort after 60s.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    let res: Awaited<ReturnType<typeof fetch>>;
+    let data: ChatCompletionResponse;
+    try {
+      res = await fetch(`${this.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      data = (await res.json().catch(() => ({}))) as ChatCompletionResponse;
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(`${this.id} API call timed out after 60s.`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       throw new Error(
         data.error?.message || `${this.id} API error: ${res.status} ${res.statusText}`,
