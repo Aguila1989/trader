@@ -1,4 +1,5 @@
 import express, { type Response } from "express";
+import helmet from "helmet";
 import { existsSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -58,7 +59,45 @@ const webDist = join(here, "..", "web", "dist");
 const webBuilt = existsSync(join(webDist, "index.html"));
 
 const app = express();
-app.use(express.json());
+// SEC-13: security headers. The stated priority is anti-clickjacking — even on a
+// loopback bind a malicious page can frame the dashboard — so X-Frame-Options:
+// DENY + CSP `frame-ancestors 'none'` lead. The rest is a self-contained,
+// same-origin policy for the bundled SPA (inline styles are used by Vue/charts,
+// hence 'unsafe-inline' for style only). We deliberately OMIT
+// upgrade-insecure-requests so the default http loopback dashboard still loads.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": ["'self'"],
+        "worker-src": ["'self'", "blob:"],
+        "frame-ancestors": ["'none'"],
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"],
+      },
+    },
+    frameguard: { action: "deny" },
+    // HSTS is meaningful only behind TLS; browsers ignore it over plain http
+    // (the loopback default), so leaving helmet's default on is harmless.
+  }),
+);
+// SEC-26: bound the JSON body so an oversized payload can't exhaust memory
+// before auth even runs. The largest legitimate body (a risk profile / settings
+// change) is well under 16kb.
+app.use(express.json({ limit: "16kb" }));
+// SEC-04: never leak the dashboard token (or any URL) to third parties via the
+// Referer header on outbound navigations/subresources.
+app.use((_req, res, next) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
 if (webBuilt) app.use(express.static(webDist));
 
 // CSRF guard: reject cross-site STATE-CHANGING requests to /api. The decision
