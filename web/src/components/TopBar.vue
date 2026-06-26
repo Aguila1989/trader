@@ -67,6 +67,10 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
     <div class="badges">
       <span class="badge" :class="networkBadge.cls">{{ networkBadge.text }}</span>
       <span class="badge" :class="modeBadgeClass">{{ modeLabel }}</span>
+      <!-- Feature 1: AI trading master switch state, always visible. -->
+      <span class="badge" :class="store.aiEnabled ? 'live' : 'danger'">
+        {{ store.aiEnabled ? t("common.ai.active") : t("common.ai.paused") }}
+      </span>
       <span v-if="store.isPaper" class="badge warn">{{ t("topBar.paper") }}</span>
       <span v-else-if="store.snapshot?.readOnly" class="badge warn">{{ t("topBar.readOnly") }}</span>
       <!-- AI provider picker: lists every provider that has a key configured.

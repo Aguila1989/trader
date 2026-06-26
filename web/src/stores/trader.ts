@@ -172,6 +172,8 @@ export const useTraderStore = defineStore("trader", () => {
   const daily = computed(() => snapshot.value?.daily ?? null);
   const limits = computed(() => snapshot.value?.limits ?? null);
   const isAutoTrade = computed(() => snapshot.value?.autoApprove ?? false);
+  /** Feature 1: AI trading master switch (defaults ON until the snapshot loads). */
+  const aiEnabled = computed(() => snapshot.value?.aiEnabled ?? true);
   /** Live trading armed (trades may submit on-chain). */
   const isLive = computed(() => snapshot.value?.liveTrading ?? false);
   /** Paper trading armed (simulated fills, no on-chain submit). */
@@ -388,6 +390,10 @@ export const useTraderStore = defineStore("trader", () => {
   /** Update the AI risk profile; the SSE 'state' push refreshes the snapshot. */
   async function setRiskProfile(profile: RiskProfile): Promise<void> {
     await api.setRiskProfile(profile);
+  }
+  /** Feature 1: pause/resume the AI trading loop. */
+  async function setAiEnabled(enabled: boolean): Promise<void> {
+    await api.setAiEnabled(enabled);
   }
   async function setLiveTrading(enabled: boolean): Promise<void> {
     await api.setLiveTrading(enabled);
@@ -917,8 +923,10 @@ export const useTraderStore = defineStore("trader", () => {
     killSwitch,
     modeLabel,
     isPaper,
+    aiEnabled,
     init,
     setAutoApprove,
+    setAiEnabled,
     riskProfile,
     setRiskProfile,
     setLiveTrading,

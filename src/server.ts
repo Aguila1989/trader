@@ -207,6 +207,20 @@ function ensureEgressAllowed(
   return true;
 }
 
+/**
+ * Feature 1: gate the AI entry points when the AI master switch is paused. The
+ * autopilot loop already self-skips; this stops manual Ask-AI / Scan too.
+ */
+function ensureAiEnabled(res: Response): boolean {
+  if (!store.aiEnabled) {
+    res.status(409).json({
+      error: "AI trading is paused. Enable it in the Bot Trading tab to analyze or scan.",
+    });
+    return false;
+  }
+  return true;
+}
+
 // Current non-native trustlines (asset, balance, limit). Read-only.
 app.get("/api/trustlines", async (_req, res) => {
   const pub = signerPublicKey();
@@ -832,6 +846,7 @@ app.post("/api/analyze", async (req, res) => {
     res.status(400).json({ error: "quote is required" });
     return;
   }
+  if (!ensureAiEnabled(res)) return;
   if (!aiReady()) {
     res.status(400).json({ error: "No AI API key configured" });
     return;
@@ -846,6 +861,7 @@ app.post("/api/analyze", async (req, res) => {
 
 // Scan the curated universe of reputable tokens (each vs XLM) in one pass.
 app.post("/api/scan", async (_req, res) => {
+  if (!ensureAiEnabled(res)) return;
   if (!aiReady()) {
     res.status(400).json({ error: "No AI API key configured" });
     return;
@@ -1087,6 +1103,12 @@ app.post("/api/live-trading", (req, res) => {
 app.post("/api/paper-trading", (req, res) => {
   store.setPaperTrading(Boolean(req.body?.enabled));
   res.json({ paperTrading: store.paperTrading, liveTrading: store.liveTrading });
+});
+
+// Feature 1: AI trading master switch (pause/resume the AI loop). Persisted.
+app.post("/api/ai-enabled", (req, res) => {
+  store.setAiEnabled(Boolean(req.body?.enabled));
+  res.json({ aiEnabled: store.aiEnabled });
 });
 
 // Switch the active AI provider at runtime. Only providers with a configured

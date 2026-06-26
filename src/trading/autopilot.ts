@@ -31,6 +31,10 @@ async function runOnce(): Promise<void> {
       store.log("info", "Auto-pilot: kill switch active - skipping this scan.");
       return;
     }
+    if (!store.aiEnabled) {
+      store.log("info", "Auto-pilot: AI trading is paused - skipping this scan.");
+      return;
+    }
     if (!aiReady()) {
       store.log(
         "warn",

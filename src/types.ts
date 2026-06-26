@@ -489,6 +489,8 @@ export interface Snapshot {
   priceAlerts: PriceAlert[];
   /** Active AI risk profile (per-factor LOW/MEDIUM/HIGH). */
   riskProfile: RiskProfile;
+  /** Feature 1: AI trading master switch. false = AI loop paused. */
+  aiEnabled: boolean;
 }
 
 /** Per-factor risk level. LOW reproduces the current (most conservative)

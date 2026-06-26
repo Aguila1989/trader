@@ -193,6 +193,8 @@ export const api = {
     ),
   setRiskProfile: (profile: RiskProfile) =>
     postJSON<{ riskProfile: RiskProfile }>("/api/risk-profile", profile),
+  setAiEnabled: (enabled: boolean) =>
+    postJSON<{ aiEnabled: boolean }>("/api/ai-enabled", { enabled }),
   setProvider: (id: string) =>
     postJSON<{ aiProvider?: string; model?: string; error?: string }>(
       "/api/provider",

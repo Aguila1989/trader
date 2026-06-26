@@ -144,6 +144,14 @@ class Store {
    *  dbo.Settings; read LIVE by the policy/orchestrator at proposal time. */
   riskProfile: RiskProfile = defaultRiskProfile();
   /**
+   * AI trading master switch (Feature 1). When false the AI loop is PAUSED: no
+   * proposals, no AI-initiated orders, no AI-set/updated stop losses. The
+   * liquidity scanner, the stop-loss monitor's protective closes, wallet
+   * overview and manual trading all keep running. Persisted in dbo.Settings, so
+   * it survives a restart (unlike the live-trading arm, which always re-disarms).
+   */
+  aiEnabled = true;
+  /**
    * Mark-to-market PnL of open positions in XLM, refreshed by the position
    * monitor. Its LOSS side feeds the policy engine's daily-loss halt and the
    * size taper, so a book of open losers can't bleed past MAX_DAILY_LOSS
@@ -210,6 +218,9 @@ class Store {
           /* malformed row: keep the default LOW profile */
         }
       }
+      // AI master switch survives restart (Feature 1). Default ON when absent.
+      const ai = await repo.getSetting("aiEnabled");
+      if (ai != null) this.aiEnabled = ai !== "false";
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -796,6 +807,21 @@ class Store {
     return this.paperTrading;
   }
 
+  /** Feature 1: pause/resume the AI trading loop. Persisted; survives restart. */
+  setAiEnabled(enabled: boolean): boolean {
+    if (this.aiEnabled === enabled) return this.aiEnabled;
+    this.aiEnabled = enabled;
+    this.persist(() => repo.upsertSetting("aiEnabled", enabled ? "true" : "false"));
+    this.log(
+      "warn",
+      enabled
+        ? "AI trading ENABLED - the analyst will generate proposals again."
+        : "AI trading PAUSED - no AI proposals, orders or AI stop losses (scanner, stop-loss monitor and manual trading continue).",
+    );
+    this.emit("state", this.snapshot());
+    return this.aiEnabled;
+  }
+
   /**
    * Switch the active AI provider at runtime. Only providers with a configured
    * API key can be selected (the dashboard only offers those). Returns false if
@@ -860,6 +886,7 @@ class Store {
       liquidityRecs: this.liquidityRecs,
       priceAlerts: this.priceAlerts.filter((a) => a.status === "active"),
       riskProfile: this.riskProfile,
+      aiEnabled: this.aiEnabled,
     };
   }
 }
