@@ -436,7 +436,10 @@ export const config = {
     user: env("SQLSERVER_USER"),
     password: env("SQLSERVER_PASSWORD"),
     encrypt: bool("SQLSERVER_ENCRYPT", true),
-    trustServerCertificate: bool("SQLSERVER_TRUST_CERT", true),
+    // SEC-12: default to VERIFYING the server certificate (no blind trust), so a
+    // MITM can't impersonate the DB. Local dev against the self-signed docker
+    // container sets SQLSERVER_TRUST_CERT=true explicitly (see .env.example).
+    trustServerCertificate: bool("SQLSERVER_TRUST_CERT", false),
   },
 };
 
