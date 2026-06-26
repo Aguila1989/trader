@@ -894,14 +894,15 @@ export async function insertTradeLog(e: TradeLogEntry): Promise<void> {
     .input("status", sql.NVarChar(12), e.status)
     .input("txHash", sql.NVarChar(80), e.txHash ?? null)
     .input("orderId", sql.NVarChar(64), e.orderId ?? null)
+    .input("source", sql.NVarChar(24), e.source ?? null)
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.TradeLog WHERE id = @id)
        INSERT INTO dbo.TradeLog
          (id, ts, network, baseAsset, quoteAsset, action, amount, price,
-          totalValue, initiator, status, txHash, orderId)
+          totalValue, initiator, status, txHash, orderId, source)
        VALUES
          (@id, @ts, @network, @baseAsset, @quoteAsset, @action, @amount, @price,
-          @totalValue, @initiator, @status, @txHash, @orderId);`,
+          @totalValue, @initiator, @status, @txHash, @orderId, @source);`,
     );
 }
 
@@ -909,7 +910,7 @@ interface RawTradeLogRow {
   id: string; ts: Date | string; baseAsset: string; quoteAsset: string;
   action: string; amount: number | null; price: number | null;
   totalValue: number | null; initiator: string; status: string;
-  txHash: string | null; orderId: string | null;
+  txHash: string | null; orderId: string | null; source: string | null;
 }
 function rowToTradeLog(r: RawTradeLogRow): TradeLogEntry {
   return {
@@ -921,6 +922,7 @@ function rowToTradeLog(r: RawTradeLogRow): TradeLogEntry {
     status: r.status as TradeLogEntry["status"],
     ...(r.txHash ? { txHash: r.txHash } : {}),
     ...(r.orderId ? { orderId: r.orderId } : {}),
+    ...(r.source ? { source: r.source } : {}),
   };
 }
 
@@ -939,7 +941,7 @@ export async function listTradeLog(q: TradeLogQuery): Promise<TradeLogPage> {
   req.input("limit", sql.Int, q.limit).input("offset", sql.Int, q.offset);
   const res = await req.query<RawTradeLogRow>(
     `SELECT id, ts, baseAsset, quoteAsset, action, amount, price, totalValue,
-            initiator, status, txHash, orderId
+            initiator, status, txHash, orderId, source
        FROM dbo.TradeLog WHERE ${clause}
       ORDER BY ts DESC, id DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
   );

@@ -403,6 +403,39 @@ export interface ClaimableBalanceInfo {
   asset: string;
   amount: string;
   sponsor?: string;
+  /** Feature 5: locally rejected (hidden by default). */
+  rejected?: boolean;
+  rejectedReason?: string;
+}
+
+/** Feature 3/4: read-only assessment of swapping a pending payment to XLM. */
+export interface SwapAssessment {
+  asset: string;
+  amount: string;
+  /** XLM you would receive, or null when no path exists. */
+  estXlm: string | null;
+  /** The token's direct USDC value, or null. */
+  tokenUsdc: string | null;
+  /** USDC value of the XLM you'd receive, or null. */
+  xlmUsdc: string | null;
+  /** Positive = value lost vs. holding; null when not computable. */
+  valueLossPct: number | null;
+  /** Configured threshold + whether this swap is within it (from the server). */
+  threshold?: number;
+  withinThreshold?: boolean;
+}
+
+/** One row of the "Swap All to XLM" summary (Feature 4). */
+export interface SwapAllItem extends SwapAssessment {
+  id: string;
+  withinThreshold: boolean;
+}
+
+/** Result summary of a "Swap All to XLM" batch (Feature 4). */
+export interface SwapAllResult {
+  swapped: { asset: string; amount: string; estXlm: string; hash: string }[];
+  skipped: { id: string; asset: string; reason: string }[];
+  failed: { id: string; asset: string; error: string }[];
 }
 
 export interface PortfolioHolding {

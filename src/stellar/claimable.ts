@@ -11,6 +11,11 @@ export interface ClaimableBalanceInfo {
   asset: string;
   amount: string;
   sponsor?: string;
+  /** Feature 5: locally rejected (hidden by default, never auto-claimed). Set by
+   *  the server from the persisted reject list; absent on the raw Horizon read. */
+  rejected?: boolean;
+  /** Feature 5: why it was rejected (only present on rejected entries). */
+  rejectedReason?: string;
 }
 
 interface RawClaimable {

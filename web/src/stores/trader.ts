@@ -17,6 +17,9 @@ import type {
   PortfolioResponse,
   RiskProfile,
   SettingMeta,
+  SwapAllItem,
+  SwapAllResult,
+  SwapAssessment,
   TradeLogEntry,
   Snapshot,
   StopLossAuditPage,
@@ -58,6 +61,8 @@ export const useTraderStore = defineStore("trader", () => {
   const trustlineError = ref("");
   // --- wallet (send / swap / claimable) ---
   const claimables = ref<ClaimableBalanceInfo[]>([]);
+  // Feature 5: when true, the pending list also includes locally-rejected ones.
+  const showRejectedClaimables = ref(false);
   const walletError = ref("");
   const swapQuoteResult = ref<SwapQuote | null>(null);
   const portfolio = ref<PortfolioResponse | null>(null);
@@ -734,10 +739,15 @@ export const useTraderStore = defineStore("trader", () => {
   // --- wallet: send / swap / claimable ---
   async function loadClaimables(): Promise<void> {
     try {
-      claimables.value = await api.claimables();
+      claimables.value = await api.claimables(showRejectedClaimables.value);
     } catch {
       /* leave previous data */
     }
+  }
+  /** Feature 5: toggle whether rejected pending payments are shown, then reload. */
+  async function setShowRejectedClaimables(show: boolean): Promise<void> {
+    showRejectedClaimables.value = show;
+    await loadClaimables();
   }
 
   async function pay(body: {
@@ -803,6 +813,74 @@ export const useTraderStore = defineStore("trader", () => {
     }
     await loadClaimables();
     void loadBalances();
+    return true;
+  }
+
+  // --- Features 3/4/5: pending-payment swap-to-XLM / batch / reject ---
+  /** Read-only assessment for ONE pending payment (estimated XLM + value loss). */
+  async function claimableSwapQuote(id: string): Promise<SwapAssessment | null> {
+    walletError.value = "";
+    try {
+      return await api.claimableSwapQuote(id);
+    } catch (err) {
+      walletError.value = (err as Error).message;
+      return null;
+    }
+  }
+  /** Swap ONE pending payment to XLM. force = accept a value loss above threshold. */
+  async function swapClaimable(id: string, force = false): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.swapClaimable(id, force);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    await loadClaimables();
+    void loadBalances();
+    return true;
+  }
+  /** Batch assessment for the "Swap All to XLM" summary table. */
+  async function swapAllQuote(): Promise<{ items: SwapAllItem[]; threshold: number } | null> {
+    walletError.value = "";
+    try {
+      return await api.swapAllQuote();
+    } catch (err) {
+      walletError.value = (err as Error).message;
+      return null;
+    }
+  }
+  /** Swap ALL (non-rejected) pending payments to XLM. Returns the batch summary. */
+  async function swapAll(force = false): Promise<SwapAllResult | null> {
+    walletError.value = "";
+    const r = await api.swapAll(force);
+    if (r.error) {
+      walletError.value = r.error;
+      return null;
+    }
+    await loadClaimables();
+    void loadBalances();
+    return r;
+  }
+  /** Reject (locally hide) a pending payment; it stays unclaimed on-chain. */
+  async function rejectClaimable(id: string, reason: string): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.rejectClaimable(id, reason);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    await loadClaimables();
+    return true;
+  }
+  /** Un-reject a pending payment (it returns to the default list). */
+  async function unrejectClaimable(id: string): Promise<boolean> {
+    walletError.value = "";
+    const r = await api.unrejectClaimable(id);
+    if (r.error) {
+      walletError.value = r.error;
+      return false;
+    }
+    await loadClaimables();
     return true;
   }
 
@@ -1030,6 +1108,14 @@ export const useTraderStore = defineStore("trader", () => {
     logsFocus,
     focusLog,
     loadClaimables,
+    showRejectedClaimables,
+    setShowRejectedClaimables,
+    claimableSwapQuote,
+    swapClaimable,
+    swapAllQuote,
+    swapAll,
+    rejectClaimable,
+    unrejectClaimable,
     pay,
     getSwapQuote,
     executeSwap,

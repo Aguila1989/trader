@@ -14,6 +14,9 @@ import type {
   PriceAlert,
   RiskProfile,
   SettingMeta,
+  SwapAllItem,
+  SwapAllResult,
+  SwapAssessment,
   TradeLogEntry,
   TradeLogPage,
   Snapshot,
@@ -253,10 +256,34 @@ export const api = {
       "/api/swap",
       body,
     ),
-  claimables: () => getJSON<ClaimableBalanceInfo[]>("/api/claimable"),
+  claimables: (includeRejected = false) =>
+    getJSON<ClaimableBalanceInfo[]>(
+      `/api/claimable${includeRejected ? "?includeRejected=true" : ""}`,
+    ),
   claimBalance: (id: string) =>
     postJSON<{ hash?: string; error?: string }>(
       `/api/claimable/${encodeURIComponent(id)}/claim`,
+    ),
+  // Features 3/4/5 — pending-payment swap-to-XLM, batch, reject.
+  claimableSwapQuote: (id: string) =>
+    getJSON<SwapAssessment>(`/api/claimable/${encodeURIComponent(id)}/swap-quote`),
+  swapClaimable: (id: string, force = false) =>
+    postJSON<{ hash?: string; estXlm?: string; error?: string; assessment?: SwapAssessment }>(
+      `/api/claimable/${encodeURIComponent(id)}/swap`,
+      { force },
+    ),
+  swapAllQuote: () =>
+    getJSON<{ items: SwapAllItem[]; threshold: number }>("/api/claimable/swap-all/quote"),
+  swapAll: (force = false) =>
+    postJSON<SwapAllResult & { error?: string }>("/api/claimable/swap-all", { force }),
+  rejectClaimable: (id: string, reason: string) =>
+    postJSON<{ id: string; rejected: boolean; error?: string }>(
+      `/api/claimable/${encodeURIComponent(id)}/reject`,
+      { reason },
+    ),
+  unrejectClaimable: (id: string) =>
+    postJSON<{ id: string; rejected: boolean; error?: string }>(
+      `/api/claimable/${encodeURIComponent(id)}/unreject`,
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
   universe: () => getJSON<UniverseResponse>("/api/universe"),

@@ -162,6 +162,14 @@ class Store {
    */
   aiEnabled = true;
   /**
+   * Feature 5: locally rejected pending payments (claimable balances). Keyed by
+   * balance id -> {reason, at}. A rejected balance is hidden from the pending
+   * list by default and never auto-claimed; it remains UNCLAIMED on-chain (we
+   * can't decline a claimable balance, only ignore it). Persisted in
+   * dbo.Settings so a rejection survives a restart.
+   */
+  private rejectedClaimables = new Map<string, { reason: string; at: string }>();
+  /**
    * Mark-to-market PnL of open positions in XLM, refreshed by the position
    * monitor. Its LOSS side feeds the policy engine's daily-loss halt and the
    * size taper, so a book of open losers can't bleed past MAX_DAILY_LOSS
@@ -234,6 +242,16 @@ class Store {
       // Operational settings overrides (Feature 2) survive restart. Applied into
       // `config` before the loops start so cadences pick up the stored values.
       await this.hydrateSettings();
+      // Rejected pending payments (Feature 5) survive restart.
+      const rej = await repo.getSetting("rejectedClaimables");
+      if (rej) {
+        try {
+          const obj = JSON.parse(rej) as Record<string, { reason: string; at: string }>;
+          this.rejectedClaimables = new Map(Object.entries(obj));
+        } catch {
+          /* malformed row: start with an empty reject set */
+        }
+      }
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -752,6 +770,39 @@ class Store {
     );
     this.emit("state", this.snapshot());
     return this.riskProfile;
+  }
+
+  // --- Feature 5: rejected pending payments ---
+  /** Ids of locally-rejected pending payments (for filtering the list). */
+  rejectedClaimableIds(): Set<string> {
+    return new Set(this.rejectedClaimables.keys());
+  }
+  /** The reason a pending payment was rejected, if any. */
+  rejectedClaimableReason(id: string): string | undefined {
+    return this.rejectedClaimables.get(id)?.reason;
+  }
+  /** Reject (locally hide) a pending payment. Persisted; logged with provenance. */
+  rejectClaimable(id: string, info: { asset: string; amount: string }, reason: string): void {
+    this.rejectedClaimables.set(id, { reason, at: new Date().toISOString() });
+    this.persistRejectedClaimables();
+    this.log(
+      "trade",
+      `Pending payment rejected: ${info.amount} ${info.asset.split(":")[0]} ` +
+        `(${id.slice(0, 12)}) - ${reason}. It stays unclaimed.`,
+    );
+    this.emit("state", this.snapshot());
+  }
+  /** Un-reject a pending payment (it reappears in the default list). */
+  unrejectClaimable(id: string): void {
+    if (!this.rejectedClaimables.delete(id)) return;
+    this.persistRejectedClaimables();
+    this.log("info", `Pending payment ${id.slice(0, 12)} un-rejected.`);
+    this.emit("state", this.snapshot());
+  }
+  private persistRejectedClaimables(): void {
+    const obj: Record<string, { reason: string; at: string }> = {};
+    for (const [k, v] of this.rejectedClaimables) obj[k] = v;
+    this.persist(() => repo.upsertSetting("rejectedClaimables", JSON.stringify(obj)));
   }
 
   /**

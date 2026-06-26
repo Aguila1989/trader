@@ -181,6 +181,9 @@ export interface TradeLogEntry {
   status: TradeLogStatus;
   txHash?: string;
   orderId?: string;
+  /** Provenance of a MANUAL action, e.g. "PENDING_PAYMENT" for a pending-payment
+   *  swap-to-XLM (Features 3/4). Omitted for ordinary trades. */
+  source?: string;
 }
 
 export type AiLogEventType =

@@ -30,6 +30,7 @@ import { checkEgress } from "./policy/engine";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
 import { settingsCatalog, settingLoop } from "./trading/settings";
+import { assessSwapToXlm, swapClaimableToXlm } from "./stellar/claimableSwap";
 import {
   startLiquidityScanner,
   stopLiquidityScanner,
@@ -480,18 +481,250 @@ app.post("/api/swap", async (req, res) => {
   }
 });
 
-// Claimable balances ("pending payments") for the account.
-app.get("/api/claimable", async (_req, res) => {
+// Claimable balances ("pending payments") for the account. Locally-rejected
+// ones (Feature 5) are hidden unless ?includeRejected=true; when included they
+// are flagged so the UI can render + un-reject them.
+app.get("/api/claimable", async (req, res) => {
   const pub = signerPublicKey();
   if (!pub) {
     res.json([]);
     return;
   }
   try {
-    res.json(await listClaimableBalances(pub));
+    const all = await listClaimableBalances(pub);
+    const rejectedIds = store.rejectedClaimableIds();
+    const includeRejected = String(req.query.includeRejected ?? "") === "true";
+    const out = all
+      .filter((c) => includeRejected || !rejectedIds.has(c.id))
+      .map((c) =>
+        rejectedIds.has(c.id)
+          ? { ...c, rejected: true, rejectedReason: store.rejectedClaimableReason(c.id) }
+          : c,
+      );
+    res.json(out);
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
+});
+
+// Feature 3/4 — read-only value assessment of swapping ONE pending payment to
+// XLM: estimated XLM out, the token's USDC value, and the % value loss. The UI
+// uses this to show a favorable confirmation or a value-loss warning.
+app.get("/api/claimable/:id/swap-quote", async (req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
+    return;
+  }
+  try {
+    const cb = (await listClaimableBalances(pub)).find((c) => c.id === req.params.id);
+    if (!cb) {
+      res.status(404).json({ error: "claimable balance not found for this account" });
+      return;
+    }
+    const assessment = await assessSwapToXlm(cb.asset, cb.amount);
+    res.json({
+      ...assessment,
+      threshold: config.swap.valueLossThresholdPct,
+      withinThreshold:
+        assessment.valueLossPct == null ||
+        assessment.valueLossPct <= config.swap.valueLossThresholdPct,
+    });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Feature 3 — swap ONE pending payment to XLM (claim + path-payment, atomic).
+// Aborts when the value loss exceeds the configured threshold unless {force:true}.
+app.post("/api/claimable/:id/swap", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  if (!config.swap.allowToXlm) {
+    res.status(403).json({ error: "Swap-to-XLM is disabled (enable it in Settings)." });
+    return;
+  }
+  const id = req.params.id;
+  const force = Boolean(req.body?.force);
+  try {
+    const pub = signerPublicKey();
+    const cb = pub
+      ? (await listClaimableBalances(pub)).find((c) => c.id === id)
+      : undefined;
+    if (!cb) {
+      res.status(404).json({ error: "claimable balance not found for this account" });
+      return;
+    }
+    // SEC-01 (acquired-side): a swap-to-XLM only ever ACQUIRES XLM (whitelisted)
+    // and disposes the held token, so gate the acquired side - the source token
+    // need not be whitelisted. Also re-checks the kill switch.
+    if (!ensureEgressAllowed(res, ["XLM"])) return;
+
+    // Backend value-loss gate (mirrors the UI pre-check). Native = no swap.
+    if (cb.asset !== "XLM" && !force) {
+      const a = await assessSwapToXlm(cb.asset, cb.amount);
+      if (a.valueLossPct != null && a.valueLossPct > config.swap.valueLossThresholdPct) {
+        res.status(409).json({ error: "value_loss", assessment: a });
+        return;
+      }
+    }
+
+    const result = await runExclusive(() =>
+      swapClaimableToXlm({ id, asset: cb.asset, amount: cb.amount }),
+    );
+    const px =
+      result.swapped && Number(result.amount) > 0
+        ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
+        : "1";
+    store.logTrade({
+      baseAsset: result.asset,
+      quoteAsset: "XLM",
+      action: "SWAP",
+      amount: result.amount,
+      price: px,
+      totalValue: result.estXlm,
+      initiator: "MANUAL",
+      status: "FILLED",
+      txHash: result.hash,
+      source: "PENDING_PAYMENT",
+    });
+    store.log(
+      "trade",
+      result.swapped
+        ? `Pending payment swapped to XLM: ${result.amount} ${result.asset.split(":")[0]} -> ~${result.estXlm} XLM (tx ${result.hash}).`
+        : `Pending payment claimed: ${result.amount} XLM (tx ${result.hash}).`,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Feature 4 — batch value assessment for "Swap All to XLM" (the summary table).
+app.get("/api/claimable/swap-all/quote", async (_req, res) => {
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.json({ items: [], threshold: config.swap.valueLossThresholdPct });
+    return;
+  }
+  try {
+    const rejectedIds = store.rejectedClaimableIds();
+    const pending = (await listClaimableBalances(pub)).filter((c) => !rejectedIds.has(c.id));
+    const items = await Promise.all(
+      pending.map(async (c) => {
+        try {
+          const a = await assessSwapToXlm(c.asset, c.amount);
+          return {
+            id: c.id,
+            ...a,
+            withinThreshold:
+              a.valueLossPct == null || a.valueLossPct <= config.swap.valueLossThresholdPct,
+          };
+        } catch {
+          return {
+            id: c.id,
+            asset: c.asset,
+            amount: c.amount,
+            estXlm: null,
+            tokenUsdc: null,
+            xlmUsdc: null,
+            valueLossPct: null,
+            withinThreshold: false,
+          };
+        }
+      }),
+    );
+    res.json({ items, threshold: config.swap.valueLossThresholdPct });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Feature 4 — swap ALL (non-rejected) pending payments to XLM. Individual
+// failures/skips never abort the batch; a summary is returned. {force:true}
+// converts even value-losing balances (the UI confirms first).
+app.post("/api/claimable/swap-all", async (req, res) => {
+  if (!ensureCanSubmit(res)) return;
+  if (!config.swap.allowToXlm) {
+    res.status(403).json({ error: "Swap-to-XLM is disabled (enable it in Settings)." });
+    return;
+  }
+  if (!ensureEgressAllowed(res, ["XLM"])) return;
+  const force = Boolean(req.body?.force);
+  const pub = signerPublicKey();
+  if (!pub) {
+    res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
+    return;
+  }
+  const swapped: unknown[] = [];
+  const skipped: { id: string; asset: string; reason: string }[] = [];
+  const failed: { id: string; asset: string; error: string }[] = [];
+  try {
+    const rejectedIds = store.rejectedClaimableIds();
+    const pending = (await listClaimableBalances(pub)).filter((c) => !rejectedIds.has(c.id));
+    for (const c of pending) {
+      try {
+        if (c.asset !== "XLM" && !force) {
+          const a = await assessSwapToXlm(c.asset, c.amount);
+          if (a.valueLossPct != null && a.valueLossPct > config.swap.valueLossThresholdPct) {
+            skipped.push({ id: c.id, asset: c.asset, reason: `value loss ${a.valueLossPct}%` });
+            continue;
+          }
+        }
+        const result = await runExclusive(() =>
+          swapClaimableToXlm({ id: c.id, asset: c.asset, amount: c.amount }),
+        );
+        const px =
+          result.swapped && Number(result.amount) > 0
+            ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
+            : "1";
+        store.logTrade({
+          baseAsset: result.asset,
+          quoteAsset: "XLM",
+          action: "SWAP",
+          amount: result.amount,
+          price: px,
+          totalValue: result.estXlm,
+          initiator: "MANUAL",
+          status: "FILLED",
+          txHash: result.hash,
+          source: "PENDING_PAYMENT",
+        });
+        swapped.push(result);
+      } catch (err) {
+        failed.push({ id: c.id, asset: c.asset, error: (err as Error).message });
+      }
+    }
+    store.log(
+      "trade",
+      `Swap-all pending payments: ${swapped.length} swapped, ${skipped.length} skipped, ${failed.length} failed.`,
+    );
+    res.json({ swapped, skipped, failed });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Feature 5 — reject (locally hide) a pending payment. No on-chain action: the
+// balance stays unclaimed; it just won't show in the default list or be claimed.
+app.post("/api/claimable/:id/reject", async (req, res) => {
+  const id = req.params.id;
+  const reason = String(req.body?.reason ?? "user-initiated").trim() || "user-initiated";
+  try {
+    const pub = signerPublicKey();
+    const cb = pub
+      ? (await listClaimableBalances(pub)).find((c) => c.id === id)
+      : undefined;
+    store.rejectClaimable(id, { asset: cb?.asset ?? "?", amount: cb?.amount ?? "?" }, reason);
+    res.json({ id, rejected: true });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+// Feature 5 — un-reject a pending payment (it returns to the default list).
+app.post("/api/claimable/:id/unreject", (req, res) => {
+  store.unrejectClaimable(req.params.id);
+  res.json({ id: req.params.id, rejected: false });
 });
 
 app.post("/api/claimable/:id/claim", async (req, res) => {

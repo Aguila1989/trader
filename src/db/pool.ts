@@ -302,6 +302,9 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       );
       CREATE INDEX IX_TradeLog_net_ts ON dbo.TradeLog (network, ts DESC);
     END
+    -- Provenance of a MANUAL action (e.g. "PENDING_PAYMENT"); additive migration.
+    IF COL_LENGTH('dbo.TradeLog', 'source') IS NULL
+      ALTER TABLE dbo.TradeLog ADD source NVARCHAR(24) NULL;
 
     -- Append-only structured AI log (reasoning + risk-profile snapshots).
     IF OBJECT_ID('dbo.AiLog', 'U') IS NULL

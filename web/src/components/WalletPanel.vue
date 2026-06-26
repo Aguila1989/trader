@@ -5,6 +5,7 @@ import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, assetCode as code } from "../format";
 import type { UniverseToken } from "../types";
 import AssetSelect from "./AssetSelect.vue";
+import PendingPayments from "./PendingPayments.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -201,16 +202,7 @@ async function doSwap(): Promise<void> {
       <span v-if="quote.path.length">{{ t("wallet.via") }} {{ quote.path.map(code).join(" → ") }}</span>
     </p>
 
-    <h3>{{ t("wallet.pendingPayments") }}</h3>
-    <ul class="levels">
-      <li v-if="store.claimables.length === 0" class="muted-row">
-        <span class="muted">{{ t("wallet.none") }}</span>
-      </li>
-      <li v-for="c in store.claimables" :key="c.id" class="w-claim">
-        <span class="px">{{ fmtNum(c.amount) }} {{ code(c.asset) }}</span>
-        <button class="btn w-claim-btn" :disabled="store.isReadOnly" @click="store.claim(c.id)">{{ t("wallet.claim") }}</button>
-      </li>
-    </ul>
+    <PendingPayments />
 
     <p v-if="store.walletError" class="violations">{{ store.walletError }}</p>
   </section>
