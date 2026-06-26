@@ -563,7 +563,12 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
     if (cb.asset !== "XLM" && !force) {
       const a = await assessSwapToXlm(cb.asset, cb.amount);
       if (a.valueLossPct != null && a.valueLossPct > config.swap.valueLossThresholdPct) {
-        res.status(409).json({ error: "value_loss", assessment: a });
+        res.status(409).json({
+          error:
+            `Swapping to XLM would lose ~${a.valueLossPct}% of value (threshold ` +
+            `${config.swap.valueLossThresholdPct}%). Confirm the swap to proceed anyway.`,
+          assessment: a,
+        });
         return;
       }
     }
