@@ -19,6 +19,9 @@ export default {
       toggleLabel: "AI trading",
       toggleHint:
         "When paused, the AI stops generating proposals, placing orders and setting stop losses. The liquidity scanner, stop-loss monitor and manual trading keep running.",
+      tradeMode: "AI trade mode",
+      tradeModeHint:
+        "Auto-trade submits policy-passing AI proposals without a click (still requires Live armed). Approve every trade queues them for your approval. Manual orders are unaffected.",
     },
   },
   nl: {
@@ -38,6 +41,9 @@ export default {
       toggleLabel: "AI-handel",
       toggleHint:
         "Wanneer gepauzeerd genereert de AI geen voorstellen, plaatst hij geen orders en stelt hij geen stop losses in. De liquidity scanner, de stop-loss-monitor en handmatig handelen blijven werken.",
+      tradeMode: "AI-handelsmodus",
+      tradeModeHint:
+        "Auto-trade verstuurt AI-voorstellen die de regels doorstaan zonder klik (vereist nog steeds dat Live actief is). Elke trade goedkeuren zet ze klaar voor jouw goedkeuring. Handmatige orders blijven ongemoeid.",
     },
   },
   fr: {
@@ -57,6 +63,9 @@ export default {
       toggleLabel: "Trading IA",
       toggleHint:
         "En pause, l'IA ne génère plus de propositions, ne place plus d'ordres et ne définit plus de stop loss. Le scanner de liquidité, le moniteur de stop loss et le trading manuel continuent de fonctionner.",
+      tradeMode: "Mode de trading IA",
+      tradeModeHint:
+        "Auto-trade envoie les propositions de l'IA conformes à la politique sans clic (nécessite quand même que le mode Live soit activé). Approuver chaque transaction les met en attente de votre validation. Les ordres manuels ne sont pas affectés.",
     },
   },
   es: {
@@ -76,6 +85,9 @@ export default {
       toggleLabel: "Trading con IA",
       toggleHint:
         "En pausa, la IA deja de generar propuestas, colocar órdenes y fijar stop loss. El escáner de liquidez, el monitor de stop loss y el trading manual siguen funcionando.",
+      tradeMode: "Modo de trading de IA",
+      tradeModeHint:
+        "Auto-trade envía las propuestas de la IA que pasan la política sin un clic (sigue requiriendo el modo Live activado). Aprobar cada operación las deja en espera de tu aprobación. Las órdenes manuales no se ven afectadas.",
     },
   },
 };
