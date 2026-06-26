@@ -5,6 +5,7 @@
 // active route.
 import { onMounted } from "vue";
 import { useTraderStore } from "./stores/trader";
+import LiveLogDrawer from "./components/LiveLogDrawer.vue";
 
 const store = useTraderStore();
 onMounted(() => void store.init());
@@ -12,4 +13,7 @@ onMounted(() => void store.init());
 
 <template>
   <router-view />
+  <!-- Feature 7: the live log (last 20 events) is always visible on EVERY route,
+       including the Academy. The full, paginated history lives only in the Logs tab. -->
+  <LiveLogDrawer />
 </template>

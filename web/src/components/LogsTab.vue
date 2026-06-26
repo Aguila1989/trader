@@ -6,10 +6,11 @@ import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import TradeLogTable from "./TradeLogTable.vue";
 import AiLogTable from "./AiLogTable.vue";
+import LogHistory from "./LogHistory.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
-const sub = ref<"trade" | "ai">(store.logsFocus?.sub ?? "trade");
+const sub = ref<"trade" | "ai" | "system">(store.logsFocus?.sub ?? "trade");
 watch(
   () => store.logsFocus,
   (f) => {
@@ -27,9 +28,13 @@ watch(
       <button class="tab" role="tab" :aria-selected="sub === 'ai'" :class="{ active: sub === 'ai' }" @click="sub = 'ai'">
         {{ t("logsTab.aiLog") }}
       </button>
+      <button class="tab" role="tab" :aria-selected="sub === 'system'" :class="{ active: sub === 'system' }" @click="sub = 'system'">
+        {{ t("logsTab.systemLog") }}
+      </button>
     </div>
     <TradeLogTable v-if="sub === 'trade'" />
-    <AiLogTable v-else />
+    <AiLogTable v-else-if="sub === 'ai'" />
+    <LogHistory v-else />
   </section>
 </template>
 

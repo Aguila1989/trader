@@ -54,7 +54,8 @@ watch(search, (v) => {
 </script>
 
 <template>
-  <section class="panel">
+  <!-- Rendered inside the Logs tab's panel (Feature 7), so no own .panel wrapper. -->
+  <div class="log-history">
     <div class="hist-head">
       <h2>{{ t("logHistory.title") }}</h2>
       <div class="hist-controls">
@@ -130,7 +131,7 @@ watch(search, (v) => {
         </tbody>
       </table>
     </div>
-  </section>
+  </div>
 </template>
 
 <style scoped>

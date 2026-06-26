@@ -14,8 +14,6 @@ import LogsTab from "./LogsTab.vue";
 import StatsPanel from "./StatsPanel.vue";
 import PositionsPanel from "./PositionsPanel.vue";
 import EvolutionCharts from "./EvolutionCharts.vue";
-import LogHistory from "./LogHistory.vue";
-import LiveLogDrawer from "./LiveLogDrawer.vue";
 import TokenDetail from "./TokenDetail.vue";
 import LangSwitcher from "./LangSwitcher.vue";
 
@@ -82,15 +80,12 @@ function selectTab(tab: "manual" | "bot" | "logs"): void {
       <LogsTab v-else />
     </div>
 
-    <!-- Cross-cutting: account / positions / analytics / raw diagnostics log. -->
+    <!-- Cross-cutting: account / positions / analytics. The full log history
+         lives in the Logs tab (Feature 7); the live log is in the app shell. -->
     <StatsPanel />
     <PositionsPanel />
     <EvolutionCharts />
-    <LogHistory />
   </main>
-
-  <!-- Always-visible live log (last 20 combined events), above the footer. -->
-  <LiveLogDrawer />
 
   <footer class="foot">{{ t("common.footer") }}</footer>
 </template>
