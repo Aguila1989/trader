@@ -236,6 +236,25 @@ export interface Snapshot {
   riskProfile: RiskProfile;
   /** Feature 1: AI trading master switch. false = AI loop paused. */
   aiEnabled: boolean;
+  /** Feature 2: live value of every UI-editable operational setting (key ->
+   *  current value). Metadata/bounds come from GET /api/settings. */
+  settings: Record<string, number | boolean>;
+}
+
+/** Feature 2: one operational setting's metadata + current value (GET /api/settings). */
+export interface SettingMeta {
+  key: string;
+  group: "ai" | "risk" | "automation" | "swap";
+  label: string;
+  description: string;
+  type: "number" | "boolean";
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  default: number | boolean;
+  value: number | boolean;
+  loop?: "autopilot" | "monitor" | "liquidity" | "wallet";
 }
 
 export type RiskLevel = "low" | "medium" | "high";

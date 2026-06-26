@@ -15,6 +15,16 @@ import {
 } from "./positions";
 import { getMarketSnapshot } from "../stellar/market";
 import { randomUUID } from "node:crypto";
+import {
+  coerceSetting,
+  currentSettingsMap,
+  applySettingToConfig,
+  settingDefault,
+  settingKeys,
+  settingStorageKey,
+  serializeSetting,
+  type SettingValue,
+} from "./settings";
 import { defaultRiskProfile, coerceRiskProfile } from "../types";
 import type {
   AiLogEntry,
@@ -221,6 +231,9 @@ class Store {
       // AI master switch survives restart (Feature 1). Default ON when absent.
       const ai = await repo.getSetting("aiEnabled");
       if (ai != null) this.aiEnabled = ai !== "false";
+      // Operational settings overrides (Feature 2) survive restart. Applied into
+      // `config` before the loops start so cadences pick up the stored values.
+      await this.hydrateSettings();
       const today = await repo.sumTodaySubmitted();
       this.rolloverDay();
       this.daily.tradeCount = today.count;
@@ -742,6 +755,55 @@ class Store {
   }
 
   /**
+   * Feature 2 — change one operational setting at runtime. Validated + clamped
+   * by the catalog, written into the live `config` (every consumer reads config
+   * at call time, so it applies on the next read), persisted to dbo.Settings and
+   * broadcast. Returns the coerced value. Throws on an unknown key / bad type so
+   * the endpoint can answer 400. The caller restarts the affected loop (if any).
+   */
+  applySetting(key: string, raw: unknown): SettingValue {
+    const r = coerceSetting(key, raw);
+    if (!r.ok) throw new Error(r.error);
+    applySettingToConfig(key, r.value);
+    this.persist(() =>
+      repo.upsertSetting(settingStorageKey(key), serializeSetting(r.value)),
+    );
+    this.log("info", `Setting "${key}" changed to ${r.value}.`);
+    this.emit("state", this.snapshot());
+    return r.value;
+  }
+
+  /** Feature 2 — restore one setting to the value the process booted with. */
+  resetSetting(key: string): SettingValue {
+    const def = settingDefault(key);
+    if (def === undefined) throw new Error(`Unknown setting "${key}".`);
+    return this.applySetting(key, def);
+  }
+
+  /**
+   * Feature 2 — hydrate persisted setting overrides into `config` at boot. Runs
+   * BEFORE the loops start so they pick up overridden intervals. Bad rows are
+   * skipped (the boot-time default stands). No persist/emit (this IS the load).
+   */
+  private async hydrateSettings(): Promise<void> {
+    let applied = 0;
+    for (const key of settingKeys()) {
+      try {
+        const stored = await repo.getSetting(settingStorageKey(key));
+        if (stored == null) continue;
+        const r = coerceSetting(key, stored);
+        if (r.ok) {
+          applySettingToConfig(key, r.value);
+          applied++;
+        }
+      } catch {
+        /* skip a malformed/unreadable row; keep the boot default */
+      }
+    }
+    if (applied > 0) this.log("info", `Applied ${applied} persisted setting override(s).`);
+  }
+
+  /**
    * Arm/disarm live trading at runtime. Refuses to arm when there is no signing
    * key (isReadOnly): you cannot trade without a secret, and the toggle must not
    * pretend otherwise. Returns the resulting state.
@@ -887,6 +949,9 @@ class Store {
       priceAlerts: this.priceAlerts.filter((a) => a.status === "active"),
       riskProfile: this.riskProfile,
       aiEnabled: this.aiEnabled,
+      // Feature 2: live values of every UI-editable operational setting, so the
+      // Settings panel + dependent components (e.g. wallet refresh) react.
+      settings: currentSettingsMap(),
     };
   }
 }

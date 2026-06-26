@@ -13,6 +13,7 @@ import type {
   PortfolioResponse,
   PriceAlert,
   RiskProfile,
+  SettingMeta,
   TradeLogEntry,
   TradeLogPage,
   Snapshot,
@@ -195,6 +196,17 @@ export const api = {
     postJSON<{ riskProfile: RiskProfile }>("/api/risk-profile", profile),
   setAiEnabled: (enabled: boolean) =>
     postJSON<{ aiEnabled: boolean }>("/api/ai-enabled", { enabled }),
+  // Feature 2: operational settings catalog + per-setting change/reset.
+  getSettings: () => getJSON<{ settings: SettingMeta[] }>("/api/settings"),
+  setSetting: (key: string, value: number | boolean) =>
+    postJSON<{ key: string; value: number | boolean }>("/api/settings", {
+      key,
+      value,
+    }),
+  resetSetting: (key: string) =>
+    postJSON<{ key: string; value: number | boolean }>("/api/settings/reset", {
+      key,
+    }),
   setProvider: (id: string) =>
     postJSON<{ aiProvider?: string; model?: string; error?: string }>(
       "/api/provider",

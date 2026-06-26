@@ -20,7 +20,10 @@ import type { LiquidityRec } from "../types";
  */
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-let stopped = false;
+// Generation token: bumped on every (re)start and on stop so a re-call of
+// startLiquidityScanner() (Feature 2 live interval change) cleanly supersedes
+// the old loop instead of running two timers at once.
+let gen = 0;
 let running = false;
 
 async function runOnce(): Promise<void> {
@@ -57,6 +60,11 @@ async function runOnce(): Promise<void> {
 }
 
 export function startLiquidityScanner(): void {
+  const myGen = ++gen; // supersede any previously-scheduled loop
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   const sec = config.liquidityScanIntervalSeconds;
   if (sec <= 0) {
     store.log(
@@ -67,30 +75,33 @@ export function startLiquidityScanner(): void {
   }
   // Floored at 300s: each tick fans out a handful of Horizon reads per
   // candidate; an hourly cadence (3600) is the intended default.
-  const ms = Math.max(sec, 300) * 1000;
   store.log(
     "info",
-    `Liquidity scanner ON: ranking the top liquid assets every ${Math.round(
-      ms / 1000,
+    `Liquidity scanner ON: ranking the top liquid assets every ${Math.max(
+      sec,
+      300,
     )}s (observe-only, never trades).`,
   );
 
   const loop = (): void => {
-    if (stopped) return;
+    if (myGen !== gen) return; // a newer start (or stop) superseded us
     void runOnce()
       .catch((err) =>
         store.log("error", `Liquidity scan failed: ${(err as Error).message}`),
       )
       .finally(() => {
-        if (!stopped) timer = setTimeout(loop, ms);
+        // Re-read the interval each tick so a live change applies immediately.
+        if (myGen === gen) timer = setTimeout(loop, Math.max(config.liquidityScanIntervalSeconds, 300) * 1000);
       });
   };
   // First tick shortly after boot (after hydration settles).
   timer = setTimeout(loop, 10_000);
 }
 
+/** Stop the scanner (shutdown) or, via startLiquidityScanner(), restart it with
+ *  the current interval. The generation bump invalidates any in-flight loop. */
 export function stopLiquidityScanner(): void {
-  stopped = true;
+  gen++;
   if (timer) clearTimeout(timer);
   timer = null;
 }

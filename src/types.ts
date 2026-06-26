@@ -491,6 +491,9 @@ export interface Snapshot {
   riskProfile: RiskProfile;
   /** Feature 1: AI trading master switch. false = AI loop paused. */
   aiEnabled: boolean;
+  /** Feature 2: live value of every UI-editable operational setting (key ->
+   *  current value). Metadata/bounds come from GET /api/settings. */
+  settings: Record<string, number | boolean>;
 }
 
 /** Per-factor risk level. LOW reproduces the current (most conservative)

@@ -98,10 +98,20 @@ function refresh(): void {
   void store.loadPortfolio();
   void store.loadBalances();
 }
+// Feature 2: the refresh cadence is a live, UI-configurable setting. Re-arm the
+// timer whenever it changes (and floor at 5s, matching the backend bound).
 let timer: ReturnType<typeof setInterval> | null = null;
+function arm(seconds: number): void {
+  if (timer) clearInterval(timer);
+  timer = setInterval(refresh, Math.max(5, seconds) * 1000);
+}
 onMounted(() => {
-  timer = setInterval(refresh, 60_000);
+  arm(store.walletRefreshSeconds);
 });
+watch(
+  () => store.walletRefreshSeconds,
+  (s) => arm(s),
+);
 onUnmounted(() => {
   if (timer) clearInterval(timer);
 });

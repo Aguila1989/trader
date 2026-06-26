@@ -19,7 +19,11 @@ import { runChainScan } from "./orchestrator";
  */
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-let stopped = false;
+// Bumped on every (re)start and on stop. A loop closure captures the generation
+// it was scheduled under and bows out once a newer start has superseded it, so
+// re-calling startAutoPilot() to apply a new interval never leaves a zombie
+// timer running alongside the new one (Feature 2: live interval changes).
+let gen = 0;
 let running = false;
 
 /** One scan tick. Skips (without erroring) when there's nothing useful to do. */
@@ -60,6 +64,11 @@ async function runOnce(): Promise<void> {
  * finishes), so a slow scan can never pile up. No-op when disabled.
  */
 export function startAutoPilot(): void {
+  const myGen = ++gen; // supersede any previously-scheduled loop
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   const sec = config.autoScanIntervalSeconds;
   if (sec <= 0) {
     store.log(
@@ -68,26 +77,27 @@ export function startAutoPilot(): void {
     );
     return;
   }
-  const ms = Math.max(sec, 30) * 1000;
   store.log(
     "warn",
-    `Auto-pilot ON: scanning the curated universe every ${Math.round(ms / 1000)}s. ` +
+    `Auto-pilot ON: scanning the curated universe every ${Math.max(sec, 30)}s. ` +
       "Trades still require auto-trade ON + live trading ARMED + passing policy.",
   );
 
   const loop = (): void => {
-    if (stopped) return;
+    if (myGen !== gen) return; // a newer start (or stop) superseded us
     void runOnce().finally(() => {
-      if (!stopped) timer = setTimeout(loop, ms);
+      // Re-read the interval each tick so a live change applies immediately.
+      if (myGen === gen) timer = setTimeout(loop, Math.max(config.autoScanIntervalSeconds, 30) * 1000);
     });
   };
   // First scan a few seconds after boot (let the server settle), then on cadence.
   timer = setTimeout(loop, 3_000);
 }
 
-/** Stop the loop (used on shutdown). */
+/** Stop the loop (shutdown) or, via startAutoPilot(), restart it with the
+ *  current interval. Bumping the generation invalidates any in-flight loop. */
 export function stopAutoPilot(): void {
-  stopped = true;
+  gen++;
   if (timer) clearTimeout(timer);
   timer = null;
 }

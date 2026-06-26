@@ -4,6 +4,7 @@
 import AiToggle from "./AiToggle.vue";
 import BotAnalysisPanel from "./BotAnalysisPanel.vue";
 import RiskSettingsPanel from "./RiskSettingsPanel.vue";
+import SettingsPanel from "./SettingsPanel.vue";
 import ProposalsPanel from "./ProposalsPanel.vue";
 import StopLossPanel from "./StopLossPanel.vue";
 import LiquidityPanel from "./LiquidityPanel.vue";
@@ -15,6 +16,7 @@ import HistoryTable from "./HistoryTable.vue";
   <AiToggle />
   <BotAnalysisPanel />
   <RiskSettingsPanel />
+  <SettingsPanel />
   <ProposalsPanel />
   <StopLossPanel mode="ai" />
   <LiquidityPanel />

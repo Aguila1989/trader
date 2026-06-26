@@ -16,6 +16,7 @@ import type {
   OrderbookSnapshot,
   PortfolioResponse,
   RiskProfile,
+  SettingMeta,
   TradeLogEntry,
   Snapshot,
   StopLossAuditPage,
@@ -62,6 +63,12 @@ export const useTraderStore = defineStore("trader", () => {
   const portfolio = ref<PortfolioResponse | null>(null);
   const portfolioLoading = ref(false);
   const alertError = ref("");
+
+  // --- Feature 2: operational settings catalog (metadata + bounds) ---
+  // The catalog (labels/bounds/defaults) is static; current VALUES ride the
+  // snapshot (snapshot.settings) so they stay live. Loaded once on init.
+  const settingsCatalog = ref<SettingMeta[]>([]);
+  const settingsError = ref("");
 
   // --- tradeable token universe (drives the asset dropdowns) ---
   const universe = ref<UniverseToken[]>([]);
@@ -174,6 +181,18 @@ export const useTraderStore = defineStore("trader", () => {
   const isAutoTrade = computed(() => snapshot.value?.autoApprove ?? false);
   /** Feature 1: AI trading master switch (defaults ON until the snapshot loads). */
   const aiEnabled = computed(() => snapshot.value?.aiEnabled ?? true);
+  /** Feature 2: catalog merged with the live snapshot value for each setting. */
+  const settings = computed<SettingMeta[]>(() => {
+    const live = snapshot.value?.settings ?? {};
+    return settingsCatalog.value.map((s) =>
+      s.key in live ? { ...s, value: live[s.key] } : s,
+    );
+  });
+  /** Feature 2: wallet/portfolio UI refresh cadence (seconds); floored at 5s. */
+  const walletRefreshSeconds = computed(() => {
+    const v = snapshot.value?.settings?.walletRefreshSeconds;
+    return typeof v === "number" && v >= 5 ? v : 60;
+  });
   /** Live trading armed (trades may submit on-chain). */
   const isLive = computed(() => snapshot.value?.liveTrading ?? false);
   /** Paper trading armed (simulated fills, no on-chain submit). */
@@ -241,6 +260,7 @@ export const useTraderStore = defineStore("trader", () => {
     void loadEvolution();
     void loadTrades();
     void loadLogs();
+    void loadSettings();
     connectStream();
   }
 
@@ -394,6 +414,37 @@ export const useTraderStore = defineStore("trader", () => {
   /** Feature 1: pause/resume the AI trading loop. */
   async function setAiEnabled(enabled: boolean): Promise<void> {
     await api.setAiEnabled(enabled);
+  }
+  // --- Feature 2: operational settings ---
+  /** Load the settings catalog (metadata + bounds). Current values stay live
+   *  via the SSE snapshot, so this is a one-time fetch. */
+  async function loadSettings(): Promise<void> {
+    try {
+      settingsError.value = "";
+      settingsCatalog.value = (await api.getSettings()).settings;
+    } catch (err) {
+      settingsError.value = (err as Error).message;
+    }
+  }
+  /** Change one setting; the SSE 'state' push refreshes the live value. */
+  async function setSetting(key: string, value: number | boolean): Promise<void> {
+    settingsError.value = "";
+    try {
+      await api.setSetting(key, value);
+    } catch (err) {
+      settingsError.value = (err as Error).message;
+      throw err;
+    }
+  }
+  /** Restore one setting to its boot-time default. */
+  async function resetSetting(key: string): Promise<void> {
+    settingsError.value = "";
+    try {
+      await api.resetSetting(key);
+    } catch (err) {
+      settingsError.value = (err as Error).message;
+      throw err;
+    }
   }
   async function setLiveTrading(enabled: boolean): Promise<void> {
     await api.setLiveTrading(enabled);
@@ -924,6 +975,12 @@ export const useTraderStore = defineStore("trader", () => {
     modeLabel,
     isPaper,
     aiEnabled,
+    settings,
+    settingsError,
+    walletRefreshSeconds,
+    loadSettings,
+    setSetting,
+    resetSetting,
     init,
     setAutoApprove,
     setAiEnabled,

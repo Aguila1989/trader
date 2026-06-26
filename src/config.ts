@@ -217,6 +217,25 @@ export const config = {
   monitorIntervalSeconds: num("POSITION_MONITOR_INTERVAL_SECONDS", 60),
 
   /**
+   * How often (seconds) the dashboard re-pulls wallet balances + portfolio
+   * valuation. Purely a UI refresh cadence (the PortfolioPanel poll); it never
+   * trades. Floored at 5s on the client. Default 60s.
+   */
+  walletRefreshSeconds: num("WALLET_REFRESH_SECONDS", 60),
+
+  /**
+   * Pending-payment -> XLM conversion (Features 3/4). `allowToXlm` is the master
+   * enable for the one-click "Swap to XLM" / "Swap All to XLM" buttons on the
+   * claimable-balances list. `valueLossThresholdPct` is the max acceptable value
+   * loss (vs. holding the token, priced through Horizon) before a swap is
+   * blocked - the user can still force it per-swap with an explicit confirm.
+   */
+  swap: {
+    allowToXlm: bool("SWAP_TO_XLM_ENABLED", true),
+    valueLossThresholdPct: num("SWAP_VALUE_LOSS_THRESHOLD_PCT", 2),
+  },
+
+  /**
    * IANA timezone whose LOCAL MIDNIGHT defines the trading-day boundary for the
    * daily caps (MAX_DAILY_LOSS / volume / trade count) and the dayKey. Defaults
    * to "UTC". E.g. "America/New_York", "Europe/Brussels", "Asia/Tokyo". An

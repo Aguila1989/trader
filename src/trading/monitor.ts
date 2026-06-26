@@ -110,7 +110,10 @@ const RECHECK_WINDOW_MS = 24 * 3_600_000;
 const STUCK_SUBMITTING_MS = 10 * 60_000;
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-let stopped = false;
+// Generation token: bumped on every (re)start and on stop so a re-call of
+// startMonitor() (Feature 2 live interval change) cleanly supersedes the old
+// loop instead of running two timers at once.
+let gen = 0;
 let running = false;
 
 /** pair -> last stop-loss attempt (ms epoch). */
@@ -837,6 +840,11 @@ async function runOnce(): Promise<void> {
  * resting offers or outcome marks, so leaving it on is strongly recommended.
  */
 export function startMonitor(): void {
+  const myGen = ++gen; // supersede any previously-scheduled loop
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   const sec = config.monitorIntervalSeconds;
   if (sec <= 0) {
     store.log(
@@ -845,24 +853,26 @@ export function startMonitor(): void {
     );
     return;
   }
-  const ms = Math.max(sec, 15) * 1000;
   store.log(
     "info",
-    `Position monitor ON: marks positions, manages stops/offers and records outcomes every ${Math.round(ms / 1000)}s.`,
+    `Position monitor ON: marks positions, manages stops/offers and records outcomes every ${Math.max(sec, 15)}s.`,
   );
 
   const loop = (): void => {
-    if (stopped) return;
+    if (myGen !== gen) return; // a newer start (or stop) superseded us
     void runOnce().finally(() => {
-      if (!stopped) timer = setTimeout(loop, ms);
+      // Re-read the interval each tick so a live change applies immediately.
+      if (myGen === gen) timer = setTimeout(loop, Math.max(config.monitorIntervalSeconds, 15) * 1000);
     });
   };
   // First tick shortly after boot (after hydration settles).
   timer = setTimeout(loop, 8_000);
 }
 
+/** Stop the monitor (shutdown) or, via startMonitor(), restart it with the
+ *  current interval. The generation bump invalidates any in-flight loop. */
 export function stopMonitor(): void {
-  stopped = true;
+  gen++;
   if (timer) clearTimeout(timer);
   timer = null;
 }

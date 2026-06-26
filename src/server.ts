@@ -29,6 +29,7 @@ import { canonicalAsset } from "./stellar/assets";
 import { checkEgress } from "./policy/engine";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
+import { settingsCatalog, settingLoop } from "./trading/settings";
 import {
   startLiquidityScanner,
   stopLiquidityScanner,
@@ -1089,6 +1090,55 @@ app.post("/api/auto-approve", (req, res) => {
 // store; takes effect on the next proposal (the policy reads it live).
 app.post("/api/risk-profile", (req, res) => {
   res.json({ riskProfile: store.setRiskProfile(req.body ?? {}) });
+});
+
+// Feature 2 — operational settings. GET returns the full catalog (metadata +
+// bounds + boot default + current value); the current values also ride the SSE
+// snapshot (snapshot.settings) so the UI stays live. POST changes one setting
+// (validated/clamped + persisted by the store) and restarts the affected loop.
+app.get("/api/settings", (_req, res) => {
+  res.json({ settings: settingsCatalog() });
+});
+
+// Restart the background loop affected by a setting change (if any). Re-calling
+// start*() applies the new cadence and supersedes the prior loop (generation
+// token). "wallet" is a UI-only refresh cadence (no backend loop).
+function restartLoopForSetting(key: string): void {
+  switch (settingLoop(key)) {
+    case "autopilot":
+      startAutoPilot();
+      break;
+    case "monitor":
+      startMonitor();
+      break;
+    case "liquidity":
+      startLiquidityScanner();
+      break;
+    default:
+      break; // "wallet" (frontend) or non-loop setting: nothing to restart
+  }
+}
+
+app.post("/api/settings", (req, res) => {
+  const key = String(req.body?.key ?? "");
+  try {
+    const value = store.applySetting(key, req.body?.value);
+    restartLoopForSetting(key);
+    res.json({ key, value });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/api/settings/reset", (req, res) => {
+  const key = String(req.body?.key ?? "");
+  try {
+    const value = store.resetSetting(key);
+    restartLoopForSetting(key);
+    res.json({ key, value });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
 });
 
 // Master arm switch: read-only (observe) vs. live trading (can submit on-chain).
