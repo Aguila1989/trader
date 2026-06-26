@@ -38,6 +38,8 @@ export interface OriginPolicy {
   trustedOrigins: string[];
   /** True when the HTTP server binds to a loopback interface (not 0.0.0.0). */
   trustLoopback: boolean;
+  /** SEC-22: honor X-Forwarded-Host only behind a trusted reverse proxy. */
+  trustProxy: boolean;
 }
 
 export type OriginVerdict = "allow" | "bad-origin" | "cross-origin";
@@ -63,14 +65,21 @@ export function checkOrigin(
     return "bad-origin";
   }
 
+  // SEC-03: a FIXED expected-host allow-list. We deliberately do NOT reflect the
+  // request's own Host (the old `allowed.add(req.host)`): a DNS-rebind makes the
+  // browser send Origin===Host===evil.com:3000, and reflecting Host let the
+  // guard self-authorize. The allow-set is now independent of attacker-
+  // controllable request headers.
   const allowed = new Set<string>([
     `127.0.0.1:${policy.port}`,
     `localhost:${policy.port}`,
+    `[::1]:${policy.port}`,
   ]);
-  if (req.host) allowed.add(req.host);
-  // A browser CSRF cannot set X-Forwarded-Host (a non-simple header forces a
-  // preflight that a cross-origin request fails), so honoring it is safe.
-  if (req.xForwardedHost) {
+  // SEC-22: X-Forwarded-Host is only honored when a reverse proxy is explicitly
+  // trusted (TRUST_PROXY). Otherwise a client could smuggle a forged value to
+  // widen the allow-list. (A browser CSRF can't set it, but a non-browser one
+  // can.)
+  if (policy.trustProxy && req.xForwardedHost) {
     for (const h of req.xForwardedHost.split(",")) allowed.add(h.trim());
   }
   for (const h of policy.trustedOrigins) allowed.add(h);

@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { checkOrigin, isLoopbackBind, type OriginPolicy } from "./csrf";
 
 // Server bound to loopback (the default + dev): loopback origins are trusted.
-const loopback: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: true };
+const loopback: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: true, trustProxy: false };
 // Server deliberately exposed on 0.0.0.0: loopback is NOT blanket-trusted.
-const exposed: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: false };
+const exposed: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: false, trustProxy: false };
+// Exposed AND behind a trusted reverse proxy (TRUST_PROXY=true): X-Forwarded-Host honored.
+const exposedProxy: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: false, trustProxy: true };
 
 describe("checkOrigin - exemptions", () => {
   it("allows read-only verbs regardless of origin", () => {
@@ -42,25 +44,39 @@ describe("checkOrigin - same-origin and reverse proxy", () => {
     ).toBe("allow");
   });
 
-  it("honors X-Forwarded-Host from a reverse proxy", () => {
-    expect(
-      checkOrigin(
-        {
-          method: "POST",
-          path: "/api/scan",
-          origin: "https://trader.example.com",
-          xForwardedHost: "trader.example.com",
-        },
-        exposed,
-      ),
-    ).toBe("allow");
+  it("honors X-Forwarded-Host ONLY when the proxy is trusted (SEC-22)", () => {
+    const args = {
+      method: "POST",
+      path: "/api/scan",
+      origin: "https://trader.example.com",
+      xForwardedHost: "trader.example.com",
+    } as const;
+    // Without TRUST_PROXY a forged X-Forwarded-Host must NOT widen the allow-list.
+    expect(checkOrigin(args, exposed)).toBe("cross-origin");
+    // Behind a trusted proxy it is honored.
+    expect(checkOrigin(args, exposedProxy)).toBe("allow");
   });
 
   it("honors an explicit DASHBOARD_TRUSTED_ORIGINS entry even when exposed", () => {
-    const policy: OriginPolicy = { port: 3000, trustedOrigins: ["dash.example.com"], trustLoopback: false };
+    const policy: OriginPolicy = { port: 3000, trustedOrigins: ["dash.example.com"], trustLoopback: false, trustProxy: false };
     expect(
       checkOrigin({ method: "POST", path: "/api/scan", origin: "https://dash.example.com" }, policy),
     ).toBe("allow");
+  });
+
+  it("SEC-03: rejects a rebound host (origin === host === non-loopback)", () => {
+    // DNS-rebinding makes the browser send Origin and Host both = the attacker
+    // domain on the backend port. The guard must NOT reflect req.host and
+    // self-authorize. Test both bind postures.
+    const rebind = {
+      method: "POST",
+      path: "/api/pay",
+      origin: "http://evil.com:3000",
+      host: "evil.com:3000",
+    } as const;
+    expect(checkOrigin(rebind, loopback)).toBe("cross-origin");
+    expect(checkOrigin(rebind, exposed)).toBe("cross-origin");
+    expect(checkOrigin(rebind, exposedProxy)).toBe("cross-origin");
   });
 });
 

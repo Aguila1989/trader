@@ -78,7 +78,12 @@ app.use((req, res, next) => {
       host: req.headers.host,
       xForwardedHost: req.header("x-forwarded-host"),
     },
-    { port: config.port, trustedOrigins: config.trustedOrigins, trustLoopback },
+    {
+      port: config.port,
+      trustedOrigins: config.trustedOrigins,
+      trustLoopback,
+      trustProxy: config.trustProxy,
+    },
   );
   if (verdict === "allow") return next();
   res.status(403).json({
@@ -373,6 +378,17 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
 // Send a payment (same-asset) to a G... address or a federation address.
 app.post("/api/pay", async (req, res) => {
   if (!ensureCanSubmit(res)) return;
+  // SEC-01: raw external transfers are OFF by default - the trading function
+  // never needs to send funds to a third party, so a compromised dashboard
+  // (CSRF/XSS) cannot drain the hot wallet here. Whitelist + egress cap still
+  // apply below when enabled.
+  if (!config.allowRawTransfers) {
+    res.status(403).json({
+      error:
+        "Raw external transfers are disabled. Set ALLOW_RAW_TRANSFERS=true to enable /api/pay.",
+    });
+    return;
+  }
   const b = req.body ?? {};
   const destination = String(b.destination ?? "").trim();
   const asset = String(b.asset ?? "").trim() || "XLM";
@@ -1501,6 +1517,33 @@ async function start(): Promise<void> {
         "  or set ALLOW_MAINNET_WITHOUT_DB=true to accept resettable caps.\n",
     );
     process.exit(1);
+  }
+
+  // SEC-02 + SEC-14: fail CLOSED on a dangerous exposed posture, mirroring the
+  // mainnet-without-DB hard-exit above (the audit's "fail-OPEN despite a proven
+  // fail-CLOSED pattern" theme). A non-loopback bind serves a money-moving API,
+  // so it MUST have a token (else anyone reaching the port has full control) and
+  // a TLS acknowledgement (else the token crosses the wire in cleartext).
+  if (!isLoopbackBind(config.bindHost)) {
+    if (config.dashboardToken === "" && !config.allowExposedWithoutToken) {
+      console.error(
+        `\n  REFUSING TO START: BIND_HOST=${config.bindHost} is NOT loopback but\n` +
+          "  DASHBOARD_TOKEN is empty. An unauthenticated, money-moving API would\n" +
+          "  be reachable from other machines (arm live trading, drain the wallet).\n" +
+          "  Set DASHBOARD_TOKEN, bind to 127.0.0.1, or (proxy-terminated auth only)\n" +
+          "  set ALLOW_EXPOSED_WITHOUT_TOKEN=true.\n",
+      );
+      process.exit(1);
+    }
+    if (!config.allowInsecureExposed) {
+      console.error(
+        `\n  REFUSING TO START: BIND_HOST=${config.bindHost} is NOT loopback and TLS\n` +
+          "  is not acknowledged. The dashboard token would be sent in cleartext.\n" +
+          "  Put HTTPS in front and set ALLOW_INSECURE_EXPOSED=true to acknowledge,\n" +
+          "  or bind to 127.0.0.1.\n",
+      );
+      process.exit(1);
+    }
   }
 
   app.listen(config.port, config.bindHost, () => {

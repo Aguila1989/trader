@@ -289,6 +289,36 @@ export const config = {
    * MAX_DAILY_LOSS guard. Set true only if you accept that risk.
    */
   allowMainnetWithoutDb: bool("ALLOW_MAINNET_WITHOUT_DB", false),
+  /**
+   * SEC-01: allow RAW external transfers (`POST /api/pay` sends to an arbitrary
+   * destination). The bot's trading function never needs to send funds OUT to a
+   * third party, so this is OFF by default - a compromised dashboard/CSRF/XSS
+   * then cannot drain the hot wallet to an attacker address. Turn it on only for
+   * a deliberate manual payout. Swaps (to self) and claims (inbound) are
+   * unaffected. Whitelist + MAX_DAILY_EGRESS still apply on top when enabled.
+   */
+  allowRawTransfers: bool("ALLOW_RAW_TRANSFERS", false),
+  /**
+   * SEC-02: explicit opt-out for the fail-closed exposed-bind guard. When the
+   * server binds to a NON-loopback interface with an EMPTY DASHBOARD_TOKEN it
+   * refuses to start (an unauthenticated, money-moving API on a reachable port).
+   * Set true ONLY when a reverse proxy in front terminates auth.
+   */
+  allowExposedWithoutToken: bool("ALLOW_EXPOSED_WITHOUT_TOKEN", false),
+  /**
+   * SEC-14: acknowledge that TLS is terminated upstream for a NON-loopback bind.
+   * Without it (and without loopback), the server refuses to start, so the
+   * dashboard token can't be sent cleartext over the wire by accident. Set true
+   * only when a TLS-terminating proxy sits in front.
+   */
+  allowInsecureExposed: bool("ALLOW_INSECURE_EXPOSED", false),
+  /**
+   * SEC-22: trust reverse-proxy forwarding headers (X-Forwarded-Host /
+   * X-Forwarded-Proto). OFF by default so a client cannot smuggle a forged
+   * X-Forwarded-Host past the CSRF host allow-list. Turn on only behind a proxy
+   * you control that sets these headers.
+   */
+  trustProxy: bool("TRUST_PROXY", false),
 
   /** Reputable credit tokens the chain scan checks against XLM. */
   scanAssets,
