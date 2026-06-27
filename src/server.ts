@@ -1,4 +1,4 @@
-import express, { type Response } from "express";
+import express, { type Request, type Response, type NextFunction } from "express";
 import helmet from "helmet";
 import { existsSync } from "node:fs";
 import { timingSafeEqual, randomBytes } from "node:crypto";
@@ -59,6 +59,10 @@ const webDist = join(here, "..", "web", "dist");
 const webBuilt = existsSync(join(webDist, "index.html"));
 
 const app = express();
+// SEC-20/22: only derive req.ip / req.protocol from X-Forwarded-* when a proxy
+// is explicitly trusted; otherwise use the socket peer (so a client can't spoof
+// its IP to dodge the auth rate limiter).
+app.set("trust proxy", config.trustProxy);
 // SEC-13: security headers. The stated priority is anti-clickjacking — even on a
 // loopback bind a malicious page can frame the dashboard — so X-Frame-Options:
 // DENY + CSP `frame-ancestors 'none'` lead. The rest is a self-contained,
@@ -164,6 +168,26 @@ function consumeSseTicket(t: string): boolean {
   return exp >= Date.now();
 }
 
+// SEC-20: throttle token guessing per source IP - after AUTH_MAX_FAILS failed
+// attempts in the window, that IP gets 429 until it rolls off. Bounded map; an
+// entry is rewritten when its window expires.
+const authFails = new Map<string, { count: number; resetAt: number }>();
+const AUTH_WINDOW_MS = 60_000;
+const AUTH_MAX_FAILS = 10;
+function authRateLimited(ip: string): boolean {
+  const e = authFails.get(ip);
+  return e != null && Date.now() <= e.resetAt && e.count >= AUTH_MAX_FAILS;
+}
+function recordAuthFail(ip: string): void {
+  const now = Date.now();
+  const e = authFails.get(ip);
+  if (!e || now > e.resetAt) {
+    authFails.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+  } else {
+    e.count++;
+  }
+}
+
 // Optional API auth. When DASHBOARD_TOKEN is set, every /api/* request (except
 // the health probe) must present the token as `Authorization: Bearer <token>`.
 // SEC-04: the legacy `?token=` query bootstrap is GONE (it leaked into logs /
@@ -178,9 +202,16 @@ app.use((req, res, next) => {
     const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
     if (consumeSseTicket(ticket)) return next();
   }
+  // SEC-20: block brute-forcing IPs before doing the (constant-time) compare.
+  const ip = req.ip ?? "unknown";
+  if (authRateLimited(ip)) {
+    res.status(429).json({ error: "too many attempts - try again later" });
+    return;
+  }
   const header = req.header("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (tokenMatches(bearer, config.dashboardToken)) return next();
+  recordAuthFail(ip);
   res.status(401).json({ error: "unauthorized" });
 });
 
@@ -1575,6 +1606,16 @@ if (webBuilt) {
   });
 }
 
+// SEC-23 + SEC-25: global error handler (4-arg middleware). Anything a route
+// throws synchronously, or passes to next(err), lands here instead of crashing
+// the connection - log the detail server-side and return a generic message.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  store.log("error", `Unhandled request error: ${(err as Error)?.message ?? String(err)}`);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "request failed" });
+});
+
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1649,6 +1690,16 @@ async function start(): Promise<void> {
       "\n  REFUSING TO START: network=public and SQL Server is configured but\n" +
         "  unreachable. Start it (docker compose up -d) and run `npm run db:migrate`,\n" +
         "  or set ALLOW_MAINNET_WITHOUT_DB=true to accept resettable caps.\n",
+    );
+    process.exit(1);
+  }
+
+  // SEC-20: a configured token that's too short is brute-forceable; refuse to
+  // start with a weak one (empty = no auth, handled by the exposed-bind guard).
+  if (config.dashboardToken !== "" && config.dashboardToken.length < 24) {
+    console.error(
+      "\n  REFUSING TO START: DASHBOARD_TOKEN is too short (< 24 chars).\n" +
+        "  Use a long random secret, e.g. `openssl rand -hex 32`.\n",
     );
     process.exit(1);
   }
@@ -1753,5 +1804,30 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     void closeDb().finally(() => process.exit(0));
   });
 }
+
+// SEC-23: a hot signing process must not keep running in an unknown state after
+// an unhandled error. DISARM live trading (best effort) and exit(1) so a process
+// supervisor restarts us cleanly - and the restart boots READ-ONLY by default,
+// so a crash can never leave the bot trading unattended in a corrupt state.
+function panicExit(label: string, err: unknown): never {
+  try {
+    store.setLiveTrading(false);
+  } catch {
+    /* best effort - we're exiting anyway */
+  }
+  try {
+    store.log(
+      "error",
+      `${label}: ${(err as Error)?.message ?? String(err)} - disarmed live trading, exiting(1) for restart.`,
+    );
+  } catch {
+    /* ignore */
+  }
+  console.error(`\n  FATAL ${label}:`, err);
+  console.error("  Live trading disarmed; exiting(1) for supervised restart.\n");
+  process.exit(1);
+}
+process.on("unhandledRejection", (reason) => panicExit("unhandledRejection", reason));
+process.on("uncaughtException", (err) => panicExit("uncaughtException", err));
 
 void start();
