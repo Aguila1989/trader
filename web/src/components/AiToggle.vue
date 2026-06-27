@@ -1,13 +1,12 @@
 <script setup lang="ts">
-// Feature 1: the AI trading master switch, shown at the top of the Bot tab.
-// Pausing stops AI proposals/orders/stop-losses; scanner, stop-loss monitor and
-// manual trading keep running. State is persisted server-side (survives restart).
-//
-// Also surfaces the AI-specific TRADE MODE (Approve every trade vs. Auto-trade)
-// here, contextually next to the AI switch. It is the SAME control as the header
-// one (store.autoApprove) — auto-approve only affects AI/scanner proposals;
-// manual orders always run attended. The header keeps the global access mode +
-// kill switch, which also gate manual trading and wallet sends.
+// The Bot tab's trading-control panel. Holds the controls the operator asked to
+// keep OUT of the global header (it was too busy there):
+//   - Trading access  (Read-only / Paper / Live)   - store.liveTrading/paperTrading
+//   - AI master switch (Enable / Pause)             - Feature 1, store.aiEnabled
+//   - AI trade mode    (Approve every trade / Auto) - store.autoApprove
+// The header keeps only status badges + the always-reachable kill switch. NOTE:
+// Trading access also gates MANUAL orders and wallet sends, so arming now lives
+// on the Bot tab only.
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 
@@ -20,11 +19,59 @@ function set(on: boolean): void {
 function setMode(auto: boolean): void {
   if (store.isAutoTrade !== auto) void store.setAutoApprove(auto);
 }
+// Read-only / Paper / Live are mutually exclusive access modes; the backend
+// enforces exclusivity too, this just routes the click to the right toggle.
+function setAccess(mode: "readonly" | "paper" | "live"): void {
+  if (mode === "live") {
+    if (!store.isLive) void store.setLiveTrading(true);
+  } else if (mode === "paper") {
+    if (!store.isPaper) void store.setPaperTrading(true);
+  } else {
+    if (store.isLive) void store.setLiveTrading(false);
+    if (store.isPaper) void store.setPaperTrading(false);
+  }
+}
 </script>
 
 <template>
   <section class="panel ai-toggle" :class="{ off: !store.aiEnabled }">
+    <!-- Trading access (master arm): observe / simulate / submit. Moved here from
+         the header (it also gates manual orders + wallet sends). -->
     <div class="at-row">
+      <div class="at-head">
+        <span class="at-mode-label">{{ t("common.ai.access") }}</span>
+        <span class="muted at-hint">{{ t("common.ai.accessHint") }}</span>
+      </div>
+      <div class="segmented at-seg" role="group" :aria-label="t('common.ai.access')">
+        <button
+          class="seg"
+          :class="{ active: !store.isLive && !store.isPaper }"
+          @click="setAccess('readonly')"
+        >
+          {{ t("topBar.readonlyBtn") }}
+        </button>
+        <button
+          class="seg auto"
+          :class="{ active: store.isPaper }"
+          :title="t('topBar.paperTitle')"
+          @click="setAccess('paper')"
+        >
+          {{ t("topBar.paperBtn") }}
+        </button>
+        <button
+          class="seg live"
+          :class="{ active: store.isLive }"
+          :disabled="!store.canGoLive"
+          :title="store.canGoLive ? t('topBar.liveTitleEnabled') : t('topBar.liveTitleDisabled')"
+          @click="setAccess('live')"
+        >
+          {{ t("topBar.liveBtn") }}
+        </button>
+      </div>
+    </div>
+
+    <!-- AI master switch (Feature 1). -->
+    <div class="at-row at-row-sep">
       <div class="at-head">
         <span class="at-state" :class="store.aiEnabled ? 'pos' : 'neg'">
           ● {{ store.aiEnabled ? t("common.ai.active") : t("common.ai.paused") }}
@@ -41,8 +88,8 @@ function setMode(auto: boolean): void {
       </div>
     </div>
 
-    <!-- AI trade mode (mirrors the header's Approve/Auto toggle; AI-only). -->
-    <div class="at-row at-row-mode">
+    <!-- AI trade mode: approve each trade vs. fully automated. -->
+    <div class="at-row at-row-sep">
       <div class="at-head">
         <span class="at-mode-label">
           {{ t("common.ai.tradeMode") }}:
@@ -68,7 +115,7 @@ function setMode(auto: boolean): void {
 .ai-toggle { display: flex; flex-direction: column; gap: 14px; }
 .ai-toggle.off { border-color: #5e1f28; }
 .at-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.at-row-mode { border-top: 1px solid var(--line); padding-top: 14px; }
+.at-row-sep { border-top: 1px solid var(--line); padding-top: 14px; }
 .at-head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .at-state { font-weight: 700; font-size: 14px; letter-spacing: 0.02em; }
 .at-mode-label { font-weight: 600; font-size: 13px; }

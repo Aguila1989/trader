@@ -41,23 +41,6 @@ function onProviderChange(e: Event): void {
 }
 
 const killOn = computed(() => store.snapshot?.killSwitch ?? false);
-
-function setMode(auto: boolean): void {
-  if (store.isAutoTrade !== auto) void store.setAutoApprove(auto);
-}
-
-// Read-only / Paper / Live are mutually exclusive access modes. The backend
-// enforces the exclusivity too; this just routes the click to the right toggle.
-function setAccess(mode: "readonly" | "paper" | "live"): void {
-  if (mode === "live") {
-    if (!store.isLive) void store.setLiveTrading(true);
-  } else if (mode === "paper") {
-    if (!store.isPaper) void store.setPaperTrading(true);
-  } else {
-    if (store.isLive) void store.setLiveTrading(false);
-    if (store.isPaper) void store.setPaperTrading(false);
-  }
-}
 </script>
 
 <template>
@@ -105,57 +88,9 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
     </div>
 
     <div class="controls">
-      <!-- Master arm switch: observe / simulate / submit. Read-only, Paper and
-           Live are mutually exclusive. Paper needs no key - it never submits. -->
-      <div class="segmented" role="group" :aria-label="t('topBar.tradingAccessAria')">
-        <button
-          class="seg"
-          :class="{ active: !store.isLive && !store.isPaper }"
-          @click="setAccess('readonly')"
-        >
-          {{ t("topBar.readonlyBtn") }}
-        </button>
-        <button
-          class="seg auto"
-          :class="{ active: store.isPaper }"
-          :title="t('topBar.paperTitle')"
-          @click="setAccess('paper')"
-        >
-          {{ t("topBar.paperBtn") }}
-        </button>
-        <button
-          class="seg live"
-          :class="{ active: store.isLive }"
-          :disabled="!store.canGoLive"
-          :title="
-            store.canGoLive
-              ? t('topBar.liveTitleEnabled')
-              : t('topBar.liveTitleDisabled')
-          "
-          @click="setAccess('live')"
-        >
-          {{ t("topBar.liveBtn") }}
-        </button>
-      </div>
-
-      <!-- The headline toggle: approve each trade vs. fully automated. -->
-      <div class="segmented" role="group" :aria-label="t('topBar.tradingModeAria')">
-        <button
-          class="seg"
-          :class="{ active: !store.isAutoTrade }"
-          @click="setMode(false)"
-        >
-          {{ t("topBar.approveEveryTrade") }}
-        </button>
-        <button
-          class="seg auto"
-          :class="{ active: store.isAutoTrade }"
-          @click="setMode(true)"
-        >
-          {{ t("topBar.autoTrade") }}
-        </button>
-      </div>
-
+      <!-- Trading access (Read-only/Paper/Live) and the trade-mode toggle moved to
+           the Bot Trading tab (AiToggle) - the header was too busy. Only the
+           always-reachable emergency kill switch stays here. -->
       <button
         class="btn danger"
         :class="{ active: killOn }"

@@ -22,6 +22,9 @@ export default {
       tradeMode: "AI trade mode",
       tradeModeHint:
         "Auto-trade submits policy-passing AI proposals without a click (still requires Live armed). Approve every trade queues them for your approval. Manual orders are unaffected.",
+      access: "Trading access",
+      accessHint:
+        "Read-only observes; Paper simulates fills; Live can submit on-chain. This also gates your manual orders and wallet sends.",
     },
   },
   nl: {
@@ -44,6 +47,9 @@ export default {
       tradeMode: "AI-handelsmodus",
       tradeModeHint:
         "Auto-trade verstuurt AI-voorstellen die de regels doorstaan zonder klik (vereist nog steeds dat Live actief is). Elke trade goedkeuren zet ze klaar voor jouw goedkeuring. Handmatige orders blijven ongemoeid.",
+      access: "Handelstoegang",
+      accessHint:
+        "Alleen-lezen observeert; Paper simuleert fills; Live kan on-chain versturen. Dit geldt ook voor je handmatige orders en wallet-verzendingen.",
     },
   },
   fr: {
@@ -66,6 +72,9 @@ export default {
       tradeMode: "Mode de trading IA",
       tradeModeHint:
         "Auto-trade envoie les propositions de l'IA conformes à la politique sans clic (nécessite quand même que le mode Live soit activé). Approuver chaque transaction les met en attente de votre validation. Les ordres manuels ne sont pas affectés.",
+      access: "Accès au trading",
+      accessHint:
+        "Lecture seule observe ; Paper simule les exécutions ; Live peut soumettre on-chain. Cela conditionne aussi vos ordres manuels et les envois depuis le portefeuille.",
     },
   },
   es: {
@@ -88,6 +97,9 @@ export default {
       tradeMode: "Modo de trading de IA",
       tradeModeHint:
         "Auto-trade envía las propuestas de la IA que pasan la política sin un clic (sigue requiriendo el modo Live activado). Aprobar cada operación las deja en espera de tu aprobación. Las órdenes manuales no se ven afectadas.",
+      access: "Acceso al trading",
+      accessHint:
+        "Solo lectura observa; Paper simula ejecuciones; Live puede enviar on-chain. Esto también condiciona tus órdenes manuales y los envíos desde la billetera.",
     },
   },
 };
