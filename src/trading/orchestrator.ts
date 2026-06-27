@@ -45,7 +45,7 @@ import {
   type RecentOutcome,
   type TradingMemory,
 } from "../claude/agent";
-import type { PolicyContext, TradeProposal, TradeSide } from "../types";
+import type { PolicyContext, RiskProfile, TradeProposal, TradeSide } from "../types";
 
 /** How many recent submitted trades (with outcomes) the analyst gets to see. */
 const MEMORY_OUTCOMES = 5;
@@ -942,6 +942,22 @@ export function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
   })();
 }
 
+/**
+ * SEC-19: the conviction gate, mirrored from intake() so it can be RE-ASSERTED
+ * at the execution boundary. A path that bypasses intake (e.g. the
+ * /api/auto-approve/:id endpoint) must not let a sub-conviction AI call submit
+ * unattended. Expert mode = exact numeric threshold; basic = the label gate.
+ */
+function meetsConviction(p: TradeProposal, profile: RiskProfile): boolean {
+  if (profile.expertMode && profile.expert) {
+    const score = p.confidenceScore;
+    return typeof score === "number" && score >= minConfidenceScore(profile);
+  }
+  const minConf = minAutoConfidence(profile);
+  const conf = p.confidence;
+  return conf === "high" || conf === "medium" || (minConf === "low" && conf === "low");
+}
+
 function execute(id: string, auto: boolean): Promise<void> {
   return runExclusive(() => executeInner(id, auto));
 }
@@ -991,6 +1007,41 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
         error: "Live trading is OFF (read-only). Enable it on the dashboard, then approve.",
       });
       store.log("warn", `Proposal ${shortId(id)} held: live trading is OFF (read-only).`);
+      return;
+    }
+  }
+
+  // SEC-10 + SEC-19: extra gates for UNATTENDED submits that OPEN risk. Risk-
+  // reducing exits (stop-loss closes) are exempt - they only shrink exposure and
+  // must never be stranded behind these checks.
+  if (auto && !isRiskReducing(p, store.getPositions())) {
+    // SEC-10: the daily-loss breaker's unrealized term is 0 until the position
+    // monitor's first post-boot mark. Opening new risk while open positions are
+    // unmarked could slip past a breached loss limit. Fail CLOSED until fresh.
+    if (store.getPositions().length > 0 && !store.marksFresh) {
+      store.updateProposal(id, {
+        status: "pending_approval",
+        error:
+          "Open positions not yet marked-to-market since restart - auto-entry deferred until the monitor's first mark.",
+      });
+      store.log(
+        "warn",
+        `Proposal ${shortId(id)} held (SEC-10): positions unmarked since restart.`,
+      );
+      return;
+    }
+    // SEC-19: re-assert conviction here, catching paths that skip intake's gate.
+    // Manual orders are attended (confidence forced "high"); system exits are
+    // risk-reducing (excluded above).
+    if (p.initiator !== "manual" && !meetsConviction(p, store.riskProfile)) {
+      store.updateProposal(id, {
+        status: "pending_approval",
+        error: "Below the conviction threshold - held for manual review.",
+      });
+      store.log(
+        "warn",
+        `Proposal ${shortId(id)} held (SEC-19): below conviction threshold at execution.`,
+      );
       return;
     }
   }

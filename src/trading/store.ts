@@ -513,8 +513,20 @@ class Store {
     );
   }
 
+  /**
+   * SEC-10: false until the position monitor marks open positions at least once
+   * THIS process. The daily-loss breaker's unrealized term is 0 until then, so
+   * an unattended AI entry at boot could slip past a loss limit a marked book
+   * would have tripped. The orchestrator fails closed on auto-entries while this
+   * is false and positions exist. Set on every monitor mark (below).
+   */
+  marksFresh = false;
+
   /** Update the mark-to-market PnL of open positions (called by the monitor). */
   setUnrealizedPnl(v: number): void {
+    // Mark freshness regardless of whether the value changed - a mark of 0 (no
+    // positions, or break-even) still proves the monitor has run this process.
+    this.marksFresh = true;
     const next = round7(v);
     if (Math.abs(next - this.unrealizedPnl) < 1e-7) return;
     this.unrealizedPnl = next;
