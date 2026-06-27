@@ -1666,6 +1666,25 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * SEC-12 helper: is the configured DB host loopback/local? Reads the discrete
+ * SQLSERVER_HOST, or parses the Server=/Data Source= host out of a connection
+ * string (stripping a `tcp:` prefix, an instance `\name` and a `,port`). An
+ * unparseable connection string is treated as REMOTE (fail-closed).
+ */
+function dbHostIsLoopback(): boolean {
+  const cs = config.db.connectionString;
+  let host: string;
+  if (cs) {
+    const m = cs.match(/(?:server|data source|address|addr|network address)\s*=\s*([^;]+)/i);
+    if (!m) return false;
+    host = (m[1] ?? "").trim().replace(/^tcp:/i, "").split(/[\\,]/)[0]!.trim();
+  } else {
+    host = config.db.server;
+  }
+  return isLoopbackBind(host);
+}
+
 async function connectDatabase(): Promise<void> {
   if (!dbConfigured) {
     store.log(
@@ -1755,7 +1774,10 @@ async function start(): Promise<void> {
   // via the discrete SQLSERVER_* vars OR smuggled into SQLSERVER_CONNECTION_STRING
   // (which bypasses the secure code defaults). A plaintext / unverified-cert DB
   // link is MITM-able, and the DB holds the daily-loss ledger that guards trading.
-  if (config.network === "public" && dbConfigured) {
+  // EXEMPT a loopback / local DB (e.g. the dev docker SQL Server on localhost):
+  // there is no wire between the app and 127.0.0.1 for anyone to MITM, so its
+  // self-signed cert is fine. ALLOW_INSECURE_DB opts out for a remote DB too.
+  if (config.network === "public" && dbConfigured && !config.allowInsecureDb && !dbHostIsLoopback()) {
     const cs = config.db.connectionString;
     const csInsecure =
       cs !== "" &&
@@ -1765,11 +1787,11 @@ async function start(): Promise<void> {
       cs === "" && (config.db.encrypt === false || config.db.trustServerCertificate === true);
     if (csInsecure || discreteInsecure) {
       console.error(
-        "\n  REFUSING TO START: network=public but the SQL Server connection is\n" +
-          "  insecure (encryption off or TrustServerCertificate=true). That link is\n" +
+        "\n  REFUSING TO START: network=public but the REMOTE SQL Server connection\n" +
+          "  is insecure (encryption off or TrustServerCertificate=true). That link is\n" +
           "  MITM-able. Use SQLSERVER_ENCRYPT=true with a verified cert\n" +
-          "  (SQLSERVER_TRUST_CERT=false), or fix Encrypt/TrustServerCertificate in\n" +
-          "  SQLSERVER_CONNECTION_STRING.\n",
+          "  (SQLSERVER_TRUST_CERT=false), fix Encrypt/TrustServerCertificate in\n" +
+          "  SQLSERVER_CONNECTION_STRING, or set ALLOW_INSECURE_DB=true to accept it.\n",
       );
       process.exit(1);
     }

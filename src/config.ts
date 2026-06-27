@@ -290,6 +290,13 @@ export const config = {
    */
   allowMainnetWithoutDb: bool("ALLOW_MAINNET_WITHOUT_DB", false),
   /**
+   * SEC-12: opt out of the mainnet "insecure DB TLS" boot guard. The guard only
+   * fires for a REMOTE DB (a loopback/local docker DB has no wire to MITM, so it
+   * is always exempt). Set true only if you knowingly accept an unencrypted /
+   * unverified-cert link to a non-loopback DB.
+   */
+  allowInsecureDb: bool("ALLOW_INSECURE_DB", false),
+  /**
    * SEC-01: allow RAW external transfers (`POST /api/pay` sends to an arbitrary
    * destination). The bot's trading function never needs to send funds OUT to a
    * third party, so this is OFF by default - a compromised dashboard/CSRF/XSS
