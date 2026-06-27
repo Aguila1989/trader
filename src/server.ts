@@ -299,6 +299,37 @@ function llmGateRelease(): void {
   llmInFlight = false;
 }
 
+/**
+ * SEC-09: parse + bound a money-movement amount. The raw value MUST be a plain
+ * decimal (up to 12 integer digits, 7 decimals) - this rejects scientific
+ * notation like "1e9" that Number() would otherwise turn into a billion-unit
+ * transfer. Also enforces the per-call ceiling (MAX_TRANSFER_AMOUNT, 0 = off).
+ * Returns the parsed number, or null after writing the error response.
+ */
+const AMOUNT_RE = /^\d{1,12}(\.\d{1,7})?$/;
+function parseTransferAmount(raw: unknown, res: Response, field = "amount"): number | null {
+  const s = String(raw ?? "").trim();
+  if (!AMOUNT_RE.test(s)) {
+    res.status(400).json({
+      error: `${field} must be a positive decimal with up to 7 places (no scientific notation).`,
+    });
+    return null;
+  }
+  const n = Number(s);
+  if (!(n > 0)) {
+    res.status(400).json({ error: `${field} must be greater than zero.` });
+    return null;
+  }
+  const ceiling = config.limits.maxTransferAmount;
+  if (ceiling > 0 && n > ceiling) {
+    res.status(403).json({
+      error: `${field} ${n} exceeds the per-transfer ceiling of ${ceiling} (MAX_TRANSFER_AMOUNT).`,
+    });
+    return null;
+  }
+  return n;
+}
+
 // Current non-native trustlines (asset, balance, limit). Read-only.
 app.get("/api/trustlines", async (_req, res) => {
   const pub = signerPublicKey();
@@ -469,17 +500,16 @@ app.post("/api/pay", async (req, res) => {
     res.status(400).json({ error: "destination is required" });
     return;
   }
-  if (!(Number(amount) > 0)) {
-    res.status(400).json({ error: "amount must be a positive number" });
-    return;
-  }
+  // SEC-09: strict decimal parse + per-transfer ceiling (no "1e9").
+  const amountNum = parseTransferAmount(amount, res, "amount");
+  if (amountNum == null) return;
   // SEC-01: whitelist the sent asset + bound the daily outflow (MAX_DAILY_EGRESS).
-  if (!ensureEgressAllowed(res, [asset], Number(amount))) return;
+  if (!ensureEgressAllowed(res, [asset], amountNum)) return;
   try {
     const result = await runExclusive(() =>
       sendPayment({ destination, asset, amount, memo }),
     );
-    store.recordEgress(Number(amount));
+    store.recordEgress(amountNum);
     store.log(
       "trade",
       `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
@@ -520,10 +550,9 @@ app.post("/api/swap", async (req, res) => {
     res.status(400).json({ error: "sendAsset and destAsset are required" });
     return;
   }
-  if (!(Number(sendAmount) > 0)) {
-    res.status(400).json({ error: "sendAmount must be a positive number" });
-    return;
-  }
+  // SEC-09: strict decimal parse + per-transfer ceiling (no "1e9").
+  const sendNum = parseTransferAmount(sendAmount, res, "sendAmount");
+  if (sendNum == null) return;
   // SEC-07: reject an out-of-range slippage at the route (the swap() backstop
   // also clamps). An unbounded value would let destMin fall to 0.
   if (slippageBps != null && (slippageBps < 0 || slippageBps > config.limits.maxSwapSlippageBps)) {
@@ -533,20 +562,22 @@ app.post("/api/swap", async (req, res) => {
     return;
   }
   // SEC-01: both legs must be whitelisted (the swap acquires destAsset, like a
-  // trade). No egress cap: a strict-send swap converts the wallet's own assets
-  // to-self rather than sending value to an external destination.
-  if (!ensureEgressAllowed(res, [sendAsset, destAsset])) return;
+  // trade). SEC-08: the swap's notional ALSO counts against the daily money-
+  // movement budget (MAX_DAILY_EGRESS), so the circuit-breaker covers swaps as
+  // well as plain sends (no-op when MAX_DAILY_EGRESS=0, the default).
+  if (!ensureEgressAllowed(res, [sendAsset, destAsset], sendNum)) return;
   try {
     const result = await runExclusive(() =>
       swap({ sendAsset, sendAmount, destAsset, slippageBps }),
     );
-    // SEC-08: book the swap to the structured trade log so wallet egress is
-    // audited (it previously emitted only an ad-hoc text line). The FIFO PnL
-    // ledger is deliberately left untouched - it tracks the bot's own
-    // round-trips with a known cost basis, which a swap of arbitrary held
-    // assets does not have.
+    // SEC-08: count the swap against today's egress budget + book it to the
+    // structured trade log so every money-movement path is audited (it
+    // previously emitted only an ad-hoc text line). The FIFO PnL ledger is
+    // deliberately left untouched - it tracks the bot's own round-trips with a
+    // known cost basis, which a swap of arbitrary held assets does not have.
+    store.recordEgress(sendNum);
     const swapPx =
-      Number(sendAmount) > 0 ? (Number(result.quoted) / Number(sendAmount)).toFixed(7) : "0";
+      sendNum > 0 ? (Number(result.quoted) / sendNum).toFixed(7) : "0";
     store.logTrade({
       baseAsset: sendAsset,
       quoteAsset: destAsset,

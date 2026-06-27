@@ -421,6 +421,13 @@ export const config = {
      * the velocity cap - the whitelist + kill-switch gates still apply.
      */
     maxDailyEgress: num("MAX_DAILY_EGRESS", 0),
+    /**
+     * SEC-09: hard ceiling on a SINGLE pay/swap, at face value (XLM exactly,
+     * other assets at their nominal sent amount - same convention as
+     * MAX_DAILY_EGRESS). Bounds the blast radius of one money-movement call on
+     * top of the daily budget. 0 (default) disables the per-call ceiling.
+     */
+    maxTransferAmount: num("MAX_TRANSFER_AMOUNT", 0),
   },
 
   port: num("PORT", 3000),
