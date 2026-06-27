@@ -52,9 +52,16 @@ function loadToken(): string {
     const hashMatch = hash.match(/(?:^#|&)token=([^&]+)/);
     if (hashMatch) {
       found = decodeURIComponent(hashMatch[1] as string);
-      const cleaned = hash.replace(/(^#|&)token=[^&]+/, "$1");
+      // Strip token= from the fragment, then tidy any leftover separators so a
+      // route fragment isn't left as "#/&" or a bare "#".
+      let cleaned = hash
+        .replace(/(^#|&)token=[^&]+/, "$1")
+        .replace(/&&+/g, "&")
+        .replace(/[#&]+$/g, "")
+        .replace(/^#&/, "#");
+      if (cleaned === "#") cleaned = "";
       const u = new URL(window.location.href);
-      u.hash = cleaned === "#" || cleaned === "" ? "" : cleaned;
+      u.hash = cleaned;
       window.history.replaceState({}, "", u.toString());
     }
     // Legacy fallback: ?token= query (read once, then stripped). The server no

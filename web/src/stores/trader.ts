@@ -284,6 +284,10 @@ export const useTraderStore = defineStore("trader", () => {
   let watchdog: ReturnType<typeof setInterval> | null = null;
   let reconnectDelay = 1000;
   let lastBeat = 0;
+  // SEC-04 follow-up: connectStream() is async (it awaits a one-time SSE ticket).
+  // A generation token prevents a watchdog/reconnect firing during that await
+  // from leaving a second, orphaned EventSource open.
+  let connectGen = 0;
 
   // Any traffic (event OR heartbeat) means the stream is alive.
   function markAlive(): void {
@@ -319,12 +323,17 @@ export const useTraderStore = defineStore("trader", () => {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    const myGen = ++connectGen; // supersede any in-flight connect
     es?.close();
+    es = null;
 
     // SEC-04: authenticate the stream with a one-time ticket (fetched per
     // connect) instead of putting the token in the URL. When no token is
     // configured the ticket is "" and the stream is open (loopback default).
     const ticket = await sseTicket();
+    // A newer connect (watchdog/reconnect) started during the await - bail so we
+    // don't leave a second EventSource open.
+    if (myGen !== connectGen) return;
     es = new EventSource(ticket ? `/api/stream?ticket=${encodeURIComponent(ticket)}` : "/api/stream");
     startWatchdog();
     es.addEventListener("open", () => {

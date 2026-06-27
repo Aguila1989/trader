@@ -260,17 +260,18 @@ export const config = {
   bindHost: env("BIND_HOST", "127.0.0.1"),
   /**
    * Optional shared secret. When non-empty, every /api/* request (except
-   * /api/health) must present it as `Authorization: Bearer <token>` or
-   * `?token=<token>`. Strongly recommended whenever BIND_HOST is not loopback.
+   * /api/health) must present it as `Authorization: Bearer <token>` (SEC-04: the
+   * legacy `?token=` query is no longer accepted; the SPA bootstraps the token
+   * from the URL #fragment and the SSE stream uses a one-time ticket). Must be
+   * >= 24 chars (SEC-20). Strongly recommended whenever BIND_HOST is not loopback.
    */
   dashboardToken: env("DASHBOARD_TOKEN"),
   /**
    * Extra browser origins allowed to make state-changing /api calls (the CSRF
-   * allowlist). Comma-separated, e.g. "https://trader.example.com". Same-origin
-   * requests and loopback always pass, and a reverse proxy's X-Forwarded-Host is
-   * honored automatically; set this only when you serve the dashboard from
-   * another origin behind a proxy that rewrites Host AND drops X-Forwarded-Host.
-   * Only the host part is matched.
+   * allowlist). Comma-separated, e.g. "https://trader.example.com". Loopback
+   * origins pass on a loopback bind; on an exposed bind, list the exact host:port
+   * you serve from here. A reverse proxy's X-Forwarded-Host is honored ONLY when
+   * TRUST_PROXY=true (SEC-22). Only the host part is matched.
    */
   trustedOrigins: env("DASHBOARD_TRUSTED_ORIGINS")
     .split(",")
