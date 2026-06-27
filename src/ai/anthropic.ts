@@ -27,6 +27,11 @@ export class AnthropicProvider implements AiProvider {
     this.thinkingBudget = opts.thinkingBudget ?? 0;
     this.client = new Anthropic({
       apiKey: opts.apiKey,
+      // SEC-17: bound every Claude call so a hung provider can't stall the
+      // analysis loop indefinitely (the OpenAI-compatible path has the same 60s
+      // cap). maxRetries is kept low so the total wall-clock stays bounded.
+      timeout: 60_000,
+      maxRetries: 1,
       ...(opts.baseURL ? { baseURL: opts.baseURL } : {}),
     });
   }

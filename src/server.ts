@@ -747,20 +747,27 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
       res.status(404).json({ error: "claimable balance not found for this account" });
       return;
     }
+    // Estimate the XLM this swap will produce - used for the value-loss gate AND
+    // the daily-egress pre-check (SEC-08). Native (XLM) claimables are claimed
+    // 1:1, no swap.
+    const estimate = cb.asset === "XLM" ? null : await assessSwapToXlm(cb.asset, cb.amount);
+    const estXlm = cb.asset === "XLM" ? Number(cb.amount) : Number(estimate?.estXlm ?? 0);
+
     // SEC-01 (acquired-side): a swap-to-XLM only ever ACQUIRES XLM (whitelisted)
     // and disposes the held token, so gate the acquired side - the source token
-    // need not be whitelisted. Also re-checks the kill switch.
-    if (!ensureEgressAllowed(res, ["XLM"])) return;
+    // need not be whitelisted. SEC-08: count the produced XLM against the daily
+    // egress budget so a claimable swap can't bypass MAX_DAILY_EGRESS. Also
+    // re-checks the kill switch.
+    if (!ensureEgressAllowed(res, ["XLM"], estXlm)) return;
 
     // Backend value-loss gate (mirrors the UI pre-check). Native = no swap.
-    if (cb.asset !== "XLM" && !force) {
-      const a = await assessSwapToXlm(cb.asset, cb.amount);
-      if (a.valueLossPct != null && a.valueLossPct > config.swap.valueLossThresholdPct) {
+    if (estimate && !force) {
+      if (estimate.valueLossPct != null && estimate.valueLossPct > config.swap.valueLossThresholdPct) {
         res.status(409).json({
           error:
-            `Swapping to XLM would lose ~${a.valueLossPct}% of value (threshold ` +
+            `Swapping to XLM would lose ~${estimate.valueLossPct}% of value (threshold ` +
             `${config.swap.valueLossThresholdPct}%). Confirm the swap to proceed anyway.`,
-          assessment: a,
+          assessment: estimate,
         });
         return;
       }
@@ -769,6 +776,8 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
     const result = await runExclusive(() =>
       swapClaimableToXlm({ id, asset: cb.asset, amount: cb.amount }),
     );
+    // SEC-08: book the produced XLM against today's egress budget.
+    store.recordEgress(Number(result.estXlm) || 0);
     const px =
       result.swapped && Number(result.amount) > 0
         ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
@@ -861,16 +870,31 @@ app.post("/api/claimable/swap-all", async (req, res) => {
     const pending = (await listClaimableBalances(pub)).filter((c) => !rejectedIds.has(c.id));
     for (const c of pending) {
       try {
-        if (c.asset !== "XLM" && !force) {
-          const a = await assessSwapToXlm(c.asset, c.amount);
-          if (a.valueLossPct != null && a.valueLossPct > config.swap.valueLossThresholdPct) {
-            skipped.push({ id: c.id, asset: c.asset, reason: `value loss ${a.valueLossPct}%` });
+        const estimate = c.asset === "XLM" ? null : await assessSwapToXlm(c.asset, c.amount);
+        const estXlm = c.asset === "XLM" ? Number(c.amount) : Number(estimate?.estXlm ?? 0);
+        if (estimate && !force) {
+          if (estimate.valueLossPct != null && estimate.valueLossPct > config.swap.valueLossThresholdPct) {
+            skipped.push({ id: c.id, asset: c.asset, reason: `value loss ${estimate.valueLossPct}%` });
             continue;
           }
+        }
+        // SEC-08: enforce MAX_DAILY_EGRESS per item against the RUNNING total
+        // (recordEgress below updates it), so the batch can't bust the cap.
+        const eg = checkEgress({
+          assets: ["XLM"],
+          amountXlm: estXlm,
+          egressTodayXlm: store.getEgressTodayXlm(),
+          killSwitch: store.killSwitch,
+        });
+        if (!eg.allowed) {
+          skipped.push({ id: c.id, asset: c.asset, reason: "daily egress cap" });
+          continue;
         }
         const result = await runExclusive(() =>
           swapClaimableToXlm({ id: c.id, asset: c.asset, amount: c.amount }),
         );
+        // SEC-08: book the produced XLM against today's egress budget.
+        store.recordEgress(Number(result.estXlm) || 0);
         const px =
           result.swapped && Number(result.amount) > 0
             ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
@@ -1725,6 +1749,30 @@ async function start(): Promise<void> {
         "  Use a long random secret, e.g. `openssl rand -hex 32`.\n",
     );
     process.exit(1);
+  }
+
+  // SEC-12: on mainnet, refuse an insecure DB TLS posture - whether configured
+  // via the discrete SQLSERVER_* vars OR smuggled into SQLSERVER_CONNECTION_STRING
+  // (which bypasses the secure code defaults). A plaintext / unverified-cert DB
+  // link is MITM-able, and the DB holds the daily-loss ledger that guards trading.
+  if (config.network === "public" && dbConfigured) {
+    const cs = config.db.connectionString;
+    const csInsecure =
+      cs !== "" &&
+      (/encrypt\s*=\s*(false|no|0)/i.test(cs) ||
+        /trust\s*server\s*certificate\s*=\s*(true|yes|1)/i.test(cs));
+    const discreteInsecure =
+      cs === "" && (config.db.encrypt === false || config.db.trustServerCertificate === true);
+    if (csInsecure || discreteInsecure) {
+      console.error(
+        "\n  REFUSING TO START: network=public but the SQL Server connection is\n" +
+          "  insecure (encryption off or TrustServerCertificate=true). That link is\n" +
+          "  MITM-able. Use SQLSERVER_ENCRYPT=true with a verified cert\n" +
+          "  (SQLSERVER_TRUST_CERT=false), or fix Encrypt/TrustServerCertificate in\n" +
+          "  SQLSERVER_CONNECTION_STRING.\n",
+      );
+      process.exit(1);
+    }
   }
 
   // SEC-02 + SEC-14: fail CLOSED on a dangerous exposed posture, mirroring the
