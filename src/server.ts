@@ -59,10 +59,12 @@ const webDist = join(here, "..", "web", "dist");
 const webBuilt = existsSync(join(webDist, "index.html"));
 
 const app = express();
-// SEC-20/22: only derive req.ip / req.protocol from X-Forwarded-* when a proxy
-// is explicitly trusted; otherwise use the socket peer (so a client can't spoof
-// its IP to dodge the auth rate limiter).
-app.set("trust proxy", config.trustProxy);
+// SEC-20/22: when a proxy is explicitly trusted, trust EXACTLY ONE hop (the
+// immediate reverse proxy) so req.ip = the address the proxy appended, NOT the
+// leftmost client-controlled X-Forwarded-For entry. `true` would trust the whole
+// chain and let a client spoof its IP to dodge the auth rate limiter. Off (the
+// default) uses the socket peer.
+app.set("trust proxy", config.trustProxy ? 1 : false);
 // SEC-13: security headers. The stated priority is anti-clickjacking — even on a
 // loopback bind a malicious page can frame the dashboard — so X-Frame-Options:
 // DENY + CSP `frame-ancestors 'none'` lead. The rest is a self-contained,
@@ -112,6 +114,21 @@ if (webBuilt) app.use(express.static(webDist));
 // exposed (0.0.0.0) bind falls back to same-origin + X-Forwarded-Host +
 // DASHBOARD_TRUSTED_ORIGINS. GET/HEAD/OPTIONS and non-browser clients are exempt.
 const trustLoopback = isLoopbackBind(config.bindHost);
+// SEC-03 follow-up: on a CONCRETE exposed bind (e.g. BIND_HOST=192.168.1.5), the
+// SPA is served same-origin from that host:port, but the fixed CSRF allow-list
+// only contains loopback. Add the configured bind host:port (a SERVER-controlled
+// value, never the attacker-controllable Host header, so it doesn't reintroduce
+// the DNS-rebind hole). A wildcard bind (0.0.0.0 / ::) can't be resolved to one
+// host, so those still require DASHBOARD_TRUSTED_ORIGINS.
+const csrfTrustedOrigins = [...config.trustedOrigins];
+if (
+  !trustLoopback &&
+  config.bindHost !== "0.0.0.0" &&
+  config.bindHost !== "::" &&
+  config.bindHost !== ""
+) {
+  csrfTrustedOrigins.push(`${config.bindHost}:${config.port}`);
+}
 app.use((req, res, next) => {
   const verdict = checkOrigin(
     {
@@ -123,7 +140,7 @@ app.use((req, res, next) => {
     },
     {
       port: config.port,
-      trustedOrigins: config.trustedOrigins,
+      trustedOrigins: csrfTrustedOrigins,
       trustLoopback,
       trustProxy: config.trustProxy,
     },
@@ -174,12 +191,21 @@ function consumeSseTicket(t: string): boolean {
 const authFails = new Map<string, { count: number; resetAt: number }>();
 const AUTH_WINDOW_MS = 60_000;
 const AUTH_MAX_FAILS = 10;
+// The brute-force threat is REMOTE; a loopback caller is the local operator (and
+// on a loopback bind every request shares one IP, so counting it would let a
+// local process lock out the dashboard). Exempt loopback from the limiter.
+function isLoopbackIp(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("::ffff:127.");
+}
 function authRateLimited(ip: string): boolean {
   const e = authFails.get(ip);
   return e != null && Date.now() <= e.resetAt && e.count >= AUTH_MAX_FAILS;
 }
 function recordAuthFail(ip: string): void {
   const now = Date.now();
+  // Sweep expired buckets so the map can't grow unbounded (mirrors sseTickets);
+  // the live working set within one window is tiny.
+  for (const [k, v] of authFails) if (now > v.resetAt) authFails.delete(k);
   const e = authFails.get(ip);
   if (!e || now > e.resetAt) {
     authFails.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
@@ -202,16 +228,18 @@ app.use((req, res, next) => {
     const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
     if (consumeSseTicket(ticket)) return next();
   }
-  // SEC-20: block brute-forcing IPs before doing the (constant-time) compare.
+  // SEC-20: block brute-forcing IPs before the (constant-time) compare. Loopback
+  // is the local operator and shares one bucket, so it is exempt.
   const ip = req.ip ?? "unknown";
-  if (authRateLimited(ip)) {
+  const limit = !isLoopbackIp(ip);
+  if (limit && authRateLimited(ip)) {
     res.status(429).json({ error: "too many attempts - try again later" });
     return;
   }
   const header = req.header("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (tokenMatches(bearer, config.dashboardToken)) return next();
-  recordAuthFail(ip);
+  if (limit) recordAuthFail(ip);
   res.status(401).json({ error: "unauthorized" });
 });
 
@@ -578,19 +606,25 @@ app.post("/api/pay", async (req, res) => {
   // SEC-09: strict decimal parse + per-transfer ceiling (no "1e9").
   const amountNum = parseTransferAmount(amount, res, "amount");
   if (amountNum == null) return;
-  // SEC-01: whitelist the sent asset + bound the daily outflow (MAX_DAILY_EGRESS).
-  if (!ensureEgressAllowed(res, [asset], amountNum)) return;
+  // SEC-01: whitelist the sent asset + kill switch. SEC-08 (TOCTOU fix): RESERVE
+  // the amount against the daily cap atomically BEFORE the await, so concurrent
+  // requests can't each pass a stale check; refund on submit failure.
+  if (!ensureEgressAllowed(res, [asset])) return;
+  if (!store.tryReserveEgress(amountNum)) {
+    res.status(403).json({ error: "Daily egress cap exceeded (MAX_DAILY_EGRESS)." });
+    return;
+  }
   try {
     const result = await runExclusive(() =>
       sendPayment({ destination, asset, amount, memo }),
     );
-    store.recordEgress(amountNum);
     store.log(
       "trade",
       `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
     );
     res.json(result);
   } catch (err) {
+    store.releaseEgress(amountNum); // submit failed - free the reservation
     failGeneric(res, err, 502);
   }
 });
@@ -636,21 +670,25 @@ app.post("/api/swap", async (req, res) => {
     });
     return;
   }
-  // SEC-01: both legs must be whitelisted (the swap acquires destAsset, like a
-  // trade). SEC-08: the swap's notional ALSO counts against the daily money-
-  // movement budget (MAX_DAILY_EGRESS), so the circuit-breaker covers swaps as
-  // well as plain sends (no-op when MAX_DAILY_EGRESS=0, the default).
-  if (!ensureEgressAllowed(res, [sendAsset, destAsset], sendNum)) return;
+  // SEC-01: both legs whitelisted + kill switch. SEC-08 (TOCTOU fix): the swap's
+  // sent notional is RESERVED against the daily egress budget atomically before
+  // the await (refunded on failure), so the circuit-breaker covers swaps too and
+  // concurrent swaps can't bust it. Face-value units (see store.tryReserveEgress
+  // / MAX_DAILY_EGRESS). No-op when MAX_DAILY_EGRESS=0 (the default).
+  if (!ensureEgressAllowed(res, [sendAsset, destAsset])) return;
+  if (!store.tryReserveEgress(sendNum)) {
+    res.status(403).json({ error: "Daily egress cap exceeded (MAX_DAILY_EGRESS)." });
+    return;
+  }
   try {
     const result = await runExclusive(() =>
       swap({ sendAsset, sendAmount, destAsset, slippageBps }),
     );
-    // SEC-08: count the swap against today's egress budget + book it to the
-    // structured trade log so every money-movement path is audited (it
-    // previously emitted only an ad-hoc text line). The FIFO PnL ledger is
-    // deliberately left untouched - it tracks the bot's own round-trips with a
-    // known cost basis, which a swap of arbitrary held assets does not have.
-    store.recordEgress(sendNum);
+    // SEC-08: book the swap to the structured trade log so every money-movement
+    // path is audited (it previously emitted only an ad-hoc text line). The FIFO
+    // PnL ledger is deliberately left untouched - it tracks the bot's own
+    // round-trips with a known cost basis, which a swap of arbitrary held assets
+    // does not have.
     const swapPx =
       sendNum > 0 ? (Number(result.quoted) / sendNum).toFixed(7) : "0";
     store.logTrade({
@@ -670,6 +708,7 @@ app.post("/api/swap", async (req, res) => {
     );
     res.json(result);
   } catch (err) {
+    store.releaseEgress(sendNum); // submit failed - free the reservation
     failGeneric(res, err, 502);
   }
 });
@@ -738,6 +777,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
   }
   const id = req.params.id;
   const force = Boolean(req.body?.force);
+  let reserved = 0; // SEC-08: egress reservation to refund if the submit fails
   try {
     const pub = signerPublicKey();
     const cb = pub
@@ -748,19 +788,17 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
       return;
     }
     // Estimate the XLM this swap will produce - used for the value-loss gate AND
-    // the daily-egress pre-check (SEC-08). Native (XLM) claimables are claimed
+    // the daily-egress reservation (SEC-08). Native (XLM) claimables are claimed
     // 1:1, no swap.
     const estimate = cb.asset === "XLM" ? null : await assessSwapToXlm(cb.asset, cb.amount);
     const estXlm = cb.asset === "XLM" ? Number(cb.amount) : Number(estimate?.estXlm ?? 0);
 
-    // SEC-01 (acquired-side): a swap-to-XLM only ever ACQUIRES XLM (whitelisted)
-    // and disposes the held token, so gate the acquired side - the source token
-    // need not be whitelisted. SEC-08: count the produced XLM against the daily
-    // egress budget so a claimable swap can't bypass MAX_DAILY_EGRESS. Also
-    // re-checks the kill switch.
-    if (!ensureEgressAllowed(res, ["XLM"], estXlm)) return;
+    // SEC-01 (acquired-side): a swap-to-XLM only ACQUIRES XLM (whitelisted) and
+    // disposes the held token, so gate the acquired side + kill switch.
+    if (!ensureEgressAllowed(res, ["XLM"])) return;
 
-    // Backend value-loss gate (mirrors the UI pre-check). Native = no swap.
+    // Backend value-loss gate (mirrors the UI pre-check) - BEFORE reserving, so a
+    // 409 needs no refund. Native = no swap.
     if (estimate && !force) {
       if (estimate.valueLossPct != null && estimate.valueLossPct > config.swap.valueLossThresholdPct) {
         res.status(409).json({
@@ -773,11 +811,17 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
       }
     }
 
+    // SEC-08 (TOCTOU fix): reserve the produced XLM against the daily cap
+    // atomically before the submit; keep it on success, refund on failure.
+    if (!store.tryReserveEgress(estXlm)) {
+      res.status(403).json({ error: "Daily egress cap exceeded (MAX_DAILY_EGRESS)." });
+      return;
+    }
+    reserved = estXlm;
     const result = await runExclusive(() =>
       swapClaimableToXlm({ id, asset: cb.asset, amount: cb.amount }),
     );
-    // SEC-08: book the produced XLM against today's egress budget.
-    store.recordEgress(Number(result.estXlm) || 0);
+    reserved = 0; // submitted successfully - keep the reservation booked
     const px =
       result.swapped && Number(result.amount) > 0
         ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
@@ -802,6 +846,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
     );
     res.json(result);
   } catch (err) {
+    if (reserved) store.releaseEgress(reserved); // submit failed - free the reservation
     failGeneric(res, err, 502);
   }
 });
@@ -869,6 +914,7 @@ app.post("/api/claimable/swap-all", async (req, res) => {
     const rejectedIds = store.rejectedClaimableIds();
     const pending = (await listClaimableBalances(pub)).filter((c) => !rejectedIds.has(c.id));
     for (const c of pending) {
+      let reserved = 0; // SEC-08: per-item egress reservation to refund on failure
       try {
         const estimate = c.asset === "XLM" ? null : await assessSwapToXlm(c.asset, c.amount);
         const estXlm = c.asset === "XLM" ? Number(c.amount) : Number(estimate?.estXlm ?? 0);
@@ -878,23 +924,18 @@ app.post("/api/claimable/swap-all", async (req, res) => {
             continue;
           }
         }
-        // SEC-08: enforce MAX_DAILY_EGRESS per item against the RUNNING total
-        // (recordEgress below updates it), so the batch can't bust the cap.
-        const eg = checkEgress({
-          assets: ["XLM"],
-          amountXlm: estXlm,
-          egressTodayXlm: store.getEgressTodayXlm(),
-          killSwitch: store.killSwitch,
-        });
-        if (!eg.allowed) {
+        // SEC-08 (TOCTOU fix): atomically reserve this item against MAX_DAILY_EGRESS.
+        // tryReserveEgress increments the running total under no interleaving await,
+        // so neither successive items NOR a concurrent request can bust the cap.
+        if (!store.tryReserveEgress(estXlm)) {
           skipped.push({ id: c.id, asset: c.asset, reason: "daily egress cap" });
           continue;
         }
+        reserved = estXlm;
         const result = await runExclusive(() =>
           swapClaimableToXlm({ id: c.id, asset: c.asset, amount: c.amount }),
         );
-        // SEC-08: book the produced XLM against today's egress budget.
-        store.recordEgress(Number(result.estXlm) || 0);
+        reserved = 0; // submitted successfully - keep the reservation booked
         const px =
           result.swapped && Number(result.amount) > 0
             ? (Number(result.estXlm) / Number(result.amount)).toFixed(7)
@@ -913,6 +954,7 @@ app.post("/api/claimable/swap-all", async (req, res) => {
         });
         swapped.push(result);
       } catch (err) {
+        if (reserved) store.releaseEgress(reserved); // free this item's reservation
         failed.push({ id: c.id, asset: c.asset, error: (err as Error).message });
       }
     }
@@ -1100,7 +1142,14 @@ app.get("/api/trades.csv", async (_req, res) => {
     }
     res.end();
   } catch (err) {
-    // Headers may already be flushed mid-stream; failGeneric guards on that.
+    // SEC-26: if a page fetch throws AFTER headers are flushed, the body would be
+    // a silently-truncated CSV that still looks like a 200. Destroy the socket so
+    // the client's fetch rejects instead of saving a partial file.
+    if (res.headersSent) {
+      store.log("error", `CSV export failed mid-stream: ${(err as Error)?.message ?? String(err)}`);
+      res.destroy();
+      return;
+    }
     failGeneric(res, err, 500);
   }
 });

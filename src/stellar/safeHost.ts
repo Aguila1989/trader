@@ -43,7 +43,7 @@ export function isPrivateAddress(ip: string, family?: number): boolean {
   const s = ip.toLowerCase();
   if (family === 6 || s.includes(":")) {
     if (s === "::1" || s === "::") return true; // loopback / unspecified
-    if (s.startsWith("fe80")) return true; // link-local
+    if (/^fe[89ab]/.test(s)) return true; // link-local fe80::/10 (fe80-febf)
     if (s.startsWith("fc") || s.startsWith("fd")) return true; // unique-local (ULA)
     const mapped = s.match(/::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
     if (mapped) return isPrivateAddress(mapped[1] as string, 4);

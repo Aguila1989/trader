@@ -57,7 +57,11 @@ export async function resolveIssuerByDomain(
   domain: string,
 ): Promise<string> {
   await assertDnsPublic(domain); // SEC-06: refuse IP-literals / internal / private-resolving hosts
-  const toml = await StellarToml.Resolver.resolve(domain.trim());
+  // SEC-06: https-only + a 20s timeout so a tarpitting host can't stall us.
+  const toml = await StellarToml.Resolver.resolve(domain.trim(), {
+    allowHttp: false,
+    timeout: 20_000,
+  });
   const currencies = (toml.CURRENCIES ?? []) as Array<{
     code?: string;
     issuer?: string;

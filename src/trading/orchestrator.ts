@@ -1017,8 +1017,17 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   if (auto && !isRiskReducing(p, store.getPositions())) {
     // SEC-10: the daily-loss breaker's unrealized term is 0 until the position
     // monitor's first post-boot mark. Opening new risk while open positions are
-    // unmarked could slip past a breached loss limit. Fail CLOSED until fresh.
-    if (store.getPositions().length > 0 && !store.marksFresh) {
+    // unmarked could slip past a breached loss limit. Fail CLOSED until fresh -
+    // but ONLY when the breaker is actually in play: skip for paper (no real
+    // money / live breaker) and when the monitor is disabled (monitor off is a
+    // supported mode where the unrealized term is 0 BY DESIGN, never marked, so
+    // gating on marksFresh would stall auto-entries forever).
+    if (
+      !paper &&
+      config.monitorIntervalSeconds > 0 &&
+      store.getPositions().length > 0 &&
+      !store.marksFresh
+    ) {
       store.updateProposal(id, {
         status: "pending_approval",
         error:

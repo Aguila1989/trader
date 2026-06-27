@@ -67,7 +67,8 @@ export async function resolveDestination(
     // (incl. one that resolves to a private IP) before the SDK fetches its
     // stellar.toml / federation server.
     await assertDnsPublic(d.slice(d.indexOf("*") + 1));
-    const rec = await Federation.Server.resolve(d);
+    // SEC-06: bound the federation/toml fetch so a tarpitting host can't stall us.
+    const rec = await Federation.Server.resolve(d, { timeout: 20_000 });
     if (!rec.account_id) {
       throw new Error(`Federation address ${d} did not resolve to an account.`);
     }

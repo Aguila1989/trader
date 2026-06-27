@@ -1,6 +1,47 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { isReadOnly } from "../config";
+import { config, isReadOnly } from "../config";
 import { store } from "./store";
+
+/**
+ * SEC-08 (TOCTOU fix): tryReserveEgress must atomically check + reserve against
+ * MAX_DAILY_EGRESS so concurrent money-movement requests can't each pass a stale
+ * check and collectively bust the cap. releaseEgress refunds a failed submit.
+ */
+describe("store egress reservation (SEC-08)", () => {
+  const orig = config.limits.maxDailyEgress;
+  beforeEach(() => {
+    config.limits.maxDailyEgress = 100;
+    store.releaseEgress(1e9); // drain any prior reservation to 0
+  });
+  // Restore the real cap after this block so other suites are unaffected.
+  it("reserves up to the cap, then refuses further reservations", () => {
+    expect(store.tryReserveEgress(60)).toBe(true);
+    expect(store.getEgressTodayXlm()).toBe(60);
+    // A second reservation that would exceed 100 must be refused and book nothing.
+    expect(store.tryReserveEgress(60)).toBe(false);
+    expect(store.getEgressTodayXlm()).toBe(60);
+    // One that fits is accepted.
+    expect(store.tryReserveEgress(40)).toBe(true);
+    expect(store.getEgressTodayXlm()).toBe(100);
+  });
+  it("releaseEgress refunds a failed submit's reservation", () => {
+    expect(store.tryReserveEgress(80)).toBe(true);
+    store.releaseEgress(80);
+    expect(store.getEgressTodayXlm()).toBe(0);
+    // The freed budget is reservable again.
+    expect(store.tryReserveEgress(90)).toBe(true);
+  });
+  it("cap=0 disables the ceiling (always reserves)", () => {
+    config.limits.maxDailyEgress = 0;
+    expect(store.tryReserveEgress(1e6)).toBe(true);
+    config.limits.maxDailyEgress = 100;
+  });
+  it("restore the real cap", () => {
+    store.releaseEgress(1e9);
+    config.limits.maxDailyEgress = orig;
+    expect(config.limits.maxDailyEgress).toBe(orig);
+  });
+});
 
 /**
  * Access-mode semantics for paper trading. These are pure in-memory flag

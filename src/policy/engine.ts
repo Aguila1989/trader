@@ -404,10 +404,12 @@ export function checkPolicy(inp: PolicyInputs): PolicyResult {
 export interface EgressInputs {
   /** Asset spec(s) involved that must be on the whitelist (the leg(s) moved). */
   assets: string[];
-  /** XLM-equiv value LEAVING the wallet, for the MAX_DAILY_EGRESS velocity cap.
-   *  Omit for non-outflow actions (trustline change, claim, self-swap). */
+  /** FACE-VALUE amount leaving the wallet for the MAX_DAILY_EGRESS velocity cap:
+   *  XLM exactly, other assets at their nominal sent amount (NOT converted to an
+   *  XLM market value - a coarse outflow budget, not a precise value cap). Omit
+   *  for non-outflow actions (trustline change, claim). */
   amountXlm?: number;
-  /** XLM already sent out today (store.getEgressTodayXlm()). */
+  /** Face-value amount already sent out today (store.getEgressTodayXlm()). */
   egressTodayXlm?: number;
   /** The kill switch (defense-in-depth; the routes also gate it pre-call). */
   killSwitch?: boolean;
@@ -444,7 +446,7 @@ export function checkEgress(inp: EgressInputs): PolicyResult {
     const total = (inp.egressTodayXlm ?? 0) + Math.max(0, inp.amountXlm);
     if (total > limits.maxDailyEgress + EPS) {
       violations.push(
-        `Daily egress cap exceeded: ${total.toFixed(4)} > ${limits.maxDailyEgress} XLM-equiv (MAX_DAILY_EGRESS).`,
+        `Daily egress cap exceeded: ${total.toFixed(4)} > ${limits.maxDailyEgress} (face value, MAX_DAILY_EGRESS).`,
       );
     }
   }

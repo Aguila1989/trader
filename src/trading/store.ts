@@ -461,7 +461,8 @@ class Store {
     this.emit("daily", this.daily);
   }
 
-  /** SEC-01: XLM-equiv sent out of the wallet so far today (MAX_DAILY_EGRESS). */
+  /** SEC-01: face-value outflow booked so far today (MAX_DAILY_EGRESS); XLM
+   *  exactly, other assets at nominal sent units (a coarse outflow budget). */
   getEgressTodayXlm(): number {
     this.rolloverDay();
     return this.egressXlm;
@@ -471,6 +472,29 @@ class Store {
   recordEgress(xlm: number): void {
     this.rolloverDay();
     if (Number.isFinite(xlm) && xlm > 0) this.egressXlm = round7(this.egressXlm + xlm);
+  }
+
+  /**
+   * SEC-08 (TOCTOU fix): atomically CHECK the daily egress cap and RESERVE the
+   * amount in one synchronous step (no await between check and increment), so
+   * concurrent money-movement requests can't each pass a stale check and then
+   * all book. Returns false (reserving nothing) when the amount would exceed
+   * MAX_DAILY_EGRESS. The caller submits, then either keeps the reservation (on
+   * success) or calls releaseEgress() (on failure). cap=0 disables the cap.
+   */
+  tryReserveEgress(xlm: number): boolean {
+    this.rolloverDay();
+    const amt = Number.isFinite(xlm) && xlm > 0 ? xlm : 0;
+    const cap = config.limits.maxDailyEgress;
+    if (cap > 0 && this.egressXlm + amt > cap + 1e-7) return false;
+    this.egressXlm = round7(this.egressXlm + amt);
+    return true;
+  }
+
+  /** SEC-08: refund an egress reservation when the submit it covered failed. */
+  releaseEgress(xlm: number): void {
+    const amt = Number.isFinite(xlm) && xlm > 0 ? xlm : 0;
+    this.egressXlm = round7(Math.max(0, this.egressXlm - amt));
   }
 
   /**
