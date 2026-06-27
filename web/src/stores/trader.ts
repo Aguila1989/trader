@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { api, withToken } from "../api";
+import { api, sseTicket } from "../api";
 import type {
   Balance,
   Candle,
@@ -266,7 +266,7 @@ export const useTraderStore = defineStore("trader", () => {
     void loadTrades();
     void loadLogs();
     void loadSettings();
-    connectStream();
+    void connectStream();
   }
 
   // SSE connection + self-healing. Two failure modes to handle:
@@ -295,7 +295,7 @@ export const useTraderStore = defineStore("trader", () => {
     if (reconnectTimer) return; // one pending attempt at a time
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      connectStream();
+      void connectStream();
     }, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 10_000); // 1s,2s,4s,8s,10s...
   }
@@ -314,14 +314,18 @@ export const useTraderStore = defineStore("trader", () => {
     }, 4000);
   }
 
-  function connectStream(): void {
+  async function connectStream(): Promise<void> {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
     es?.close();
 
-    es = new EventSource(withToken("/api/stream"));
+    // SEC-04: authenticate the stream with a one-time ticket (fetched per
+    // connect) instead of putting the token in the URL. When no token is
+    // configured the ticket is "" and the stream is open (loopback default).
+    const ticket = await sseTicket();
+    es = new EventSource(ticket ? `/api/stream?ticket=${encodeURIComponent(ticket)}` : "/api/stream");
     startWatchdog();
     es.addEventListener("open", () => {
       markAlive();

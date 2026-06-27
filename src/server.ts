@@ -1,7 +1,7 @@
 import express, { type Response } from "express";
 import helmet from "helmet";
 import { existsSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config, isReadOnly, dbConfigured } from "./config";
@@ -143,24 +143,50 @@ function tokenMatches(provided: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+// SEC-04: one-time, short-lived SSE tickets. EventSource can't send an
+// Authorization header, so instead of leaking the long-lived token in the
+// stream URL (logs / history / Referer), the SPA fetches a single-use ticket
+// (POST /api/sse-ticket, Bearer-authed) and opens /api/stream?ticket=<t>. The
+// ticket is consumed on first use and expires in 30s.
+const sseTickets = new Map<string, number>();
+function issueSseTicket(): string {
+  const now = Date.now();
+  for (const [k, exp] of sseTickets) if (exp < now) sseTickets.delete(k);
+  const t = randomBytes(32).toString("hex");
+  sseTickets.set(t, now + 30_000);
+  return t;
+}
+function consumeSseTicket(t: string): boolean {
+  if (!t) return false;
+  const exp = sseTickets.get(t);
+  if (exp == null) return false;
+  sseTickets.delete(t); // single-use
+  return exp >= Date.now();
+}
+
 // Optional API auth. When DASHBOARD_TOKEN is set, every /api/* request (except
-// the health probe) must present the token as `Authorization: Bearer <token>`
-// or `?token=<token>` (the latter lets the browser's EventSource authenticate,
-// since it can't send custom headers). No token configured = open (loopback).
+// the health probe) must present the token as `Authorization: Bearer <token>`.
+// SEC-04: the legacy `?token=` query bootstrap is GONE (it leaked into logs /
+// history / Referer); the SPA bootstraps the token from the URL #fragment and
+// the SSE stream authenticates with a one-time ticket. No token = open (loopback).
 app.use((req, res, next) => {
   if (config.dashboardToken === "") return next();
   if (!req.path.startsWith("/api")) return next();
   if (req.path === "/api/health") return next();
+  // SSE: accept a valid one-time ticket in place of the (header-only) token.
+  if (req.path === "/api/stream") {
+    const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
+    if (consumeSseTicket(ticket)) return next();
+  }
   const header = req.header("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  const q = typeof req.query.token === "string" ? req.query.token : "";
-  if (
-    tokenMatches(bearer, config.dashboardToken) ||
-    tokenMatches(q, config.dashboardToken)
-  ) {
-    return next();
-  }
+  if (tokenMatches(bearer, config.dashboardToken)) return next();
   res.status(401).json({ error: "unauthorized" });
+});
+
+// SEC-04: mint a one-time SSE ticket (Bearer-authed by the middleware above).
+app.post("/api/sse-ticket", (_req, res) => {
+  res.json({ ticket: issueSseTicket() });
 });
 
 app.get("/api/health", (_req, res) => {

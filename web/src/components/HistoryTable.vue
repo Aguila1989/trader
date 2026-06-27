@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
-import { withToken } from "../api";
+import { downloadFile } from "../api";
 import { fmtNum, dateTimeStr, shortKey } from "../format";
 import type { TradeProposal } from "../types";
 
@@ -30,15 +30,10 @@ const title = computed(() =>
       : t("history.title.all"),
 );
 
-// Download the full trade history as CSV. The token rides as a query param
-// (same mechanism the SSE stream uses) so the attachment download authenticates.
+// SEC-04: download the CSV via an authenticated Bearer fetch + blob, so the
+// dashboard token never appears in the download URL (logs / history / Referer).
 function exportCsv(): void {
-  const a = document.createElement("a");
-  a.href = withToken("/api/trades.csv");
-  a.download = "trades.csv";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  void downloadFile("/api/trades.csv", "trades.csv");
 }
 
 const STATUSES = [

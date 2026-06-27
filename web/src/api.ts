@@ -33,21 +33,44 @@ import type {
 // Express serves both the SPA and the API from one origin.
 
 // --- API auth token ---------------------------------------------------------
-// When the backend sets DASHBOARD_TOKEN, the SPA must present it. We accept it
-// once via `?token=...` in the URL, persist it to localStorage, then strip it
-// from the visible URL. Requests attach it as a Bearer header; the SSE stream
-// gets it as a query param (EventSource cannot send custom headers).
+// SEC-04: when the backend sets DASHBOARD_TOKEN the SPA must present it, but the
+// token must NEVER ride in a request URL (it would land in access logs, browser
+// history and the Referer header). So:
+//  - Bootstrap from the URL #fragment (#token=...) - the fragment is never sent
+//    to the server. We persist it to localStorage and strip it immediately. A
+//    legacy ?token= query is still accepted for one bootstrap, then stripped.
+//  - Normal requests authenticate with an `Authorization: Bearer` header.
+//  - The SSE stream (EventSource can't set headers) uses a one-time ticket.
+//  - The CSV export is fetched with the Bearer header and downloaded as a blob.
 const TOKEN_KEY = "trader_token";
 
 function loadToken(): string {
   try {
-    const url = new URL(window.location.href);
-    const fromUrl = url.searchParams.get("token");
-    if (fromUrl) {
-      localStorage.setItem(TOKEN_KEY, fromUrl);
-      url.searchParams.delete("token");
-      window.history.replaceState({}, "", url.toString());
-      return fromUrl;
+    let found = "";
+    // Preferred: the URL #fragment, e.g. http://127.0.0.1:3000/#token=XYZ
+    const hash = window.location.hash || "";
+    const hashMatch = hash.match(/(?:^#|&)token=([^&]+)/);
+    if (hashMatch) {
+      found = decodeURIComponent(hashMatch[1] as string);
+      const cleaned = hash.replace(/(^#|&)token=[^&]+/, "$1");
+      const u = new URL(window.location.href);
+      u.hash = cleaned === "#" || cleaned === "" ? "" : cleaned;
+      window.history.replaceState({}, "", u.toString());
+    }
+    // Legacy fallback: ?token= query (read once, then stripped). The server no
+    // longer accepts it for auth - this is bootstrap convenience only.
+    if (!found) {
+      const u = new URL(window.location.href);
+      const q = u.searchParams.get("token");
+      if (q) {
+        found = q;
+        u.searchParams.delete("token");
+        window.history.replaceState({}, "", u.toString());
+      }
+    }
+    if (found) {
+      localStorage.setItem(TOKEN_KEY, found);
+      return found;
     }
     return localStorage.getItem(TOKEN_KEY) ?? "";
   } catch {
@@ -57,15 +80,40 @@ function loadToken(): string {
 
 const token = loadToken();
 
-/** Append the auth token to a URL as a query param (for EventSource). */
-export function withToken(url: string): string {
-  if (!token) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
-}
-
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+/**
+ * SEC-04: fetch a one-time SSE ticket so the stream URL never carries the token.
+ * Returns "" when no token is configured (the stream is then open on loopback).
+ */
+export async function sseTicket(): Promise<string> {
+  if (!token) return "";
+  try {
+    const r = await fetch("/api/sse-ticket", { method: "POST", headers: authHeaders() });
+    if (!r.ok) return "";
+    const j = (await r.json()) as { ticket?: string };
+    return j.ticket ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** SEC-04: download an authenticated file (CSV) via Bearer fetch + blob, so the
+ *  token never appears in the download URL. */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const res = await fetch(path, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function getJSON<T>(url: string): Promise<T> {
