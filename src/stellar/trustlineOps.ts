@@ -4,6 +4,7 @@ import { horizon } from "./client";
 import { parseAsset, assetToString, canonicalAsset } from "./assets";
 import { recommendedFee } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { assertPublicDomain } from "./safeHost";
 
 /**
  * Programmatic trustline management for the dashboard (the `npm run trustlines`
@@ -55,6 +56,7 @@ export async function resolveIssuerByDomain(
   code: string,
   domain: string,
 ): Promise<string> {
+  assertPublicDomain(domain); // SEC-06: refuse IP-literals / internal hosts
   const toml = await StellarToml.Resolver.resolve(domain.trim());
   const currencies = (toml.CURRENCIES ?? []) as Array<{
     code?: string;

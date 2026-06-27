@@ -10,6 +10,7 @@ import { horizon } from "./client";
 import { parseAsset, assetToString } from "./assets";
 import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { assertPublicDomain } from "./safeHost";
 
 /**
  * Payments and path-payment swaps from the hot wallet. All submits go out only
@@ -62,6 +63,9 @@ export async function resolveDestination(
 ): Promise<ResolvedDestination> {
   const d = dest.trim();
   if (d.includes("*")) {
+    // SEC-06: a federation address is name*domain; refuse a non-public domain
+    // before the SDK fetches its stellar.toml / federation server.
+    assertPublicDomain(d.slice(d.indexOf("*") + 1));
     const rec = await Federation.Server.resolve(d);
     if (!rec.account_id) {
       throw new Error(`Federation address ${d} did not resolve to an account.`);
