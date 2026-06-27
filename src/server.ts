@@ -267,6 +267,38 @@ function ensureAiEnabled(res: Response): boolean {
   return true;
 }
 
+/**
+ * SEC-16: throttle the PAID-LLM endpoints (/api/analyze, /api/scan). A single
+ * in-flight slot stops a stuck tab or a script from fanning out concurrent paid
+ * calls, and a sliding per-minute window caps the burst rate. Applied AFTER auth
+ * so an unauthenticated caller can't even reach it. The autopilot loop calls the
+ * orchestrator directly (already serialized) and is unaffected.
+ */
+let llmInFlight = false;
+const llmHits: number[] = [];
+const LLM_WINDOW_MS = 60_000;
+const LLM_MAX_PER_WINDOW = 10;
+function llmGateAcquire(res: Response): boolean {
+  const now = Date.now();
+  while (llmHits.length > 0 && now - (llmHits[0] as number) > LLM_WINDOW_MS) {
+    llmHits.shift();
+  }
+  if (llmInFlight) {
+    res.status(429).json({ error: "An AI request is already in progress - wait for it to finish." });
+    return false;
+  }
+  if (llmHits.length >= LLM_MAX_PER_WINDOW) {
+    res.status(429).json({ error: "Rate limit: too many AI requests this minute. Try again shortly." });
+    return false;
+  }
+  llmHits.push(now);
+  llmInFlight = true;
+  return true;
+}
+function llmGateRelease(): void {
+  llmInFlight = false;
+}
+
 // Current non-native trustlines (asset, balance, limit). Read-only.
 app.get("/api/trustlines", async (_req, res) => {
   const pub = signerPublicKey();
@@ -1145,11 +1177,14 @@ app.post("/api/analyze", async (req, res) => {
     res.status(400).json({ error: "No AI API key configured" });
     return;
   }
+  if (!llmGateAcquire(res)) return;
   try {
     res.json(await runAnalysis(base, quote));
   } catch (err) {
     store.log("error", `Analysis failed: ${(err as Error).message}`);
     res.status(500).json({ error: (err as Error).message });
+  } finally {
+    llmGateRelease();
   }
 });
 
@@ -1160,11 +1195,14 @@ app.post("/api/scan", async (_req, res) => {
     res.status(400).json({ error: "No AI API key configured" });
     return;
   }
+  if (!llmGateAcquire(res)) return;
   try {
     res.json(await runChainScan());
   } catch (err) {
     store.log("error", `Chain scan failed: ${(err as Error).message}`);
     res.status(500).json({ error: (err as Error).message });
+  } finally {
+    llmGateRelease();
   }
 });
 
