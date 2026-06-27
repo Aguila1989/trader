@@ -229,7 +229,15 @@ app.get("/api/state", (_req, res) => {
 });
 
 // Server-Sent Events: the live "watch along" feed.
+const MAX_SSE_CONNECTIONS = 50;
 app.get("/api/stream", (req, res) => {
+  // SEC-26: cap concurrent SSE connections so a client can't open unbounded
+  // streams (each holds a socket + receives every snapshot) to exhaust the
+  // process. 50 is far above any legitimate single-operator dashboard use.
+  if (store.subscriberCount() >= MAX_SSE_CONNECTIONS) {
+    res.status(503).json({ error: "too many live connections" });
+    return;
+  }
   res.set({
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -256,7 +264,7 @@ app.get("/api/balances", async (_req, res) => {
   try {
     res.json(await getBalances(pub));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -357,6 +365,16 @@ function llmGateRelease(): void {
 }
 
 /**
+ * SEC-25: respond with a GENERIC error to the client while logging the real
+ * (possibly internal-topology-revealing) upstream message server-side. Used for
+ * 5xx failures; intentional 400 validation messages are returned verbatim.
+ */
+function failGeneric(res: Response, err: unknown, code: 500 | 502 = 502): void {
+  store.log("error", `request failed (${code}): ${(err as Error)?.message ?? String(err)}`);
+  if (!res.headersSent) res.status(code).json({ error: "request failed" });
+}
+
+/**
  * SEC-09: parse + bound a money-movement amount. The raw value MUST be a plain
  * decimal (up to 12 integer digits, 7 decimals) - this rejects scientific
  * notation like "1e9" that Number() would otherwise turn into a billion-unit
@@ -397,7 +415,7 @@ app.get("/api/trustlines", async (_req, res) => {
   try {
     res.json(await getTrustlines(pub));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -430,7 +448,7 @@ app.post("/api/trustlines", async (req, res) => {
     store.log("trade", `Trustline added: ${result.asset} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -462,7 +480,7 @@ app.post("/api/trustlines/remove", async (req, res) => {
     store.log("trade", `Trustline removed: ${result.asset} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -477,7 +495,7 @@ app.get("/api/offers", async (_req, res) => {
   try {
     res.json(await getOpenOffers(pub));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -529,7 +547,7 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
     });
     res.json({ hash });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -573,7 +591,7 @@ app.post("/api/pay", async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -589,7 +607,7 @@ app.get("/api/swap/quote", async (req, res) => {
   try {
     res.json((await quoteSwap(send, amount, dest)) ?? { error: "No swap path found." });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -652,7 +670,7 @@ app.post("/api/swap", async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -678,7 +696,7 @@ app.get("/api/claimable", async (req, res) => {
       );
     res.json(out);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -706,7 +724,7 @@ app.get("/api/claimable/:id/swap-quote", async (req, res) => {
         assessment.valueLossPct <= config.swap.valueLossThresholdPct,
     });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -775,7 +793,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -815,7 +833,7 @@ app.get("/api/claimable/swap-all/quote", async (_req, res) => {
     );
     res.json({ items, threshold: config.swap.valueLossThresholdPct });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -880,7 +898,7 @@ app.post("/api/claimable/swap-all", async (req, res) => {
     );
     res.json({ swapped, skipped, failed });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -897,7 +915,7 @@ app.post("/api/claimable/:id/reject", async (req, res) => {
     store.rejectClaimable(id, { asset: cb?.asset ?? "?", amount: cb?.amount ?? "?" }, reason);
     res.json({ id, rejected: true });
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -935,7 +953,7 @@ app.post("/api/claimable/:id/claim", async (req, res) => {
     store.log("trade", `Claimed balance ${id.slice(0, 12)} (tx ${result.hash}).`);
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -949,7 +967,7 @@ app.get("/api/market", async (req, res) => {
   try {
     res.json(await getMarketSnapshot(base, quote, 12));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -965,7 +983,7 @@ app.get("/api/orderbook", async (req, res) => {
     const quote = quoteParam || (await resolveBestQuote(base, QUOTE_CANDIDATES));
     res.json(await getOrderbook(base, quote, 20));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -997,7 +1015,7 @@ app.get("/api/candles", async (req, res) => {
   try {
     res.json(await getTradeAggregations(base, quote, resolution, limit));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -1015,7 +1033,7 @@ app.get("/api/trades", async (req, res) => {
       }),
     );
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1034,27 +1052,32 @@ app.get("/api/trades.csv", async (_req, res) => {
     "provider", "model", "reason", "txHash",
   ] as const;
   try {
-    const lines: string[] = [cols.join(",")];
+    // SEC-26: STREAM the CSV page-by-page instead of buffering the whole export
+    // (up to 50k rows) into one string in memory before sending.
+    res.set({
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": "attachment; filename=trades.csv",
+    });
+    res.write(cols.join(",") + "\r\n");
     const pageSize = 500;
     let offset = 0;
     let total = Infinity;
     while (offset < total && offset < 50_000) {
       const page = await store.getTradesPage({ limit: pageSize, offset });
       total = page.total;
+      let chunk = "";
       for (const p of page.rows) {
         const row = p as unknown as Record<string, unknown>;
-        lines.push(cols.map((c) => csvCell(row[c])).join(","));
+        chunk += cols.map((c) => csvCell(row[c])).join(",") + "\r\n";
       }
+      res.write(chunk);
       if (page.rows.length < pageSize) break;
       offset += pageSize;
     }
-    res.set({
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": "attachment; filename=trades.csv",
-    });
-    res.send(lines.join("\r\n"));
+    res.end();
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    // Headers may already be flushed mid-stream; failGeneric guards on that.
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1077,7 +1100,7 @@ app.get("/api/portfolio", async (_req, res) => {
     // lives in stellar/valuation.ts so it can be reused outside this endpoint.
     res.json(await getPricedPortfolio(pub));
   } catch (err) {
-    res.status(502).json({ error: (err as Error).message });
+    failGeneric(res, err, 502);
   }
 });
 
@@ -1137,7 +1160,7 @@ app.post("/api/alerts", (req, res) => {
       res.status(400).json({ error: err.message });
       return;
     }
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 app.post("/api/alerts/:id/cancel", (req, res) => {
@@ -1148,7 +1171,7 @@ app.post("/api/alerts/:id/cancel", (req, res) => {
       res.status(404).json({ error: err.message });
       return;
     }
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1170,7 +1193,7 @@ app.get("/api/logs", async (req, res) => {
       }),
     );
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1191,7 +1214,7 @@ app.get("/api/tradelog", async (req, res) => {
       }),
     );
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1211,7 +1234,7 @@ app.get("/api/ailog", async (req, res) => {
       }),
     );
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1221,7 +1244,7 @@ app.get("/api/loglive", async (req, res) => {
   try {
     res.json(await store.recentLogEvents(n));
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1230,7 +1253,7 @@ app.get("/api/evolution", async (_req, res) => {
   try {
     res.json(await store.getEvolution());
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1249,7 +1272,7 @@ app.get("/api/liquidity", async (req, res) => {
       history: await store.getLiquidityHistory({ since, asset }),
     });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1270,7 +1293,7 @@ app.post("/api/analyze", async (req, res) => {
     res.json(await runAnalysis(base, quote));
   } catch (err) {
     store.log("error", `Analysis failed: ${(err as Error).message}`);
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   } finally {
     llmGateRelease();
   }
@@ -1288,7 +1311,7 @@ app.post("/api/scan", async (_req, res) => {
     res.json(await runChainScan());
   } catch (err) {
     store.log("error", `Chain scan failed: ${(err as Error).message}`);
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   } finally {
     llmGateRelease();
   }
@@ -1344,7 +1367,7 @@ app.post("/api/order", async (req, res) => {
     );
   } catch (err) {
     store.log("error", `Manual order failed: ${(err as Error).message}`);
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1414,7 +1437,7 @@ app.post("/api/stoploss", async (req, res) => {
       res.status(400).json({ error: err.message });
       return;
     }
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1442,7 +1465,7 @@ app.get("/api/stoploss/audit", async (req, res) => {
       }),
     );
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 
@@ -1456,7 +1479,7 @@ app.post("/api/stoploss/:id/cancel", (req, res) => {
       res.status(404).json({ error: err.message });
       return;
     }
-    res.status(500).json({ error: (err as Error).message });
+    failGeneric(res, err, 500);
   }
 });
 

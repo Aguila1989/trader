@@ -963,6 +963,11 @@ class Store {
     return true;
   }
 
+  /** SEC-26: current live SSE subscriber count (for the connection cap). */
+  subscriberCount(): number {
+    return this.subscribers.size;
+  }
+
   subscribe(res: Response): void {
     this.subscribers.add(res);
     res.on("close", () => this.subscribers.delete(res));
