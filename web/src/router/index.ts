@@ -1,13 +1,43 @@
-// App router. Hash history so a refresh on /#/academy works under static
-// serving with no server-side route config. The dashboard is the home route;
-// the Academy is lazy-loaded so its 52 content files stay out of the main bundle.
+// App router. Hash history so a refresh on /#/academy works under static serving
+// with no server-side route config. Feature 2 adds the auth screens and a
+// navigation guard: the Academy is the ONLY app page reachable without a login;
+// every other route bounces to /login. The dashboard + Academy are lazy-loaded.
 import { createRouter, createWebHashHistory } from "vue-router";
 import Dashboard from "../components/Dashboard.vue";
+import { isLoggedIn } from "../auth/session";
+
+// Routes reachable WITHOUT a valid session (a STRICT allowlist by route name):
+// the five auth screens + the Academy. Anything not named here requires login.
+const PUBLIC_ROUTES = new Set([
+  "login",
+  "register",
+  "forgot-password",
+  "reset-password",
+  "verify-email",
+  "academy",
+]);
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", name: "dashboard", component: Dashboard },
+    { path: "/login", name: "login", component: () => import("../components/auth/LoginPage.vue") },
+    { path: "/register", name: "register", component: () => import("../components/auth/RegisterPage.vue") },
+    {
+      path: "/forgot-password",
+      name: "forgot-password",
+      component: () => import("../components/auth/ForgotPasswordPage.vue"),
+    },
+    {
+      path: "/reset-password",
+      name: "reset-password",
+      component: () => import("../components/auth/ResetPasswordPage.vue"),
+    },
+    {
+      path: "/verify-email",
+      name: "verify-email",
+      component: () => import("../components/auth/VerifyEmailPage.vue"),
+    },
     {
       path: "/academy",
       name: "academy",
@@ -18,6 +48,23 @@ const router = createRouter({
   scrollBehavior() {
     return { top: 0 };
   },
+});
+
+// Login state is determined CLIENT-SIDE from the readable session marker cookie
+// (no authenticated API call) - see src/auth/session.ts. The server still
+// enforces auth on every API call; this guard is only UX (where to send the SPA).
+router.beforeEach((to) => {
+  const authed = isLoggedIn();
+  const isPublic = PUBLIC_ROUTES.has(String(to.name ?? ""));
+  // Already-logged-in users never need the login/register screens.
+  if (authed && (to.name === "login" || to.name === "register")) return { path: "/" };
+  // Unauthenticated users may only reach the public allowlist; everything else
+  // redirects to login, preserving where they were headed.
+  if (!authed && !isPublic) {
+    const redirect = to.fullPath && to.fullPath !== "/" ? { redirect: to.fullPath } : {};
+    return { path: "/login", query: redirect };
+  }
+  return true;
 });
 
 export default router;

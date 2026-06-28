@@ -3,9 +3,11 @@
 // as the namespace (e.g. this file -> `common.*`).
 export default {
   en: {
-    appName: "Stellar AI Trading Bot",
+    appName: "Atrium",
     academy: "Academy",
     backToTrading: "← Back to Trading",
+    backToApp: "← Back to App",
+    backToLogin: "← Back to Login",
     language: "Language",
     tablistAria: "Trading sections",
     tab: { manual: "Manual Trading", bot: "Bot Trading", logs: "Logs" },
@@ -28,9 +30,11 @@ export default {
     },
   },
   nl: {
-    appName: "Stellar AI Trading Bot",
+    appName: "Atrium",
     academy: "Academy",
     backToTrading: "← Terug naar handelen",
+    backToApp: "← Terug naar app",
+    backToLogin: "← Terug naar aanmelden",
     language: "Taal",
     tablistAria: "Handelssecties",
     tab: { manual: "Handmatig handelen", bot: "Bot-handel", logs: "Logboek" },
@@ -53,9 +57,11 @@ export default {
     },
   },
   fr: {
-    appName: "Stellar AI Trading Bot",
+    appName: "Atrium",
     academy: "Académie",
     backToTrading: "← Retour au trading",
+    backToApp: "← Retour à l'app",
+    backToLogin: "← Retour à la connexion",
     language: "Langue",
     tablistAria: "Sections de trading",
     tab: { manual: "Trading manuel", bot: "Trading par bot", logs: "Journaux" },
@@ -78,9 +84,11 @@ export default {
     },
   },
   es: {
-    appName: "Stellar AI Trading Bot",
+    appName: "Atrium",
     academy: "Academia",
     backToTrading: "← Volver al trading",
+    backToApp: "← Volver a la app",
+    backToLogin: "← Volver al inicio de sesión",
     language: "Idioma",
     tablistAria: "Secciones de trading",
     tab: { manual: "Trading manual", bot: "Trading con bot", logs: "Registros" },

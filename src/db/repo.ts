@@ -2,6 +2,7 @@ import sql from "mssql";
 import { config } from "../config";
 import { dayStartUtc } from "../time";
 import { dbReady, getPool } from "./pool";
+import { currentUserId } from "../users/context";
 import { computeEvolution, type Fill } from "../trading/positions";
 import type {
   AiLogEntry,
@@ -158,6 +159,7 @@ export async function insertProposal(p: TradeProposal): Promise<void> {
     .input("filledAmount", sql.Decimal(38, 7), p.filledAmount != null ? Number(p.filledAmount) : null)
     .input("filledPrice", sql.Decimal(38, 7), p.filledPrice != null ? Number(p.filledPrice) : null)
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("provider", sql.NVarChar(40), p.provider ?? null)
     .input("model", sql.NVarChar(120), p.model ?? null)
     .input("confidence", sql.NVarChar(8), p.confidence ?? null)
@@ -170,13 +172,13 @@ export async function insertProposal(p: TradeProposal): Promise<void> {
        INSERT INTO dbo.Proposals
          (id, createdAt, updatedAt, side, baseAsset, quoteAsset, amount,
           limitPrice, maxSlippageBps, reason, status, policyViolations,
-          txHash, errorMsg, submittedAt, filledAmount, filledPrice, network,
+          txHash, errorMsg, submittedAt, filledAmount, filledPrice, network, userId,
           provider, model, confidence, targetPrice, invalidationPrice,
           timeHorizon, offerId)
        VALUES
          (@id, @createdAt, @updatedAt, @side, @baseAsset, @quoteAsset, @amount,
           @limitPrice, @maxSlippageBps, @reason, @status, @policyViolations,
-          @txHash, @errorMsg, @submittedAt, @filledAmount, @filledPrice, @network,
+          @txHash, @errorMsg, @submittedAt, @filledAmount, @filledPrice, @network, @userId,
           @provider, @model, @confidence, @targetPrice, @invalidationPrice,
           @timeHorizon, @offerId);`,
     );
@@ -188,6 +190,7 @@ export async function updateProposal(p: TradeProposal): Promise<void> {
   const result = await getPool()
     .request()
     .input("id", sql.NVarChar(64), p.id)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("updatedAt", sql.DateTime2, new Date(p.updatedAt))
     .input("status", sql.NVarChar(32), p.status)
     .input("policyViolations", sql.NVarChar(sql.MAX), JSON.stringify(p.policyViolations ?? []))
@@ -216,7 +219,7 @@ export async function updateProposal(p: TradeProposal): Promise<void> {
              mark1hPnlPct = @mark1hPnlPct,
              mark24hPrice = @mark24hPrice,
              mark24hPnlPct = @mark24hPnlPct
-       WHERE id = @id;`,
+       WHERE id = @id AND userId = @userId;`,
     );
   // Upsert fallback: if the original INSERT failed transiently (its error is
   // swallowed by store.persist so the app keeps trading), every UPDATE here
@@ -238,10 +241,11 @@ export async function listActionableProposals(): Promise<TradeProposal[]> {
   const result = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .query<ProposalRow>(
       `SELECT ${SELECT_COLS}
          FROM dbo.Proposals
-        WHERE network = @net
+        WHERE network = @net AND userId = @userId
           AND ((status = 'submitted' AND offerId IS NOT NULL)
             OR (status IN ('submitting', 'failed') AND txHash IS NOT NULL
                 AND createdAt > DATEADD(hour, -24, SYSUTCDATETIME())))
@@ -258,11 +262,12 @@ export async function listRecentProposals(
   const result = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("limit", sql.Int, limit)
     .query<ProposalRow>(
       `SELECT TOP (@limit) ${SELECT_COLS}
          FROM dbo.Proposals
-        WHERE network = @net
+        WHERE network = @net AND userId = @userId
         ORDER BY createdAt DESC;`,
     );
   return result.recordset.map(rowToProposal);
@@ -292,11 +297,14 @@ export async function listTrades(opts: {
       : undefined;
   if (!dbReady()) return { rows: [], total: 0, limit, offset };
 
-  const where = status ? "WHERE network = @net AND status = @status" : "WHERE network = @net";
+  const where = status
+    ? "WHERE network = @net AND userId = @userId AND status = @status"
+    : "WHERE network = @net AND userId = @userId";
 
   const rowsReq = getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("limit", sql.Int, limit)
     .input("offset", sql.Int, offset);
   if (status) rowsReq.input("status", sql.NVarChar(32), status);
@@ -310,7 +318,10 @@ export async function listTrades(opts: {
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
   );
 
-  const countReq = getPool().request().input("net", sql.NVarChar(16), config.network);
+  const countReq = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
   if (status) countReq.input("status", sql.NVarChar(32), status);
   const countRes = await countReq.query<{ total: number }>(
     `SELECT COUNT(*) AS total FROM dbo.Proposals ${where};`,
@@ -334,6 +345,7 @@ export async function listSubmittedFills(): Promise<Fill[]> {
   const result = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .query<FillRow>(
       // Prefer the reconciled on-chain fill; fall back to the requested
       // amount/limit for rows submitted before reconciliation existed (or whose
@@ -346,7 +358,7 @@ export async function listSubmittedFills(): Promise<Fill[]> {
               COALESCE(filledAmount, amount)     AS amount,
               COALESCE(filledPrice, limitPrice)  AS limitPrice
          FROM dbo.Proposals
-        WHERE network = @net AND status = 'submitted'
+        WHERE network = @net AND userId = @userId AND status = 'submitted'
         ORDER BY COALESCE(submittedAt, createdAt) ASC;`,
     );
   return result.recordset.map(rowToFill);
@@ -370,6 +382,7 @@ export async function sumTodaySubmitted(): Promise<{
   const result = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("start", sql.DateTime2, dayStart)
     .query<{ volume: number | null; count: number; last: Date | string | null }>(
       // "Today" pivots on the SUBMIT time (createdAt fallback for legacy
@@ -379,7 +392,7 @@ export async function sumTodaySubmitted(): Promise<{
               COUNT(*)                                        AS count,
               MAX(COALESCE(submittedAt, createdAt))           AS last
          FROM dbo.Proposals
-        WHERE network = @net AND status = 'submitted'
+        WHERE network = @net AND userId = @userId AND status = 'submitted'
           AND COALESCE(submittedAt, createdAt) >= @start;`,
     );
   const row = result.recordset[0];
@@ -439,10 +452,11 @@ export async function insertLog(entry: LogEntry, id: string): Promise<void> {
       entry.data !== undefined ? JSON.stringify(entry.data) : null,
     )
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.Logs WHERE id = @id)
-       INSERT INTO dbo.Logs (id, ts, level, message, data, network)
-       VALUES (@id, @ts, @level, @message, @data, @network);`,
+       INSERT INTO dbo.Logs (id, ts, level, message, data, network, userId)
+       VALUES (@id, @ts, @level, @message, @data, @network, @userId);`,
     );
 }
 
@@ -462,7 +476,7 @@ export async function listLogs(opts: {
       : undefined;
   if (!dbReady()) return { rows: [], total: 0, limit, offset };
 
-  const conditions = ["network = @net"];
+  const conditions = ["network = @net", "userId = @userId"];
   if (level) conditions.push("level = @level");
   if (opts.q) conditions.push("message LIKE @q");
   if (opts.since) conditions.push("ts >= @since");
@@ -471,6 +485,7 @@ export async function listLogs(opts: {
   const rowsReq = getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("limit", sql.Int, limit)
     .input("offset", sql.Int, offset);
   if (level) rowsReq.input("level", sql.NVarChar(16), level);
@@ -486,7 +501,10 @@ export async function listLogs(opts: {
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
   );
 
-  const countReq = getPool().request().input("net", sql.NVarChar(16), config.network);
+  const countReq = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
   if (level) countReq.input("level", sql.NVarChar(16), level);
   if (opts.q) countReq.input("q", sql.NVarChar(sql.MAX), `%${opts.q}%`);
   if (opts.since) countReq.input("since", sql.DateTime2, new Date(opts.since));
@@ -550,6 +568,7 @@ export async function insertLiquiditySnapshot(
     .input("id", sql.NVarChar(64), id)
     .input("ts", sql.DateTime2, new Date(row.ts))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("asset", sql.NVarChar(120), row.asset)
     .input("assetCode", sql.NVarChar(32), row.assetCode)
     .input("assetIssuer", sql.NVarChar(64), row.assetIssuer)
@@ -563,10 +582,10 @@ export async function insertLiquiditySnapshot(
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.LiquiditySnapshots WHERE id = @id)
        INSERT INTO dbo.LiquiditySnapshots
-         (id, ts, network, asset, assetCode, assetIssuer, quoteAsset, rankPos,
+         (id, ts, network, userId, asset, assetCode, assetIssuer, quoteAsset, rankPos,
           baseVolume24h, numTrades24h, spreadBps, bestBid, bestAsk)
        VALUES
-         (@id, @ts, @network, @asset, @assetCode, @assetIssuer, @quoteAsset, @rankPos,
+         (@id, @ts, @network, @userId, @asset, @assetCode, @assetIssuer, @quoteAsset, @rankPos,
           @baseVolume24h, @numTrades24h, @spreadBps, @bestBid, @bestAsk);`,
     );
 }
@@ -579,13 +598,14 @@ export async function listLiquiditySnapshots(opts: {
 }): Promise<LiquiditySnapshotRow[]> {
   if (!dbReady()) return [];
   const limit = Math.min(Math.max(opts.limit ?? 10_000, 1), 50_000);
-  const conditions = ["network = @net"];
+  const conditions = ["network = @net", "userId = @userId"];
   if (opts.asset) conditions.push("asset = @asset");
   if (opts.since) conditions.push("ts >= @since");
   const where = `WHERE ${conditions.join(" AND ")}`;
   const req = getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("limit", sql.Int, limit);
   if (opts.asset) req.input("asset", sql.NVarChar(120), opts.asset);
   if (opts.since) req.input("since", sql.DateTime2, new Date(opts.since));
@@ -665,6 +685,7 @@ function bindStopLoss(req: sql.Request, s: StopLoss): sql.Request {
     .input("createdAt", sql.DateTime2, new Date(s.createdAt))
     .input("updatedAt", sql.DateTime2, new Date(s.updatedAt))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("baseAsset", sql.NVarChar(120), s.baseAsset)
     .input("quoteAsset", sql.NVarChar(120), s.quoteAsset)
     .input("triggerPrice", sql.Decimal(38, 7), Number(s.triggerPrice))
@@ -698,12 +719,12 @@ export async function insertStopLoss(s: StopLoss): Promise<void> {
   await bindStopLoss(getPool().request(), s).query(
     `IF NOT EXISTS (SELECT 1 FROM dbo.StopLosses WHERE id = @id)
      INSERT INTO dbo.StopLosses
-       (id, createdAt, updatedAt, network, baseAsset, quoteAsset, triggerPrice,
+       (id, createdAt, updatedAt, network, userId, baseAsset, quoteAsset, triggerPrice,
         sellAll, quantityToSell, setBy, status, notes, triggeredAt,
         triggerProposalId, attemptCount, lastError, isTrailing, trailAmount,
         trailPercent, highWaterMark, currentTrailPrice)
      VALUES
-       (@id, @createdAt, @updatedAt, @network, @baseAsset, @quoteAsset, @triggerPrice,
+       (@id, @createdAt, @updatedAt, @network, @userId, @baseAsset, @quoteAsset, @triggerPrice,
         @sellAll, @quantityToSell, @setBy, @status, @notes, @triggeredAt,
         @triggerProposalId, @attemptCount, @lastError, @isTrailing, @trailAmount,
         @trailPercent, @highWaterMark, @currentTrailPrice);`,
@@ -732,7 +753,7 @@ export async function updateStopLoss(s: StopLoss): Promise<void> {
             trailPercent = @trailPercent,
             highWaterMark = @highWaterMark,
             currentTrailPrice = @currentTrailPrice
-      WHERE id = @id;`,
+      WHERE id = @id AND userId = @userId;`,
   );
   if ((result.rowsAffected?.[0] ?? 0) === 0) {
     await insertStopLoss(s);
@@ -745,10 +766,11 @@ export async function listActiveStopLosses(): Promise<StopLoss[]> {
   const res = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .query<RawStopLossRow>(
       `SELECT ${STOPLOSS_COLS}
          FROM dbo.StopLosses
-        WHERE network = @net AND status = 'active'
+        WHERE network = @net AND userId = @userId AND status = 'active'
         ORDER BY createdAt DESC;`,
     );
   return res.recordset.map(rowToStopLoss);
@@ -793,6 +815,7 @@ export async function insertStopLossAudit(a: StopLossAuditRow): Promise<void> {
     .input("id", sql.NVarChar(64), a.id)
     .input("ts", sql.DateTime2, new Date(a.ts))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("stopLossId", sql.NVarChar(64), a.stopLossId)
     .input("baseAsset", sql.NVarChar(120), a.baseAsset)
     .input("quoteAsset", sql.NVarChar(120), a.quoteAsset)
@@ -805,10 +828,10 @@ export async function insertStopLossAudit(a: StopLossAuditRow): Promise<void> {
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.StopLossAudit WHERE id = @id)
        INSERT INTO dbo.StopLossAudit
-         (id, ts, network, stopLossId, baseAsset, quoteAsset, action, field,
+         (id, ts, network, userId, stopLossId, baseAsset, quoteAsset, action, field,
           oldValue, newValue, initiator, note)
        VALUES
-         (@id, @ts, @network, @stopLossId, @baseAsset, @quoteAsset, @action, @field,
+         (@id, @ts, @network, @userId, @stopLossId, @baseAsset, @quoteAsset, @action, @field,
           @oldValue, @newValue, @initiator, @note);`,
     );
 }
@@ -839,9 +862,11 @@ export async function getSetting(key: string): Promise<string | null> {
   const res = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("k", sql.NVarChar(64), key)
     .query<{ value: string }>(
-      `SELECT value FROM dbo.Settings WHERE network = @net AND keyName = @k;`,
+      `SELECT value FROM dbo.Settings
+        WHERE network = @net AND userId = @userId AND keyName = @k;`,
     );
   return res.recordset[0]?.value ?? null;
 }
@@ -852,16 +877,17 @@ export async function upsertSetting(key: string, value: string): Promise<void> {
   await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("k", sql.NVarChar(64), key)
     .input("v", sql.NVarChar(sql.MAX), value)
     .input("ts", sql.DateTime2, new Date())
     .query(
       `MERGE dbo.Settings AS t
-       USING (SELECT @net AS network, @k AS keyName) AS s
-         ON t.network = s.network AND t.keyName = s.keyName
+       USING (SELECT @userId AS userId, @net AS network, @k AS keyName) AS s
+         ON t.userId = s.userId AND t.network = s.network AND t.keyName = s.keyName
        WHEN MATCHED THEN UPDATE SET value = @v, updatedAt = @ts
-       WHEN NOT MATCHED THEN INSERT (network, keyName, value, updatedAt)
-         VALUES (@net, @k, @v, @ts);`,
+       WHEN NOT MATCHED THEN INSERT (userId, network, keyName, value, updatedAt)
+         VALUES (@userId, @net, @k, @v, @ts);`,
     );
 }
 
@@ -884,6 +910,7 @@ export async function insertTradeLog(e: TradeLogEntry): Promise<void> {
     .input("id", sql.NVarChar(64), e.id)
     .input("ts", sql.DateTime2, new Date(e.ts))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("baseAsset", sql.NVarChar(120), e.baseAsset)
     .input("quoteAsset", sql.NVarChar(120), e.quoteAsset)
     .input("action", sql.NVarChar(12), e.action)
@@ -898,10 +925,10 @@ export async function insertTradeLog(e: TradeLogEntry): Promise<void> {
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.TradeLog WHERE id = @id)
        INSERT INTO dbo.TradeLog
-         (id, ts, network, baseAsset, quoteAsset, action, amount, price,
+         (id, ts, network, userId, baseAsset, quoteAsset, action, amount, price,
           totalValue, initiator, status, txHash, orderId, source)
        VALUES
-         (@id, @ts, @network, @baseAsset, @quoteAsset, @action, @amount, @price,
+         (@id, @ts, @network, @userId, @baseAsset, @quoteAsset, @action, @amount, @price,
           @totalValue, @initiator, @status, @txHash, @orderId, @source);`,
     );
 }
@@ -928,8 +955,11 @@ function rowToTradeLog(r: RawTradeLogRow): TradeLogEntry {
 
 export async function listTradeLog(q: TradeLogQuery): Promise<TradeLogPage> {
   if (!dbReady()) return { rows: [], total: 0, limit: q.limit, offset: q.offset };
-  const req = getPool().request().input("net", sql.NVarChar(16), config.network);
-  const where: string[] = ["network = @net"];
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
+  const where: string[] = ["network = @net", "userId = @userId"];
   if (q.initiator) { req.input("initiator", sql.NVarChar(8), q.initiator); where.push("initiator = @initiator"); }
   if (q.action) { req.input("action", sql.NVarChar(12), q.action); where.push("action = @action"); }
   if (q.token) { req.input("token", sql.NVarChar(120), q.token); where.push("baseAsset = @token"); }
@@ -964,6 +994,7 @@ export async function insertAiLog(e: AiLogEntry): Promise<void> {
     .input("id", sql.NVarChar(64), e.id)
     .input("ts", sql.DateTime2, new Date(e.ts))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("eventType", sql.NVarChar(24), e.eventType)
     .input("baseAsset", sql.NVarChar(120), e.baseAsset ?? null)
     .input("quoteAsset", sql.NVarChar(120), e.quoteAsset ?? null)
@@ -975,10 +1006,10 @@ export async function insertAiLog(e: AiLogEntry): Promise<void> {
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.AiLog WHERE id = @id)
        INSERT INTO dbo.AiLog
-         (id, ts, network, eventType, baseAsset, quoteAsset, reasoning,
+         (id, ts, network, userId, eventType, baseAsset, quoteAsset, reasoning,
           riskProfile, confidence, direction, price)
        VALUES
-         (@id, @ts, @network, @eventType, @baseAsset, @quoteAsset, @reasoning,
+         (@id, @ts, @network, @userId, @eventType, @baseAsset, @quoteAsset, @reasoning,
           @riskProfile, @confidence, @direction, @price);`,
     );
 }
@@ -1008,8 +1039,11 @@ function rowToAiLog(r: RawAiLogRow): AiLogEntry {
 
 export async function listAiLog(q: AiLogQuery): Promise<AiLogPage> {
   if (!dbReady()) return { rows: [], total: 0, limit: q.limit, offset: q.offset };
-  const req = getPool().request().input("net", sql.NVarChar(16), config.network);
-  const where: string[] = ["network = @net"];
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
+  const where: string[] = ["network = @net", "userId = @userId"];
   if (q.eventType) { req.input("eventType", sql.NVarChar(24), q.eventType); where.push("eventType = @eventType"); }
   if (q.token) { req.input("token", sql.NVarChar(120), q.token); where.push("baseAsset = @token"); }
   if (q.from) { req.input("from", sql.DateTime2, new Date(q.from)); where.push("ts >= @from"); }
@@ -1050,6 +1084,7 @@ function bindAlert(req: sql.Request, a: PriceAlert): sql.Request {
     .input("id", sql.NVarChar(64), a.id)
     .input("createdAt", sql.DateTime2, new Date(a.createdAt))
     .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("baseAsset", sql.NVarChar(120), a.baseAsset)
     .input("quoteAsset", sql.NVarChar(120), a.quoteAsset)
     .input("direction", sql.NVarChar(8), a.direction)
@@ -1069,10 +1104,10 @@ export async function insertPriceAlert(a: PriceAlert): Promise<void> {
   await bindAlert(getPool().request(), a).query(
     `IF NOT EXISTS (SELECT 1 FROM dbo.PriceAlerts WHERE id = @id)
      INSERT INTO dbo.PriceAlerts
-       (id, createdAt, network, baseAsset, quoteAsset, direction, price, status,
+       (id, createdAt, network, userId, baseAsset, quoteAsset, direction, price, status,
         note, triggeredAt, triggerPrice)
      VALUES
-       (@id, @createdAt, @network, @baseAsset, @quoteAsset, @direction, @price, @status,
+       (@id, @createdAt, @network, @userId, @baseAsset, @quoteAsset, @direction, @price, @status,
         @note, @triggeredAt, @triggerPrice);`,
   );
 }
@@ -1083,7 +1118,7 @@ export async function updatePriceAlert(a: PriceAlert): Promise<void> {
     `UPDATE dbo.PriceAlerts
         SET status = @status, triggeredAt = @triggeredAt, triggerPrice = @triggerPrice,
             note = @note
-      WHERE id = @id;`,
+      WHERE id = @id AND userId = @userId;`,
   );
   if ((result.rowsAffected?.[0] ?? 0) === 0) {
     await insertPriceAlert(a);
@@ -1095,10 +1130,11 @@ export async function listActivePriceAlerts(): Promise<PriceAlert[]> {
   const res = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .query<RawAlertRow>(
       `SELECT ${ALERT_COLS}
          FROM dbo.PriceAlerts
-        WHERE network = @net AND status = 'active'
+        WHERE network = @net AND userId = @userId AND status = 'active'
         ORDER BY createdAt DESC;`,
     );
   return res.recordset.map(rowToAlert);
@@ -1115,7 +1151,7 @@ export async function listStopLossAudit(opts: {
   const offset = Math.max(opts.offset, 0);
   if (!dbReady()) return { rows: [], total: 0, limit, offset };
 
-  const conditions = ["network = @net"];
+  const conditions = ["network = @net", "userId = @userId"];
   if (opts.base) conditions.push("baseAsset = @base");
   if (opts.quote) conditions.push("quoteAsset = @quote");
   const where = `WHERE ${conditions.join(" AND ")}`;
@@ -1123,6 +1159,7 @@ export async function listStopLossAudit(opts: {
   const rowsReq = getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
     .input("limit", sql.Int, limit)
     .input("offset", sql.Int, offset);
   if (opts.base) rowsReq.input("base", sql.NVarChar(120), opts.base);
@@ -1136,7 +1173,10 @@ export async function listStopLossAudit(opts: {
       OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;`,
   );
 
-  const countReq = getPool().request().input("net", sql.NVarChar(16), config.network);
+  const countReq = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
   if (opts.base) countReq.input("base", sql.NVarChar(120), opts.base);
   if (opts.quote) countReq.input("quote", sql.NVarChar(120), opts.quote);
   const countRes = await countReq.query<{ total: number }>(

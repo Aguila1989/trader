@@ -1,0 +1,125 @@
+/**
+ * The API auth gate (replaces the old DASHBOARD_TOKEN Bearer check) and the
+ * per-IP rate limiter for the auth endpoints.
+ *
+ * STRICT ALLOWLIST (default-deny): every /api/* request is rejected with 401
+ * unless its exact path is in PUBLIC_API_PATHS. There is no denylist and no
+ * prefix wildcard - a new route is protected automatically until someone
+ * deliberately lists it as public. Non-/api requests (the static SPA bundle and
+ * index.html) pass through so the login page and the Academy can render; they
+ * expose no user data because the Academy is 100% client-rendered static content
+ * and makes ZERO API calls (see the audit in src/server.ts).
+ *
+ * On success the request runs inside runWithUserId() so the data layer
+ * (currentUserId()) scopes every read/write to the authenticated user, with
+ * AsyncLocalStorage keeping concurrent users isolated across awaits.
+ */
+import type { Request, Response, NextFunction } from "express";
+import { config } from "../config";
+import { verifyJwt } from "./jwt";
+import { isSessionActive } from "./store";
+import { JWT_COOKIE, parseCookies } from "./cookies";
+import { runWithUserId } from "../users/context";
+
+/**
+ * The ONLY API paths reachable without a valid JWT. Exact-match set (a strict
+ * allowlist, never a prefix or denylist). Health + the unauthenticated auth
+ * actions only. Notably NOT here: /api/auth/me (returns the logged-in user) and
+ * /api/stream (the live feed) - both require a valid session.
+ */
+export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
+  "/api/health",
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/logout",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+  "/api/auth/verify-email",
+]);
+
+const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+/**
+ * The main gate. Async because it checks the session is still active server-side
+ * (so logout / password-reset revocation takes effect immediately, not only when
+ * the JWT eventually expires).
+ */
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Express routes are case-INSENSITIVE by default, so `/API/state` matches the
+  // `/api/state` handler. Normalize the path here too, otherwise a case-varied
+  // path would slip past a case-sensitive `startsWith("/api")` as "non-API" and
+  // reach a protected handler unauthenticated. Lowercasing fails CLOSED: any
+  // /api request that isn't an exact public path is gated.
+  const path = req.path.toLowerCase();
+  // Static assets + the SPA shell (needed to render login AND the Academy).
+  if (!path.startsWith("/api")) return next();
+  // Strict public allowlist (exact match against the normalized path).
+  if (PUBLIC_API_PATHS.has(path)) return next();
+
+  const token = parseCookies(req.headers.cookie)[JWT_COOKIE] ?? "";
+  if (!token) {
+    res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
+    return;
+  }
+  const verdict = verifyJwt(token, config.jwtSecret, nowSec());
+  if (!verdict.ok) {
+    res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
+    return;
+  }
+  // Server-side session validity (revocation / logout / forced re-login).
+  let active = false;
+  try {
+    active = await isSessionActive(verdict.claims.jti);
+  } catch {
+    // A DB hiccup must not silently grant access: fail closed.
+    res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
+    return;
+  }
+  if (!active) {
+    res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
+    return;
+  }
+  // Scope the rest of the request to this user (AsyncLocalStorage).
+  runWithUserId(verdict.claims.sub, () => next());
+}
+
+// --- per-IP rate limiter for /api/auth/* (sliding window) -------------------
+// Mirrors the existing inline limiter style in server.ts: a bounded Map of
+// timestamp arrays, swept lazily. Spec: max 10 requests / minute / IP across the
+// auth endpoints. Applied to ALL IPs (no loopback exemption) since brute-force
+// of login/register/reset is the threat regardless of where it originates.
+const WINDOW_MS = 60_000;
+const authHits = new Map<string, number[]>();
+
+export function authRateLimiter(req: Request, res: Response, next: NextFunction): void {
+  // Lowercase the path: Express matches routes case-insensitively, so without
+  // this `/API/AUTH/LOGIN` would skip the limiter yet still reach the login
+  // handler - a brute-force bypass. (Same normalization as requireAuth.)
+  if (!req.path.toLowerCase().startsWith("/api/auth/")) return next();
+  const ip = req.ip ?? "unknown";
+  const now = Date.now();
+  const arr = authHits.get(ip) ?? [];
+  // Drop timestamps outside the window.
+  const fresh = arr.filter((t) => now - t < WINDOW_MS);
+  if (fresh.length >= config.auth.rateLimitPerMinute) {
+    authHits.set(ip, fresh);
+    res.status(429).json({ error: "Too many requests. Please wait a minute and try again." });
+    return;
+  }
+  fresh.push(now);
+  authHits.set(ip, fresh);
+  // Opportunistic sweep so the map can't grow unbounded.
+  if (authHits.size > 5_000) {
+    for (const [k, v] of authHits) {
+      const kept = v.filter((t) => now - t < WINDOW_MS);
+      if (kept.length === 0) authHits.delete(k);
+      else authHits.set(k, kept);
+    }
+  }
+  next();
+}
+
+/** Test hook: clear the rate-limit window between cases. */
+export function __resetAuthRateLimiterForTests(): void {
+  authHits.clear();
+}

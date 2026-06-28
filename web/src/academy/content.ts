@@ -21,6 +21,9 @@ import { chapter10 as en10 } from "./content/en/chapter10";
 import { chapter11 as en11 } from "./content/en/chapter11";
 import { chapter12 as en12 } from "./content/en/chapter12";
 import { chapter13 as en13 } from "./content/en/chapter13";
+import { chapter14 as en14 } from "./content/en/chapter14";
+import { chapter15 as en15 } from "./content/en/chapter15";
+import { chapter16 as en16 } from "./content/en/chapter16";
 
 // --- Dutch ------------------------------------------------------------------
 import { chapter01 as nl01 } from "./content/nl/chapter01";
@@ -36,6 +39,9 @@ import { chapter10 as nl10 } from "./content/nl/chapter10";
 import { chapter11 as nl11 } from "./content/nl/chapter11";
 import { chapter12 as nl12 } from "./content/nl/chapter12";
 import { chapter13 as nl13 } from "./content/nl/chapter13";
+import { chapter14 as nl14 } from "./content/nl/chapter14";
+import { chapter15 as nl15 } from "./content/nl/chapter15";
+import { chapter16 as nl16 } from "./content/nl/chapter16";
 
 // --- French -----------------------------------------------------------------
 import { chapter01 as fr01 } from "./content/fr/chapter01";
@@ -51,6 +57,9 @@ import { chapter10 as fr10 } from "./content/fr/chapter10";
 import { chapter11 as fr11 } from "./content/fr/chapter11";
 import { chapter12 as fr12 } from "./content/fr/chapter12";
 import { chapter13 as fr13 } from "./content/fr/chapter13";
+import { chapter14 as fr14 } from "./content/fr/chapter14";
+import { chapter15 as fr15 } from "./content/fr/chapter15";
+import { chapter16 as fr16 } from "./content/fr/chapter16";
 
 // --- Spanish ----------------------------------------------------------------
 import { chapter01 as es01 } from "./content/es/chapter01";
@@ -66,11 +75,14 @@ import { chapter10 as es10 } from "./content/es/chapter10";
 import { chapter11 as es11 } from "./content/es/chapter11";
 import { chapter12 as es12 } from "./content/es/chapter12";
 import { chapter13 as es13 } from "./content/es/chapter13";
+import { chapter14 as es14 } from "./content/es/chapter14";
+import { chapter15 as es15 } from "./content/es/chapter15";
+import { chapter16 as es16 } from "./content/es/chapter16";
 
-const EN: Chapter[] = [en01, en02, en03, en04, en05, en06, en07, en08, en09, en10, en11, en12, en13];
-const NL: Chapter[] = [nl01, nl02, nl03, nl04, nl05, nl06, nl07, nl08, nl09, nl10, nl11, nl12, nl13];
-const FR: Chapter[] = [fr01, fr02, fr03, fr04, fr05, fr06, fr07, fr08, fr09, fr10, fr11, fr12, fr13];
-const ES: Chapter[] = [es01, es02, es03, es04, es05, es06, es07, es08, es09, es10, es11, es12, es13];
+const EN: Chapter[] = [en01, en02, en03, en04, en05, en06, en07, en08, en09, en10, en11, en12, en13, en14, en15, en16];
+const NL: Chapter[] = [nl01, nl02, nl03, nl04, nl05, nl06, nl07, nl08, nl09, nl10, nl11, nl12, nl13, nl14, nl15, nl16];
+const FR: Chapter[] = [fr01, fr02, fr03, fr04, fr05, fr06, fr07, fr08, fr09, fr10, fr11, fr12, fr13, fr14, fr15, fr16];
+const ES: Chapter[] = [es01, es02, es03, es04, es05, es06, es07, es08, es09, es10, es11, es12, es13, es14, es15, es16];
 
 // Any locale missing (or with an incomplete) list falls back to English.
 const BY_LOCALE: Partial<Record<Locale, Chapter[]>> = {

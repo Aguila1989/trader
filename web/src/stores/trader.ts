@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { api, sseTicket } from "../api";
+import { api } from "../api";
 import type {
   Balance,
   Candle,
@@ -327,14 +327,12 @@ export const useTraderStore = defineStore("trader", () => {
     es?.close();
     es = null;
 
-    // SEC-04: authenticate the stream with a one-time ticket (fetched per
-    // connect) instead of putting the token in the URL. When no token is
-    // configured the ticket is "" and the stream is open (loopback default).
-    const ticket = await sseTicket();
-    // A newer connect (watchdog/reconnect) started during the await - bail so we
-    // don't leave a second EventSource open.
+    // Feature 2: the live stream is authenticated by the httpOnly session cookie,
+    // which the browser sends automatically on this same-origin EventSource - no
+    // ticket/token in the URL. The myGen check still guards against a
+    // reconnect/watchdog superseding this connect.
     if (myGen !== connectGen) return;
-    es = new EventSource(ticket ? `/api/stream?ticket=${encodeURIComponent(ticket)}` : "/api/stream");
+    es = new EventSource("/api/stream");
     startWatchdog();
     es.addEventListener("open", () => {
       markAlive();

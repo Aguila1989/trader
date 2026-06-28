@@ -1,19 +1,46 @@
 <script setup lang="ts">
-// App shell. With vue-router, App is just the persistent root: it initialises
-// the trader store ONCE (App is always mounted, so the SSE stream and data
-// survive navigation between the dashboard and the Academy) and renders the
-// active route.
-import { onMounted } from "vue";
+// App shell. With vue-router, App is the persistent root. Feature 2 gates the
+// trader store + live log behind authentication: the SSE stream and data calls
+// only start once a user is logged in, so the login / Academy screens make no
+// authenticated requests. A single 401 handler bounces an expired session back
+// to the login screen from one place.
+import { onMounted, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "./stores/trader";
+import { setUnauthorizedHandler } from "./api";
+import { isLoggedIn, session, refreshSession } from "./auth/session";
 import LiveLogDrawer from "./components/LiveLogDrawer.vue";
 
 const store = useTraderStore();
-onMounted(() => void store.init());
+const router = useRouter();
+
+let inited = false;
+function maybeInit(): void {
+  if (isLoggedIn() && !inited) {
+    inited = true;
+    void store.init();
+  }
+}
+
+onMounted(() => {
+  // Any 401 from the API means the session is gone/expired: drop local session
+  // state and send the user to login (unless they're already on a public screen).
+  setUnauthorizedHandler(() => {
+    refreshSession();
+    const name = String(router.currentRoute.value.name ?? "");
+    if (name !== "login" && name !== "register" && name !== "academy") {
+      void router.replace({ path: "/login" });
+    }
+  });
+  maybeInit();
+});
+
+// After a successful login the marker flips; start the store then.
+watch(() => session.user, maybeInit);
 </script>
 
 <template>
   <router-view />
-  <!-- Feature 7: the live log (last 20 events) is always visible on EVERY route,
-       including the Academy. The full, paginated history lives only in the Logs tab. -->
-  <LiveLogDrawer />
+  <!-- The live log is only meaningful (and only authorized) once logged in. -->
+  <LiveLogDrawer v-if="session.user" />
 </template>

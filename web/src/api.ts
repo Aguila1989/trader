@@ -32,86 +32,38 @@ import type {
 // All requests are same-origin: in dev Vite proxies /api -> :3000, in prod
 // Express serves both the SPA and the API from one origin.
 
-// --- API auth token ---------------------------------------------------------
-// SEC-04: when the backend sets DASHBOARD_TOKEN the SPA must present it, but the
-// token must NEVER ride in a request URL (it would land in access logs, browser
-// history and the Referer header). So:
-//  - Bootstrap from the URL #fragment (#token=...) - the fragment is never sent
-//    to the server. We persist it to localStorage and strip it immediately. A
-//    legacy ?token= query is still accepted for one bootstrap, then stripped.
-//  - Normal requests authenticate with an `Authorization: Bearer` header.
-//  - The SSE stream (EventSource can't set headers) uses a one-time ticket.
-//  - The CSV export is fetched with the Bearer header and downloaded as a blob.
-const TOKEN_KEY = "trader_token";
+// --- Session auth (Feature 2) -----------------------------------------------
+// Authentication is now a login-issued JWT in an httpOnly cookie (see
+// src/auth/*). The browser sends it automatically on every same-origin request,
+// so there is no token to read, store, or attach - and because it is httpOnly,
+// no script (including a hypothetical XSS payload) can exfiltrate it. We send
+// `credentials: "same-origin"` explicitly for clarity. Every request also routes
+// through a single 401 handler so an expired/invalid session bounces the SPA to
+// the login screen from one place.
+const CREDENTIALS: RequestCredentials = "same-origin";
 
-function loadToken(): string {
-  try {
-    let found = "";
-    // Preferred: the URL #fragment, e.g. http://127.0.0.1:3000/#token=XYZ
-    const hash = window.location.hash || "";
-    const hashMatch = hash.match(/(?:^#|&)token=([^&]+)/);
-    if (hashMatch) {
-      found = decodeURIComponent(hashMatch[1] as string);
-      // Strip token= from the fragment, then tidy any leftover separators so a
-      // route fragment isn't left as "#/&" or a bare "#".
-      let cleaned = hash
-        .replace(/(^#|&)token=[^&]+/, "$1")
-        .replace(/&&+/g, "&")
-        .replace(/[#&]+$/g, "")
-        .replace(/^#&/, "#");
-      if (cleaned === "#") cleaned = "";
-      const u = new URL(window.location.href);
-      u.hash = cleaned;
-      window.history.replaceState({}, "", u.toString());
+let onUnauthorized: (() => void) | null = null;
+/** Register the app-wide handler invoked whenever the API returns 401. */
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+function handleStatus(res: Response): void {
+  if (res.status === 401) {
+    try {
+      onUnauthorized?.();
+    } catch {
+      /* ignore */
     }
-    // Legacy fallback: ?token= query (read once, then stripped). The server no
-    // longer accepts it for auth - this is bootstrap convenience only.
-    if (!found) {
-      const u = new URL(window.location.href);
-      const q = u.searchParams.get("token");
-      if (q) {
-        found = q;
-        u.searchParams.delete("token");
-        window.history.replaceState({}, "", u.toString());
-      }
-    }
-    if (found) {
-      localStorage.setItem(TOKEN_KEY, found);
-      return found;
-    }
-    return localStorage.getItem(TOKEN_KEY) ?? "";
-  } catch {
-    return "";
   }
 }
 
-const token = loadToken();
-
-function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
-}
-
-/**
- * SEC-04: fetch a one-time SSE ticket so the stream URL never carries the token.
- * Returns "" when no token is configured (the stream is then open on loopback).
- */
-export async function sseTicket(): Promise<string> {
-  if (!token) return "";
-  try {
-    const r = await fetch("/api/sse-ticket", { method: "POST", headers: authHeaders() });
-    if (!r.ok) return "";
-    const j = (await r.json()) as { ticket?: string };
-    return j.ticket ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/** SEC-04: download an authenticated file (CSV) via Bearer fetch + blob, so the
- *  token never appears in the download URL. */
+/** Download a file (CSV) via the session cookie + blob (no token in the URL). */
 export async function downloadFile(path: string, filename: string): Promise<void> {
-  const res = await fetch(path, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const res = await fetch(path, { credentials: CREDENTIALS });
+  if (!res.ok) {
+    handleStatus(res);
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -124,19 +76,70 @@ export async function downloadFile(path: string, filename: string): Promise<void
 }
 
 async function getJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const res = await fetch(url, { credentials: CREDENTIALS });
+  if (!res.ok) {
+    handleStatus(res);
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as T;
 }
 
 async function postJSON<T>(url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
+    credentials: CREDENTIALS,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
   });
+  handleStatus(res);
   return (await res.json().catch(() => ({}))) as T;
 }
+
+// --- auth API ---------------------------------------------------------------
+// Returns the parsed body plus ok/status so the auth screens can show the
+// server's (deliberately generic) messages. These never throw on 4xx.
+export interface AuthApiResult<T = Record<string, unknown>> {
+  ok: boolean;
+  status: number;
+  data: T & { error?: string; message?: string };
+}
+
+async function authRequest<T = Record<string, unknown>>(
+  path: string,
+  body: unknown,
+): Promise<AuthApiResult<T>> {
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      credentials: CREDENTIALS,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string; message?: string };
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Network error - please try again." } as T & { error?: string } };
+  }
+}
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  displayName: string | null;
+}
+
+export const authApi = {
+  login: (email: string, password: string, rememberMe: boolean) =>
+    authRequest<{ user?: SessionUser }>("/api/auth/login", { email, password, rememberMe }),
+  register: (email: string, password: string, confirmPassword: string) =>
+    authRequest<{ verificationRequired?: boolean }>("/api/auth/register", { email, password, confirmPassword }),
+  logout: () => authRequest("/api/auth/logout", {}),
+  forgotPassword: (email: string) => authRequest("/api/auth/forgot-password", { email }),
+  resetPassword: (token: string, password: string, confirmPassword: string) =>
+    authRequest("/api/auth/reset-password", { token, password, confirmPassword }),
+  verifyEmail: (token: string) => authRequest("/api/auth/verify-email", { token }),
+  me: () => getJSON<{ user: SessionUser }>("/api/auth/me"),
+};
 
 export const api = {
   state: () => getJSON<Snapshot>("/api/state"),

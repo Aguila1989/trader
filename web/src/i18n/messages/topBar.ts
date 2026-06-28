@@ -3,7 +3,7 @@
 // namespace per file; the i18n index auto-merges this under `topBar.*`.
 export default {
   en: {
-    brand: "Stellar AI Trading Bot",
+    brand: "Atrium",
     paper: "PAPER",
     readOnly: "read-only",
     aiProviderAria: "AI provider",
@@ -30,7 +30,7 @@ export default {
     killSwitch: "Kill switch",
   },
   nl: {
-    brand: "Stellar AI Trading Bot",
+    brand: "Atrium",
     paper: "PAPER",
     readOnly: "alleen-lezen",
     aiProviderAria: "AI-provider",
@@ -57,7 +57,7 @@ export default {
     killSwitch: "Noodstop",
   },
   fr: {
-    brand: "Stellar AI Trading Bot",
+    brand: "Atrium",
     paper: "PAPER",
     readOnly: "lecture seule",
     aiProviderAria: "Fournisseur d'IA",
@@ -84,7 +84,7 @@ export default {
     killSwitch: "Coupe-circuit",
   },
   es: {
-    brand: "Stellar AI Trading Bot",
+    brand: "Atrium",
     paper: "PAPER",
     readOnly: "solo lectura",
     aiProviderAria: "Proveedor de IA",

@@ -259,13 +259,70 @@ export const config = {
    */
   bindHost: env("BIND_HOST", "127.0.0.1"),
   /**
-   * Optional shared secret. When non-empty, every /api/* request (except
-   * /api/health) must present it as `Authorization: Bearer <token>` (SEC-04: the
-   * legacy `?token=` query is no longer accepted; the SPA bootstraps the token
-   * from the URL #fragment and the SSE stream uses a one-time ticket). Must be
-   * >= 24 chars (SEC-20). Strongly recommended whenever BIND_HOST is not loopback.
+   * DEPRECATED (Feature 2 - authentication). The single shared `DASHBOARD_TOKEN`
+   * Bearer secret has been REPLACED by the per-user login flow (email + password
+   * -> signed JWT in an httpOnly cookie; see config.auth + src/auth/*). It is no
+   * longer consulted by the API auth gate. The value is still read so an old
+   * `.env` doesn't error, and so the boot banner can warn that it is now ignored.
    */
   dashboardToken: env("DASHBOARD_TOKEN"),
+
+  // --- Authentication (Feature 2: login / JWT sessions) -----------------
+  /**
+   * REQUIRED secret used to sign session JWTs (HS256). The server REFUSES TO
+   * START when this is empty (see start() in src/server.ts) and when it is
+   * shorter than 32 chars. Generate one with `openssl rand -hex 32`. Rotating it
+   * invalidates every existing session (all users must log in again).
+   */
+  jwtSecret: env("JWT_SECRET"),
+  auth: {
+    /** Default access-token lifetime (hours) for a normal login. Spec: 24h. */
+    sessionHours: num("AUTH_SESSION_HOURS", 24),
+    /** Extended lifetime (days) when the user ticks "Remember me". Spec: 30d. */
+    rememberMeDays: num("AUTH_REMEMBER_ME_DAYS", 30),
+    /** Consecutive failed logins before the account locks. Spec: 5. */
+    maxFailedLogins: num("AUTH_MAX_FAILED_LOGINS", 5),
+    /** How long (minutes) an account stays locked after too many fails. Spec: 15. */
+    lockoutMinutes: num("AUTH_LOCKOUT_MINUTES", 15),
+    /** Per-IP request cap on the /api/auth/* endpoints, per minute. Spec: 10. */
+    rateLimitPerMinute: num("AUTH_RATE_LIMIT_PER_MINUTE", 10),
+    /** Password-reset link lifetime (minutes). Spec: 60 (1 hour). */
+    resetTokenMinutes: num("AUTH_RESET_TOKEN_MINUTES", 60),
+    /** Email-verification link lifetime (hours). */
+    verifyTokenHours: num("AUTH_VERIFY_TOKEN_HOURS", 24),
+    /**
+     * Set the Secure flag on the auth cookies. Auto (default): ON for a
+     * non-loopback bind (TLS is mandatory there, enforced by the boot guard),
+     * OFF on the loopback http default so the cookie is actually sent over plain
+     * http. Force either way with AUTH_COOKIE_SECURE=true|false.
+     */
+    cookieSecure: (() => {
+      const v = env("AUTH_COOKIE_SECURE").toLowerCase();
+      if (v !== "") return v === "true" || v === "1" || v === "yes";
+      return !/^(127\.0\.0\.1|localhost|::1)$/i.test(env("BIND_HOST", "127.0.0.1"));
+    })(),
+  },
+  /**
+   * Public base URL used to build absolute links in emails (verification +
+   * password reset). Defaults to http://<bindHost>:<port> (127.0.0.1 for a
+   * wildcard bind). Set this to your real https origin in production.
+   */
+  publicBaseUrl: env("PUBLIC_BASE_URL"),
+  /**
+   * SMTP for transactional email (verification + password-reset links). When
+   * SMTP_HOST is empty, email is DISABLED: registration auto-verifies the
+   * account and a warning is logged (per the feature spec). nodemailer is loaded
+   * lazily and is an OPTIONAL dependency - email is simply skipped if absent.
+   */
+  smtp: {
+    host: env("SMTP_HOST"),
+    port: num("SMTP_PORT", 587),
+    user: env("SMTP_USER"),
+    password: env("SMTP_PASSWORD"),
+    from: env("SMTP_FROM"),
+    /** Use a TLS socket from the start (port 465). false = STARTTLS (587). */
+    secure: bool("SMTP_SECURE", false),
+  },
   /**
    * Extra browser origins allowed to make state-changing /api calls (the CSRF
    * allowlist). Comma-separated, e.g. "https://trader.example.com". Loopback
@@ -307,10 +364,11 @@ export const config = {
    */
   allowRawTransfers: bool("ALLOW_RAW_TRANSFERS", false),
   /**
-   * SEC-02: explicit opt-out for the fail-closed exposed-bind guard. When the
-   * server binds to a NON-loopback interface with an EMPTY DASHBOARD_TOKEN it
-   * refuses to start (an unauthenticated, money-moving API on a reachable port).
-   * Set true ONLY when a reverse proxy in front terminates auth.
+   * DEPRECATED (Feature 2). Previously opted out of the "exposed bind with empty
+   * DASHBOARD_TOKEN" boot guard. Auth is now mandatory (JWT_SECRET required +
+   * login on every API route), so that guard is gone and this flag is unused.
+   * Kept so an old .env doesn't error; the TLS guard (allowInsecureExposed) still
+   * applies to a non-loopback bind.
    */
   allowExposedWithoutToken: bool("ALLOW_EXPOSED_WITHOUT_TOKEN", false),
   /**
@@ -464,3 +522,19 @@ export const isReadOnly = config.stellarSecret === "";
 /** True when a SQL Server target is configured (string or discrete host). */
 export const dbConfigured =
   config.db.connectionString !== "" || config.db.server !== "";
+
+/** True when SMTP is configured, i.e. verification + reset emails can be sent. */
+export const smtpConfigured = config.smtp.host !== "";
+
+/**
+ * Absolute base URL for links the backend puts in emails. Falls back to the
+ * bound host:port (a wildcard bind resolves to loopback for the link). Never
+ * trusts a request Host header (those links must be server-controlled).
+ */
+export const publicBaseUrl: string =
+  config.publicBaseUrl ||
+  `http://${
+    config.bindHost === "0.0.0.0" || config.bindHost === "::" || config.bindHost === ""
+      ? "127.0.0.1"
+      : config.bindHost
+  }:${config.port}`;

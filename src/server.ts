@@ -1,11 +1,13 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import helmet from "helmet";
 import { existsSync } from "node:fs";
-import { timingSafeEqual, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config, isReadOnly, dbConfigured } from "./config";
 import { checkOrigin, isLoopbackBind } from "./csrf";
+import { createAuthRouter } from "./auth/routes";
+import { requireAuth, authRateLimiter } from "./auth/middleware";
+import { purgeExpiredSessions } from "./auth/store";
 import { aiReady, aiModel, aiProviderId } from "./ai";
 import { store } from "./trading/store";
 import {
@@ -151,102 +153,26 @@ app.use((req, res, next) => {
   });
 });
 
-/**
- * Constant-time token compare. Avoids a timing side-channel that a byte-by-byte
- * `===` on a secret would leak. Returns false for an empty expected token (auth
- * disabled is handled by the caller) and for any length mismatch.
- */
-function tokenMatches(provided: string, expected: string): boolean {
-  if (expected === "") return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
-// SEC-04: one-time, short-lived SSE tickets. EventSource can't send an
-// Authorization header, so instead of leaking the long-lived token in the
-// stream URL (logs / history / Referer), the SPA fetches a single-use ticket
-// (POST /api/sse-ticket, Bearer-authed) and opens /api/stream?ticket=<t>. The
-// ticket is consumed on first use and expires in 30s.
-const sseTickets = new Map<string, number>();
-function issueSseTicket(): string {
-  const now = Date.now();
-  for (const [k, exp] of sseTickets) if (exp < now) sseTickets.delete(k);
-  const t = randomBytes(32).toString("hex");
-  sseTickets.set(t, now + 30_000);
-  return t;
-}
-function consumeSseTicket(t: string): boolean {
-  if (!t) return false;
-  const exp = sseTickets.get(t);
-  if (exp == null) return false;
-  sseTickets.delete(t); // single-use
-  return exp >= Date.now();
-}
-
-// SEC-20: throttle token guessing per source IP - after AUTH_MAX_FAILS failed
-// attempts in the window, that IP gets 429 until it rolls off. Bounded map; an
-// entry is rewritten when its window expires.
-const authFails = new Map<string, { count: number; resetAt: number }>();
-const AUTH_WINDOW_MS = 60_000;
-const AUTH_MAX_FAILS = 10;
-// The brute-force threat is REMOTE; a loopback caller is the local operator (and
-// on a loopback bind every request shares one IP, so counting it would let a
-// local process lock out the dashboard). Exempt loopback from the limiter.
-function isLoopbackIp(ip: string): boolean {
-  return ip === "127.0.0.1" || ip === "::1" || ip.startsWith("::ffff:127.");
-}
-function authRateLimited(ip: string): boolean {
-  const e = authFails.get(ip);
-  return e != null && Date.now() <= e.resetAt && e.count >= AUTH_MAX_FAILS;
-}
-function recordAuthFail(ip: string): void {
-  const now = Date.now();
-  // Sweep expired buckets so the map can't grow unbounded (mirrors sseTickets);
-  // the live working set within one window is tiny.
-  for (const [k, v] of authFails) if (now > v.resetAt) authFails.delete(k);
-  const e = authFails.get(ip);
-  if (!e || now > e.resetAt) {
-    authFails.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
-  } else {
-    e.count++;
-  }
-}
-
-// Optional API auth. When DASHBOARD_TOKEN is set, every /api/* request (except
-// the health probe) must present the token as `Authorization: Bearer <token>`.
-// SEC-04: the legacy `?token=` query bootstrap is GONE (it leaked into logs /
-// history / Referer); the SPA bootstraps the token from the URL #fragment and
-// the SSE stream authenticates with a one-time ticket. No token = open (loopback).
-app.use((req, res, next) => {
-  if (config.dashboardToken === "") return next();
-  if (!req.path.startsWith("/api")) return next();
-  if (req.path === "/api/health") return next();
-  // SSE: accept a valid one-time ticket in place of the (header-only) token.
-  if (req.path === "/api/stream") {
-    const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
-    if (consumeSseTicket(ticket)) return next();
-  }
-  // SEC-20: block brute-forcing IPs before the (constant-time) compare. Loopback
-  // is the local operator and shares one bucket, so it is exempt.
-  const ip = req.ip ?? "unknown";
-  const limit = !isLoopbackIp(ip);
-  if (limit && authRateLimited(ip)) {
-    res.status(429).json({ error: "too many attempts - try again later" });
-    return;
-  }
-  const header = req.header("authorization") ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  if (tokenMatches(bearer, config.dashboardToken)) return next();
-  if (limit) recordAuthFail(ip);
-  res.status(401).json({ error: "unauthorized" });
-});
-
-// SEC-04: mint a one-time SSE ticket (Bearer-authed by the middleware above).
-app.post("/api/sse-ticket", (_req, res) => {
-  res.json({ ticket: issueSseTicket() });
-});
+// --- Authentication (Feature 2) ------------------------------------------
+// The single shared DASHBOARD_TOKEN Bearer check is REPLACED by per-user login.
+// Cookies carry a signed session JWT (httpOnly); the SPA's login form is the
+// app's entry point. Wiring order (each runs only on its scope):
+//   1. authRateLimiter  - per-IP cap on /api/auth/* (brute-force defence).
+//   2. requireAuth       - the gate. Its strict allowlist lets the public auth
+//                          routes (login/register/reset/...) AND /api/health
+//                          through; every other /api/* needs a valid JWT cookie
+//                          + an unrevoked server-side session, and then runs
+//                          inside the per-request user context. Non-/api (the SPA
+//                          shell) passes so the login page + Academy can render.
+//   3. /api/auth/*       - the router. Mounted AFTER the gate so /api/auth/me is
+//                          protected (it is NOT in the allowlist) while the
+//                          public auth routes were already waved through.
+// The CSRF Origin guard above still runs FIRST on every state-changing request,
+// so a cross-site POST is rejected before the (auto-sent) cookie is ever trusted
+// - SameSite=Strict on the cookie is the second layer.
+app.use(authRateLimiter);
+app.use(requireAuth);
+app.use("/api/auth", createAuthRouter());
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, network: config.network });
@@ -1773,6 +1699,26 @@ async function connectDatabase(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  // Feature 2: a signed-JWT session system REQUIRES a secret. Login is now the
+  // app's entry point, so unlike the optional DASHBOARD_TOKEN this is mandatory:
+  // refuse to start without it, and refuse a weak one (HS256 wants a high-entropy
+  // key). Generate with `openssl rand -hex 32`.
+  if (config.jwtSecret === "") {
+    console.error(
+      "\n  REFUSING TO START: JWT_SECRET is not set.\n" +
+        "  The login system signs session tokens with it. Set a long random secret,\n" +
+        "  e.g. `openssl rand -hex 32`, in your environment / .env.\n",
+    );
+    process.exit(1);
+  }
+  if (config.jwtSecret.length < 32) {
+    console.error(
+      "\n  REFUSING TO START: JWT_SECRET is too short (< 32 chars).\n" +
+        "  A short secret is brute-forceable. Use `openssl rand -hex 32` (64 hex chars).\n",
+    );
+    process.exit(1);
+  }
+
   // On mainnet, daily caps + realized PnL MUST survive a restart, otherwise the
   // MAX_DAILY_LOSS / volume / count guards silently reset to zero. Refuse to
   // boot without a database unless the operator explicitly opts out.
@@ -1809,16 +1755,6 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
-  // SEC-20: a configured token that's too short is brute-forceable; refuse to
-  // start with a weak one (empty = no auth, handled by the exposed-bind guard).
-  if (config.dashboardToken !== "" && config.dashboardToken.length < 24) {
-    console.error(
-      "\n  REFUSING TO START: DASHBOARD_TOKEN is too short (< 24 chars).\n" +
-        "  Use a long random secret, e.g. `openssl rand -hex 32`.\n",
-    );
-    process.exit(1);
-  }
-
   // SEC-12: on mainnet, refuse an insecure DB TLS posture - whether configured
   // via the discrete SQLSERVER_* vars OR smuggled into SQLSERVER_CONNECTION_STRING
   // (which bypasses the secure code defaults). A plaintext / unverified-cert DB
@@ -1846,37 +1782,26 @@ async function start(): Promise<void> {
     }
   }
 
-  // SEC-02 + SEC-14: fail CLOSED on a dangerous exposed posture, mirroring the
-  // mainnet-without-DB hard-exit above (the audit's "fail-OPEN despite a proven
-  // fail-CLOSED pattern" theme). A non-loopback bind serves a money-moving API,
-  // so it MUST have a token (else anyone reaching the port has full control) and
-  // a TLS acknowledgement (else the token crosses the wire in cleartext).
-  if (!isLoopbackBind(config.bindHost)) {
-    if (config.dashboardToken === "" && !config.allowExposedWithoutToken) {
-      console.error(
-        `\n  REFUSING TO START: BIND_HOST=${config.bindHost} is NOT loopback but\n` +
-          "  DASHBOARD_TOKEN is empty. An unauthenticated, money-moving API would\n" +
-          "  be reachable from other machines (arm live trading, drain the wallet).\n" +
-          "  Set DASHBOARD_TOKEN, bind to 127.0.0.1, or (proxy-terminated auth only)\n" +
-          "  set ALLOW_EXPOSED_WITHOUT_TOKEN=true.\n",
-      );
-      process.exit(1);
-    }
-    if (!config.allowInsecureExposed) {
-      console.error(
-        `\n  REFUSING TO START: BIND_HOST=${config.bindHost} is NOT loopback and TLS\n` +
-          "  is not acknowledged. The dashboard token would be sent in cleartext.\n" +
-          "  Put HTTPS in front and set ALLOW_INSECURE_EXPOSED=true to acknowledge,\n" +
-          "  or bind to 127.0.0.1.\n",
-      );
-      process.exit(1);
-    }
+  // SEC-14: fail CLOSED on a dangerous exposed posture. Auth is now MANDATORY
+  // (JWT_SECRET required above, login required for every API route), so an
+  // exposed bind is no longer "unauthenticated" - the old DASHBOARD_TOKEN-empty
+  // exit is gone. What still matters is TLS: a non-loopback bind sends the
+  // session cookie (and passwords on login) over the wire, so it MUST sit behind
+  // HTTPS. Without that acknowledgement, refuse to start.
+  if (!isLoopbackBind(config.bindHost) && !config.allowInsecureExposed) {
+    console.error(
+      `\n  REFUSING TO START: BIND_HOST=${config.bindHost} is NOT loopback and TLS\n` +
+        "  is not acknowledged. Login passwords and the session cookie would be sent\n" +
+        "  in cleartext. Put HTTPS in front and set ALLOW_INSECURE_EXPOSED=true to\n" +
+        "  acknowledge, or bind to 127.0.0.1.\n",
+    );
+    process.exit(1);
   }
 
   app.listen(config.port, config.bindHost, () => {
     store.log(
       "info",
-      `Stellar AI Trading Bot listening on http://${config.bindHost}:${config.port} (${config.network})`,
+      `Atrium listening on http://${config.bindHost}:${config.port} (${config.network})`,
     );
     if (isReadOnly) {
       store.log(
@@ -1884,15 +1809,19 @@ async function start(): Promise<void> {
         "READ-ONLY mode: no STELLAR_SECRET set, trades cannot be submitted.",
       );
     }
-    if (config.bindHost !== "127.0.0.1" && config.dashboardToken === "") {
+    if (config.dashboardToken !== "") {
       store.log(
         "warn",
-        `SERVER EXPOSED on ${config.bindHost} with NO DASHBOARD_TOKEN - anyone who can reach this port can trigger trades. Set DASHBOARD_TOKEN or bind to 127.0.0.1.`,
+        "DASHBOARD_TOKEN is set but IGNORED: it was replaced by the login system (Feature 2). Remove it from your env; access is now controlled by user accounts (JWT cookie).",
       );
     }
     startAutoPilot();
     startMonitor();
     startLiquidityScanner();
+    // Feature 2: keep dbo.AuthSessions from growing unbounded. Purge expired
+    // sessions at boot and every 12h. Unref'd so it never holds the process open.
+    void purgeExpiredSessions().catch(() => {});
+    setInterval(() => void purgeExpiredSessions().catch(() => {}), 12 * 3_600_000).unref();
     // Opt-in: arm live trading at startup instead of booting read-only. Goes
     // through setLiveTrading so it still refuses without a signing key or with
     // the monitor off; logs loudly so an armed boot is never silent.
@@ -1910,10 +1839,10 @@ async function start(): Promise<void> {
     }
     const mode = store.autoApprove ? "AUTO-TRADE" : "approve every trade";
     const host = config.bindHost === "0.0.0.0" ? "127.0.0.1" : config.bindHost;
-    console.log("\n  Stellar AI Trading Bot");
+    console.log("\n  Atrium");
     console.log(`  Dashboard: http://${host}:${config.port}`);
     console.log(`  Bind host: ${config.bindHost}${config.bindHost === "0.0.0.0" ? " (EXPOSED on all interfaces)" : " (loopback only)"}`);
-    console.log(`  API auth:  ${config.dashboardToken ? "ON (token required)" : "OFF (no token)"}`);
+    console.log(`  API auth:  ON (login required - JWT session cookie)`);
     console.log(`  Network:   ${config.network}`);
     console.log(
       `  AI:        ${aiProviderId()} / ${aiModel()}${aiReady() ? "" : " (NO API KEY - analyst disabled)"}`,

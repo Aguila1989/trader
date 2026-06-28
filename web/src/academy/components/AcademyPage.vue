@@ -15,11 +15,21 @@ import ChapterOverview from "./ChapterOverview.vue";
 import LessonView from "./LessonView.vue";
 import QuizView from "./QuizView.vue";
 import LangSwitcher from "../../components/LangSwitcher.vue";
+import { isLoggedIn } from "../../auth/session";
 
 const { t } = useI18n();
 const router = useRouter();
 const academy = useAcademyStore();
 const { locale } = useLocale();
+
+// Feature 2: the "← Back" button is context-aware, decided purely client-side
+// from the session-marker cookie (no API call): logged in -> back to the app;
+// logged out -> back to the login screen. Captured once on entry.
+const loggedIn = isLoggedIn();
+const backLabel = computed(() => (loggedIn ? t("common.backToApp") : t("common.backToLogin")));
+function goBack(): void {
+  router.push(loggedIn ? "/" : "/login");
+}
 
 type View = "overview" | "lesson" | "quiz";
 const view = ref<View>("overview");
@@ -69,8 +79,8 @@ function scrollTop(): void {
 <template>
   <div class="academy">
     <div class="academy-bar">
-      <button class="btn academy-back" @click="router.push('/')">
-        {{ t("common.backToTrading") }}
+      <button class="btn academy-back" @click="goBack">
+        {{ backLabel }}
       </button>
       <span class="academy-brand"><span class="logo">◆</span> {{ t("common.academy") }}</span>
       <span class="academy-bar-end"><LangSwitcher /></span>

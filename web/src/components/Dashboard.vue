@@ -16,6 +16,7 @@ import PositionsPanel from "./PositionsPanel.vue";
 import EvolutionCharts from "./EvolutionCharts.vue";
 import TokenDetail from "./TokenDetail.vue";
 import LangSwitcher from "./LangSwitcher.vue";
+import { session, logout } from "../auth/session";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -25,6 +26,14 @@ const store = useTraderStore();
 function selectTab(tab: "manual" | "bot" | "logs"): void {
   store.setActiveTab(tab);
   store.closeToken();
+}
+
+// Logout: revoke the session server-side, clear cookies, then hard-reload so all
+// in-memory store state + SSE/poll timers reset cleanly (the guard then routes
+// the cookieless app to /login).
+async function doLogout(): Promise<void> {
+  await logout();
+  window.location.reload();
 }
 </script>
 
@@ -63,11 +72,17 @@ function selectTab(tab: "manual" | "bot" | "logs"): void {
         {{ t("common.tab.logs") }}
       </button>
 
-      <!-- Right-aligned: language switcher + entry point to the Academy route. -->
+      <!-- Right-aligned: identity, language switcher, Academy entry, logout. -->
       <div class="tabbar-end">
+        <span v-if="session.user" class="signed-in muted" :title="session.user.email">
+          {{ t("auth.signedInAs", { email: session.user.displayName || session.user.email }) }}
+        </span>
         <LangSwitcher />
         <button class="tab academy-link" @click="router.push('/academy')">
           {{ t("common.academy") }} →
+        </button>
+        <button class="btn logout-btn" type="button" @click="doLogout">
+          {{ t("auth.logout") }}
         </button>
       </div>
     </div>
@@ -102,5 +117,16 @@ function selectTab(tab: "manual" | "bot" | "logs"): void {
 }
 .academy-link:hover {
   color: var(--text);
+}
+.signed-in {
+  font-size: 12px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.logout-btn {
+  padding: 6px 12px;
+  font-size: 12px;
 }
 </style>

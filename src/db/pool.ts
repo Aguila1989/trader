@@ -1,5 +1,10 @@
 import sql from "mssql";
 import { config, dbConfigured } from "../config";
+import {
+  DEFAULT_USER_ID,
+  DEFAULT_USER_EMAIL,
+  DEFAULT_USER_DISPLAY_NAME,
+} from "../users/context";
 
 /**
  * SQL Server connection pool + schema bootstrap.
@@ -323,6 +328,188 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         price       DECIMAL(38,7) NULL
       );
       CREATE INDEX IX_AiLog_net_ts ON dbo.AiLog (network, ts DESC);
+    END
+  `);
+
+  // User accounts + per-user scoping. Runs after the data tables exist so the
+  // userId foreign keys can reference them.
+  await ensureUserScoping(p);
+
+  // Authentication (Feature 2): extra dbo.Users columns + the auth tables. Runs
+  // after dbo.Users exists so the foreign keys resolve.
+  await ensureAuthSchema(p);
+}
+
+/**
+ * Feature 2 (authentication) schema: the login/lockout/verification columns on
+ * dbo.Users, plus the sessions, link-tokens and login-attempt tables. Additive
+ * and idempotent, exactly like the rest of ensureSchema - safe to re-run.
+ *
+ * dbo.AuthSessions     one row per issued JWT (jti = id); the auth gate checks it
+ *                      is present + unrevoked + unexpired, so logout / password
+ *                      reset can revoke a session immediately (stateless JWTs
+ *                      alone cannot be invalidated before they expire).
+ * dbo.AuthTokens       single-use email-verification + password-reset tokens. We
+ *                      store only the SHA-256 HASH of the token (the raw value
+ *                      lives only in the emailed link), so a DB leak yields no
+ *                      working links.
+ * dbo.LoginAttempts    append-only audit of every login attempt with IP + reason
+ *                      (the spec's "log each failed attempt with IP and timestamp").
+ */
+async function ensureAuthSchema(p: sql.ConnectionPool): Promise<void> {
+  await p.request().batch(`
+    -- Login / lockout / verification columns on the existing Users table.
+    IF COL_LENGTH('dbo.Users', 'emailVerified') IS NULL
+      ALTER TABLE dbo.Users ADD emailVerified BIT NOT NULL
+        CONSTRAINT DF_Users_emailVerified DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'failedLoginAttempts') IS NULL
+      ALTER TABLE dbo.Users ADD failedLoginAttempts INT NOT NULL
+        CONSTRAINT DF_Users_failedLoginAttempts DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'lockedUntil') IS NULL
+      ALTER TABLE dbo.Users ADD lockedUntil DATETIME2(3) NULL;
+
+    IF OBJECT_ID('dbo.AuthSessions', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AuthSessions (
+        id        NVARCHAR(64)  NOT NULL CONSTRAINT PK_AuthSessions PRIMARY KEY,
+        userId    NVARCHAR(64)  NOT NULL,
+        createdAt DATETIME2(3)  NOT NULL,
+        expiresAt DATETIME2(3)  NOT NULL,
+        revokedAt DATETIME2(3)  NULL,
+        ip        NVARCHAR(64)  NULL,
+        userAgent NVARCHAR(256) NULL,
+        CONSTRAINT FK_AuthSessions_userId FOREIGN KEY (userId) REFERENCES dbo.Users(id)
+      );
+      CREATE INDEX IX_AuthSessions_user ON dbo.AuthSessions (userId, expiresAt DESC);
+    END
+
+    IF OBJECT_ID('dbo.AuthTokens', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AuthTokens (
+        id        NVARCHAR(64)  NOT NULL CONSTRAINT PK_AuthTokens PRIMARY KEY,
+        userId    NVARCHAR(64)  NOT NULL,
+        type      NVARCHAR(16)  NOT NULL,   -- 'verify' | 'reset'
+        tokenHash NVARCHAR(128) NOT NULL,   -- SHA-256 hex of the raw token
+        createdAt DATETIME2(3)  NOT NULL,
+        expiresAt DATETIME2(3)  NOT NULL,
+        usedAt    DATETIME2(3)  NULL,
+        CONSTRAINT FK_AuthTokens_userId FOREIGN KEY (userId) REFERENCES dbo.Users(id)
+      );
+      CREATE INDEX IX_AuthTokens_lookup ON dbo.AuthTokens (type, tokenHash);
+      CREATE INDEX IX_AuthTokens_user ON dbo.AuthTokens (userId, type);
+    END
+
+    IF OBJECT_ID('dbo.LoginAttempts', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.LoginAttempts (
+        id      NVARCHAR(64)  NOT NULL CONSTRAINT PK_LoginAttempts PRIMARY KEY,
+        ts      DATETIME2(3)  NOT NULL,
+        email   NVARCHAR(256) NULL,
+        userId  NVARCHAR(64)  NULL,
+        ip      NVARCHAR(64)  NULL,
+        success BIT           NOT NULL,
+        reason  NVARCHAR(64)  NULL
+      );
+      CREATE INDEX IX_LoginAttempts_ts ON dbo.LoginAttempts (ts DESC);
+      CREATE INDEX IX_LoginAttempts_email ON dbo.LoginAttempts (email, ts DESC);
+    END
+  `);
+}
+
+/** The tables whose rows belong to a single user, with the column the dominant
+ *  read query orders by (used to build a userId-leading covering index). The
+ *  per-user Settings table has a composite primary key and is handled apart. */
+const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
+  { table: "Proposals", orderCol: "createdAt" },
+  { table: "Logs", orderCol: "ts" },
+  { table: "LiquiditySnapshots", orderCol: "ts" },
+  { table: "StopLosses", orderCol: "createdAt" },
+  { table: "PriceAlerts", orderCol: "createdAt" },
+  { table: "StopLossAudit", orderCol: "ts" },
+  { table: "TradeLog", orderCol: "ts" },
+  { table: "AiLog", orderCol: "ts" },
+];
+
+/** SQL-safe single-quote escaping for our own (non-user-supplied) constants. */
+function sqlLit(v: string): string {
+  return v.replace(/'/g, "''");
+}
+
+/**
+ * Create dbo.Users, bootstrap the default account, and add a userId foreign key
+ * to every per-user table - migrating any existing rows to the default user.
+ *
+ * Idempotent and additive (the whole app's persistence layer follows this
+ * pattern): each step is guarded so re-running it on an up-to-date database is a
+ * no-op. Runs on both `npm start` (via initDb) and `npm run db:migrate`.
+ *
+ * Migration of existing single-user data: each userId column is added NOT NULL
+ * with a DEFAULT of the default user's id, which backfills every existing row in
+ * one statement; the DEFAULT constraint is then dropped so future inserts must
+ * attribute a user explicitly (a forgotten scope fails loudly rather than
+ * silently landing in the default account). The FK is added AFTER the default
+ * user row exists so its validation passes. Statements that reference the
+ * freshly-added column run via EXEC so they compile after the column exists.
+ */
+async function ensureUserScoping(p: sql.ConnectionPool): Promise<void> {
+  const id = sqlLit(DEFAULT_USER_ID);
+  const email = sqlLit(DEFAULT_USER_EMAIL);
+  const display = sqlLit(DEFAULT_USER_DISPLAY_NAME);
+
+  // 1) The Users table itself (separate batch so later batches can reference it).
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.Users', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Users (
+        id           NVARCHAR(64)  NOT NULL CONSTRAINT PK_Users PRIMARY KEY,
+        email        NVARCHAR(256) NOT NULL,
+        passwordHash NVARCHAR(256) NOT NULL,
+        displayName  NVARCHAR(120) NULL,
+        createdAt    DATETIME2(3)  NOT NULL,
+        lastLoginAt  DATETIME2(3)  NULL,
+        isActive     BIT           NOT NULL CONSTRAINT DF_Users_isActive DEFAULT 1
+      );
+      CREATE UNIQUE INDEX UX_Users_email ON dbo.Users (email);
+    END
+  `);
+
+  // 2) Bootstrap the default account (empty passwordHash = no usable password
+  //    until the authentication feature sets one), then scope every table.
+  const blocks = USER_SCOPED_TABLES.map(
+    ({ table, orderCol }) => `
+    IF COL_LENGTH('dbo.${table}', 'userId') IS NULL
+    BEGIN
+      ALTER TABLE dbo.${table}
+        ADD userId NVARCHAR(64) NOT NULL
+            CONSTRAINT DF_${table}_userId DEFAULT '${id}';
+      EXEC('ALTER TABLE dbo.${table} DROP CONSTRAINT DF_${table}_userId');
+      EXEC('ALTER TABLE dbo.${table} ADD CONSTRAINT FK_${table}_userId
+              FOREIGN KEY (userId) REFERENCES dbo.Users(id)');
+      EXEC('CREATE INDEX IX_${table}_user
+              ON dbo.${table} (userId, network, ${orderCol} DESC)');
+    END`,
+  ).join("\n");
+
+  await p.request().batch(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.Users WHERE id = '${id}' OR email = '${email}')
+      INSERT INTO dbo.Users (id, email, passwordHash, displayName, createdAt, isActive)
+      VALUES ('${id}', '${email}', '', '${display}', SYSUTCDATETIME(), 1);
+
+    ${blocks}
+
+    -- Settings has a composite primary key (network, keyName); widen it to
+    -- include userId so each account keeps its own settings, then add the FK.
+    IF COL_LENGTH('dbo.Settings', 'userId') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Settings
+        ADD userId NVARCHAR(64) NOT NULL
+            CONSTRAINT DF_Settings_userId DEFAULT '${id}';
+      EXEC('ALTER TABLE dbo.Settings DROP CONSTRAINT DF_Settings_userId');
+      EXEC('ALTER TABLE dbo.Settings DROP CONSTRAINT PK_Settings');
+      EXEC('ALTER TABLE dbo.Settings
+              ADD CONSTRAINT PK_Settings PRIMARY KEY (userId, network, keyName)');
+      EXEC('ALTER TABLE dbo.Settings ADD CONSTRAINT FK_Settings_userId
+              FOREIGN KEY (userId) REFERENCES dbo.Users(id)');
     END
   `);
 }

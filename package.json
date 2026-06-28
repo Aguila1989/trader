@@ -1,5 +1,5 @@
 {
-  "name": "stellar-claude-trader",
+  "name": "atrium",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@stellar/stellar-sdk": "^16.0.1",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "helmet": "^8.2.0",
