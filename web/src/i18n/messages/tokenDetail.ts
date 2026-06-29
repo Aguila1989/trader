@@ -59,7 +59,7 @@ export default {
     hint: {
       setTrailDistance: "Set a trail distance.",
       trailingPreview:
-        "Initial stop @ {initial} (current {current}); trails {direction} as the price moves in your favor.",
+        "Initial stop {'@'} {initial} (current {current}); trails {direction} as the price moves in your favor.",
       up: "up",
       down: "down",
       setTriggerPrice: "Set a trigger price.",
@@ -134,7 +134,7 @@ export default {
     hint: {
       setTrailDistance: "Stel een trailafstand in.",
       trailingPreview:
-        "Initiële stop @ {initial} (huidig {current}); trailt {direction} als de prijs in jouw voordeel beweegt.",
+        "Initiële stop {'@'} {initial} (huidig {current}); trailt {direction} als de prijs in jouw voordeel beweegt.",
       up: "omhoog",
       down: "omlaag",
       setTriggerPrice: "Stel een triggerprijs in.",
@@ -209,7 +209,7 @@ export default {
     hint: {
       setTrailDistance: "Définissez une distance de suivi.",
       trailingPreview:
-        "Stop initial @ {initial} (actuel {current}) ; suit vers le {direction} lorsque le prix évolue en votre faveur.",
+        "Stop initial {'@'} {initial} (actuel {current}) ; suit vers le {direction} lorsque le prix évolue en votre faveur.",
       up: "haut",
       down: "bas",
       setTriggerPrice: "Définissez un prix de déclenchement.",
@@ -284,7 +284,7 @@ export default {
     hint: {
       setTrailDistance: "Define una distancia de seguimiento.",
       trailingPreview:
-        "Stop inicial @ {initial} (actual {current}); sigue hacia {direction} cuando el precio se mueve a tu favor.",
+        "Stop inicial {'@'} {initial} (actual {current}); sigue hacia {direction} cuando el precio se mueve a tu favor.",
       up: "arriba",
       down: "abajo",
       setTriggerPrice: "Define un precio de activación.",

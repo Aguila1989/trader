@@ -58,7 +58,7 @@ export default {
       upper: "An uppercase letter (A–Z)",
       lower: "A lowercase letter (a–z)",
       number: "A number (0–9)",
-      special: "A special character (! @ # $ …)",
+      special: "A special character (! {'@'} # $ …)",
     },
     strength: {
       label: "Strength",
@@ -128,7 +128,7 @@ export default {
       upper: "Een hoofdletter (A–Z)",
       lower: "Een kleine letter (a–z)",
       number: "Een cijfer (0–9)",
-      special: "Een speciaal teken (! @ # $ …)",
+      special: "Een speciaal teken (! {'@'} # $ …)",
     },
     strength: {
       label: "Sterkte",
@@ -198,7 +198,7 @@ export default {
       upper: "Une lettre majuscule (A–Z)",
       lower: "Une lettre minuscule (a–z)",
       number: "Un chiffre (0–9)",
-      special: "Un caractère spécial (! @ # $ …)",
+      special: "Un caractère spécial (! {'@'} # $ …)",
     },
     strength: {
       label: "Robustesse",
@@ -268,7 +268,7 @@ export default {
       upper: "Una letra mayúscula (A–Z)",
       lower: "Una letra minúscula (a–z)",
       number: "Un número (0–9)",
-      special: "Un carácter especial (! @ # $ …)",
+      special: "Un carácter especial (! {'@'} # $ …)",
     },
     strength: {
       label: "Seguridad",
