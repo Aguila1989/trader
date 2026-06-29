@@ -141,6 +141,37 @@ export const authApi = {
   me: () => getJSON<{ user: SessionUser }>("/api/auth/me"),
 };
 
+// --- Wallet API (Feature 3) -------------------------------------------------
+// Status is a plain GET (used by the header chip + the setup gate). The mutating
+// flows go through authRequest so the screens can show the server's (safe,
+// non-secret) error messages without throwing. A secret is returned exactly once
+// by /create, for the user to write down - never persisted client-side.
+export interface WalletStatus {
+  configured: boolean;
+  network: string;
+  publicKey?: string;
+  funded?: boolean;
+  xlmBalance?: string | null;
+}
+
+export const walletApi = {
+  status: () => getJSON<WalletStatus>("/api/wallet/status"),
+  create: () => authRequest<{ publicKey: string; secret: string }>("/api/wallet/create", {}),
+  confirm: (last4: string) => authRequest<{ publicKey: string }>("/api/wallet/confirm", { last4 }),
+  import: (secret: string) =>
+    authRequest<{ publicKey: string; funded: boolean; xlmBalance: string | null }>(
+      "/api/wallet/import",
+      { secret },
+    ),
+  replace: (secret: string, password: string) =>
+    authRequest<{ publicKey: string; cancelledOffers: number; cancelledStops: number }>(
+      "/api/wallet/replace",
+      { secret, password },
+    ),
+  friendbot: () =>
+    authRequest<{ funded: boolean; xlmBalance: string | null }>("/api/wallet/friendbot", {}),
+};
+
 export const api = {
   state: () => getJSON<Snapshot>("/api/state"),
   balances: () => getJSON<Balance[]>("/api/balances"),

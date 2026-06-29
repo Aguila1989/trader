@@ -7,6 +7,7 @@ import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import TopBar from "./TopBar.vue";
 import PortfolioPanel from "./PortfolioPanel.vue";
+import WalletChip from "./wallet/WalletChip.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -24,6 +25,7 @@ const killOn = computed(() => store.killSwitch);
   <TopBar />
   <div class="header-body">
     <section class="panel bot-status">
+      <WalletChip />
       <div class="bs-item">
         <span class="bs-dot" :class="store.connected ? 'on' : 'off'" aria-hidden="true"></span>
         Stellar Horizon:

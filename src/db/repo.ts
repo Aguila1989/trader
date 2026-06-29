@@ -1190,3 +1190,127 @@ export async function listStopLossAudit(opts: {
     offset,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Wallets (Feature 3). The signing key lives encrypted at rest; this
+ * layer only ever stores/returns the CIPHERTEXT (encryptedSecret) and the
+ * public key. Decryption happens solely in src/stellar/keyProvider.ts at
+ * signing time. Every query is scoped to currentUserId() + network (IDOR
+ * defence) and rows are never deleted - status transitions only.
+ * ------------------------------------------------------------------ */
+
+export type WalletStatus = "pending" | "active" | "replaced";
+
+/** Internal wallet row. `encryptedSecret` is the at-rest blob - NEVER expose it. */
+export interface WalletRecord {
+  id: string;
+  publicKey: string;
+  encryptedSecret: string;
+  status: WalletStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface RawWalletRow {
+  id: string;
+  publicKey: string;
+  encryptedSecret: string;
+  status: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
+function rowToWallet(r: RawWalletRow): WalletRecord {
+  return {
+    id: r.id,
+    publicKey: r.publicKey,
+    encryptedSecret: r.encryptedSecret,
+    status: r.status as WalletStatus,
+    createdAt: toIso(r.createdAt),
+    updatedAt: toIso(r.updatedAt),
+  };
+}
+
+const WALLET_COLS = "id, publicKey, encryptedSecret, status, createdAt, updatedAt";
+
+/** The current user's ACTIVE wallet for this network, or null. (<=1 by index.) */
+export async function getActiveWallet(): Promise<WalletRecord | null> {
+  if (!dbReady()) return null;
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .query<RawWalletRow>(
+      `SELECT TOP 1 ${WALLET_COLS}
+         FROM dbo.Wallets
+        WHERE network = @net AND userId = @userId AND status = 'active';`,
+    );
+  const row = res.recordset[0];
+  return row ? rowToWallet(row) : null;
+}
+
+/** The current user's most-recent PENDING (created-but-unconfirmed) wallet, or null. */
+export async function getLatestPendingWallet(): Promise<WalletRecord | null> {
+  if (!dbReady()) return null;
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .query<RawWalletRow>(
+      `SELECT TOP 1 ${WALLET_COLS}
+         FROM dbo.Wallets
+        WHERE network = @net AND userId = @userId AND status = 'pending'
+        ORDER BY createdAt DESC;`,
+    );
+  const row = res.recordset[0];
+  return row ? rowToWallet(row) : null;
+}
+
+/** Insert a wallet row (idempotent on id), scoped to the current user + network. */
+export async function insertWallet(w: {
+  id: string;
+  publicKey: string;
+  encryptedSecret: string;
+  status: WalletStatus;
+}): Promise<void> {
+  if (!dbReady()) return;
+  const now = new Date();
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), w.id)
+    .input("createdAt", sql.DateTime2, now)
+    .input("updatedAt", sql.DateTime2, now)
+    .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("publicKey", sql.NVarChar(64), w.publicKey)
+    .input("encryptedSecret", sql.NVarChar(sql.MAX), w.encryptedSecret)
+    .input("status", sql.NVarChar(16), w.status)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.Wallets WHERE id = @id)
+       INSERT INTO dbo.Wallets
+         (id, createdAt, updatedAt, network, userId, publicKey, encryptedSecret, status)
+       VALUES
+         (@id, @createdAt, @updatedAt, @network, @userId, @publicKey, @encryptedSecret, @status);`,
+    );
+}
+
+/**
+ * Transition a wallet's status (pending->active, active->replaced, ...). Scoped
+ * to the current user so one user can never flip another user's wallet (IDOR).
+ * Returns the number of rows changed so callers can detect a no-op.
+ */
+export async function setWalletStatus(id: string, status: WalletStatus): Promise<number> {
+  if (!dbReady()) return 0;
+  const res = await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), id)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("status", sql.NVarChar(16), status)
+    .input("updatedAt", sql.DateTime2, new Date())
+    .query(
+      `UPDATE dbo.Wallets
+          SET status = @status, updatedAt = @updatedAt
+        WHERE id = @id AND userId = @userId;`,
+    );
+  return res.rowsAffected?.[0] ?? 0;
+}

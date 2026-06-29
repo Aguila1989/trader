@@ -10,6 +10,7 @@ import { horizon } from "./client";
 import { parseAsset, assetToString } from "./assets";
 import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { requireTradingAccount } from "./keyProvider";
 import { assertDnsPublic } from "./safeHost";
 
 /**
@@ -88,7 +89,7 @@ async function buildSignSubmit(
   op: Parameters<TransactionBuilder["addOperation"]>[0],
   memo?: Memo,
 ): Promise<{ hash: string }> {
-  const account = await horizon.loadAccount(config.stellarPublic);
+  const account = await horizon.loadAccount(await requireTradingAccount());
   const builder = new TransactionBuilder(account, {
     fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,
@@ -191,7 +192,8 @@ export async function swap(
     Operation.pathPaymentStrictSend({
       sendAsset,
       sendAmount: formatAmount(input.sendAmount),
-      destination: config.stellarPublic,
+      // Swap to self: the destination is the current signer's own account.
+      destination: await requireTradingAccount(),
       destAsset,
       destMin,
       path,

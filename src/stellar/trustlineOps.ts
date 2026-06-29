@@ -4,6 +4,7 @@ import { horizon } from "./client";
 import { parseAsset, assetToString, canonicalAsset } from "./assets";
 import { recommendedFee } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { requireTradingAccount } from "./keyProvider";
 import { assertDnsPublic } from "./safeHost";
 
 /**
@@ -89,7 +90,7 @@ export async function changeTrustline(
   if (asset.isNative()) {
     throw new Error("XLM is the native asset and needs no trustline.");
   }
-  const account = await horizon.loadAccount(config.stellarPublic);
+  const account = await horizon.loadAccount(await requireTradingAccount());
   const tx = new TransactionBuilder(account, {
     fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,

@@ -25,10 +25,10 @@ import { buildOfferTransaction } from "../stellar/builder";
 import { preflightCheck } from "../stellar/preflight";
 import {
   signOnly,
-  signerPublicKey,
   submitSigned,
   type OfferResultLike,
 } from "../stellar/signer";
+import { resolveTradingAccountOrNull } from "../stellar/keyProvider";
 import { setXlmRate } from "./positions";
 import {
   explainNoEntry,
@@ -90,7 +90,7 @@ export interface ScanOutcome extends AnalysisOutcome {
  * shared by the wallet-fit warning and the divergence fundability check.
  */
 async function walletHeld(): Promise<((spec: string) => boolean) | null> {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) return null;
   let balances: Awaited<ReturnType<typeof getBalances>>;
   try {
@@ -121,7 +121,7 @@ async function walletHeld(): Promise<((spec: string) => boolean) | null> {
  * fall back to the config size envelope). Only fetched when Expert Mode is on.
  */
 async function availableXlmBalance(): Promise<number | undefined> {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) return undefined;
   try {
     const balances = await getBalances(pub);
@@ -1189,7 +1189,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
     // process dies mid-submit, the monitor can recover this row by hash
     // (recheckTimedOut) instead of leaving real on-chain exposure outside
     // every ledger and cap.
-    const hash = signOnly(tx);
+    const hash = await signOnly(tx);
     store.updateProposal(id, { txHash: hash });
     const { offerResults } = await submitSigned(tx, hash);
     // Reconcile the REAL fill before recording the trade, so daily volume, the
@@ -1421,7 +1421,7 @@ export function reconcileOfferFill(
 export async function recoverRestingOfferId(
   p: TradeProposal,
 ): Promise<string | undefined> {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) return undefined;
   try {
     const offers = await getOpenOffers(pub);

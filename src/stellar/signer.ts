@@ -1,33 +1,30 @@
 import { Keypair, type Transaction } from "@stellar/stellar-sdk";
-import { config, isReadOnly } from "../config";
+import { config } from "../config";
 import { horizon } from "./client";
+import { withDecryptedKey } from "./keyProvider";
 
-// The secret key lives ONLY here, in your backend process.
-// It is never serialized into any AI prompt or tool result.
-let keypair: Keypair | null = null;
+// SINCE FEATURE 3: the signing key is no longer a single module-level cache (that
+// would BLEED one user's key into another's request). Each sign resolves the
+// CURRENT user's wallet via keyProvider.withDecryptedKey(), which decrypts in
+// memory only for the duration of the signature and then zeroes the seed.
 
-function getKeypair(): Keypair {
-  if (isReadOnly) {
-    throw new Error(
-      "Read-only mode: no STELLAR_SECRET configured, cannot sign.",
-    );
-  }
-  if (!keypair) {
-    keypair = Keypair.fromSecret(config.stellarSecret);
-    if (config.stellarPublic && keypair.publicKey() !== config.stellarPublic) {
-      throw new Error(
-        "STELLAR_SECRET does not match STELLAR_PUBLIC. Refusing to sign.",
-      );
-    }
-  }
-  return keypair;
-}
-
-/** Public key we trade from (works in read-only mode too). */
+/**
+ * The DEFAULT/bot account's public key - the env-configured operator wallet.
+ * This is the GLOBAL context (snapshot, AI prompts, boot banner, the autonomous
+ * engine's display reads); it is deliberately NOT per-user. A logged-in user's
+ * own wallet is surfaced through keyProvider.resolveTradingAccountOrNull() and
+ * the /api/wallet/* endpoints. Returns null when no env wallet is configured.
+ */
 export function signerPublicKey(): string | null {
   if (config.stellarPublic) return config.stellarPublic;
-  if (isReadOnly) return null;
-  return getKeypair().publicKey();
+  if (config.stellarSecret) {
+    try {
+      return Keypair.fromSecret(config.stellarSecret).publicKey();
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // When Horizon returns a 504 the transaction may STILL land on the ledger, so
@@ -153,15 +150,16 @@ export async function fillFromEffects(
  * between submit and the success bookkeeping leaves a recoverable hash in the
  * database instead of stranding on-chain exposure outside every ledger.
  */
-export function signOnly(tx: Transaction): string {
-  const kp = getKeypair();
-  tx.sign(kp);
-  return tx.hash().toString("hex");
+export async function signOnly(tx: Transaction): Promise<string> {
+  return withDecryptedKey((kp) => {
+    tx.sign(kp);
+    return tx.hash().toString("hex");
+  });
 }
 
 /** Sign + submit in one step (see signOnly/submitSigned for the split). */
 export async function signAndSubmit(tx: Transaction): Promise<SubmitResult> {
-  return submitSigned(tx, signOnly(tx));
+  return submitSigned(tx, await signOnly(tx));
 }
 
 /**
@@ -173,8 +171,6 @@ export async function submitSigned(
   tx: Transaction,
   hash: string,
 ): Promise<SubmitResult> {
-  const kp = getKeypair();
-
   try {
     const res = (await horizon.submitTransaction(tx)) as {
       hash: string;
@@ -192,7 +188,9 @@ export async function submitSigned(
       }
       // The polled tx record carries no offerResults - reconstruct the actual
       // fill from the trade effects so a resting order isn't booked as filled.
-      const fill = await fillFromEffects(hash, kp.publicKey());
+      // The tx is already signed, so its source IS the trading account - no need
+      // to (re)decrypt a key here just to read the public key.
+      const fill = await fillFromEffects(hash, tx.source);
       return fill ? { hash, offerResults: [fill] } : { hash };
     }
     throw new Error(

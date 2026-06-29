@@ -3,6 +3,7 @@ import { config } from "../config";
 import { horizon } from "./client";
 import { recommendedFee } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { requireTradingAccount } from "./keyProvider";
 
 /** A claimable balance ("pending payment") addressed to the account. */
 export interface ClaimableBalanceInfo {
@@ -48,7 +49,7 @@ export async function claimBalance(balanceId: string): Promise<{ hash: string }>
   if (!/^[0-9a-f]{72}$/i.test(balanceId.trim())) {
     throw new Error("Invalid claimable balance id.");
   }
-  const account = await horizon.loadAccount(config.stellarPublic);
+  const account = await horizon.loadAccount(await requireTradingAccount());
   const tx = new TransactionBuilder(account, {
     fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,

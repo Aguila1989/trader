@@ -329,6 +329,26 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       );
       CREATE INDEX IX_AiLog_net_ts ON dbo.AiLog (network, ts DESC);
     END
+
+    -- Per-user wallets (Feature 3). Stores ONLY the AES-256-GCM-encrypted
+    -- Stellar secret (base64 blob = version|salt|iv|tag|ciphertext) + the public
+    -- key, never plaintext. status: 'pending' (created, last-4 not confirmed) ->
+    -- 'active' (the one signing wallet) -> 'replaced' (superseded; never deleted,
+    -- like StopLosses). userId is added by ensureUserScoping (Wallets is in
+    -- USER_SCOPED_TABLES); the single-active invariant is a filtered unique index
+    -- added afterwards (it needs the userId column to exist first).
+    IF OBJECT_ID('dbo.Wallets', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Wallets (
+        id              NVARCHAR(64)  NOT NULL CONSTRAINT PK_Wallets PRIMARY KEY,
+        createdAt       DATETIME2(3)  NOT NULL,
+        updatedAt       DATETIME2(3)  NOT NULL,
+        network         NVARCHAR(16)  NOT NULL,
+        publicKey       NVARCHAR(64)  NOT NULL,
+        encryptedSecret NVARCHAR(MAX) NOT NULL,
+        status          NVARCHAR(16)  NOT NULL
+      );
+    END
   `);
 
   // User accounts + per-user scoping. Runs after the data tables exist so the
@@ -338,6 +358,19 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // Authentication (Feature 2): extra dbo.Users columns + the auth tables. Runs
   // after dbo.Users exists so the foreign keys resolve.
   await ensureAuthSchema(p);
+
+  // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
+  // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
+  // per network - a hard DB guarantee, not just app logic. Added here (after
+  // ensureUserScoping) because it references the userId column it adds; via EXEC
+  // so it compiles once that column exists.
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.Wallets', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.Wallets', 'userId') IS NOT NULL
+       AND INDEXPROPERTY(OBJECT_ID('dbo.Wallets'), 'UX_Wallets_active', 'IndexID') IS NULL
+      EXEC('CREATE UNIQUE INDEX UX_Wallets_active
+              ON dbo.Wallets (userId, network) WHERE status = ''active''');
+  `);
 }
 
 /**
@@ -428,6 +461,7 @@ const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
   { table: "StopLossAudit", orderCol: "ts" },
   { table: "TradeLog", orderCol: "ts" },
   { table: "AiLog", orderCol: "ts" },
+  { table: "Wallets", orderCol: "createdAt" },
 ];
 
 /** SQL-safe single-quote escaping for our own (non-user-supplied) constants. */

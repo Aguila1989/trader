@@ -21,6 +21,7 @@ import { horizon } from "./client";
 import { parseAsset, assetToString } from "./assets";
 import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
+import { requireTradingAccount } from "./keyProvider";
 import { quoteSwap } from "./transfers";
 import { USDC_SPEC } from "./universe";
 
@@ -110,9 +111,12 @@ export async function swapClaimableToXlm(input: {
   const id = input.id.trim();
   if (!BALANCE_ID.test(id)) throw new Error("Invalid claimable balance id.");
 
+  // Per-user (Feature 3): claim into / swap to the CURRENT signer's own wallet.
+  const self = await requireTradingAccount();
+
   // Native pending payment: nothing to swap, just claim it.
   if (isNativeSpec(input.asset)) {
-    const account = await horizon.loadAccount(config.stellarPublic);
+    const account = await horizon.loadAccount(self);
     const tx = new TransactionBuilder(account, {
       fee: recommendedFee(),
       networkPassphrase: config.networkPassphrase,
@@ -149,7 +153,7 @@ export async function swapClaimableToXlm(input: {
     throw new Error("Computed destMin is zero - refusing a swap that would accept any fill.");
   }
 
-  const account = await horizon.loadAccount(config.stellarPublic);
+  const account = await horizon.loadAccount(self);
   const lines = account.balances as unknown as Array<{
     asset_type: string;
     asset_code?: string;
@@ -170,7 +174,7 @@ export async function swapClaimableToXlm(input: {
     Operation.pathPaymentStrictSend({
       sendAsset: token,
       sendAmount: formatAmount(input.amount),
-      destination: config.stellarPublic,
+      destination: self,
       destAsset: xlm,
       destMin,
       path,

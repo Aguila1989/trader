@@ -7,6 +7,7 @@ import {
 import { config } from "../config";
 import { horizon } from "./client";
 import { parseAsset } from "./assets";
+import { requireTradingAccount } from "./keyProvider";
 import type { TradeProposal } from "../types";
 
 /**
@@ -37,11 +38,10 @@ function recommendedFee(): string {
 export async function buildOfferTransaction(
   proposal: TradeProposal,
 ): Promise<Transaction> {
-  if (!config.stellarPublic) {
-    throw new Error("STELLAR_PUBLIC is not configured.");
-  }
-
-  const account = await horizon.loadAccount(config.stellarPublic);
+  // Per-user (Feature 3): the source account is the CURRENT signer's wallet
+  // (their own in a request; the env/default wallet in a background loop), so it
+  // always matches the key signOnly/signAndSubmit will use.
+  const account = await horizon.loadAccount(await requireTradingAccount());
   const base = parseAsset(proposal.baseAsset);
   const quote = parseAsset(proposal.quoteAsset);
 
@@ -80,14 +80,11 @@ export async function buildCancelOfferTransaction(
   proposal: TradeProposal,
   offerId: string,
 ): Promise<Transaction> {
-  if (!config.stellarPublic) {
-    throw new Error("STELLAR_PUBLIC is not configured.");
-  }
   if (!offerId) {
     throw new Error("Cannot cancel: proposal has no tracked offer id.");
   }
 
-  const account = await horizon.loadAccount(config.stellarPublic);
+  const account = await horizon.loadAccount(await requireTradingAccount());
   const base = parseAsset(proposal.baseAsset);
   const quote = parseAsset(proposal.quoteAsset);
 

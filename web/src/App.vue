@@ -9,6 +9,7 @@ import { useRouter } from "vue-router";
 import { useTraderStore } from "./stores/trader";
 import { setUnauthorizedHandler } from "./api";
 import { isLoggedIn, session, refreshSession } from "./auth/session";
+import { resetWalletState } from "./wallet/walletState";
 import LiveLogDrawer from "./components/LiveLogDrawer.vue";
 
 const store = useTraderStore();
@@ -35,8 +36,16 @@ onMounted(() => {
   maybeInit();
 });
 
-// After a successful login the marker flips; start the store then.
-watch(() => session.user, maybeInit);
+// After a successful login the marker flips; start the store then. Also forget
+// any cached wallet status so a login (or user switch) re-fetches it fresh -
+// otherwise the wallet-setup gate could read the previous user's status.
+watch(
+  () => session.user,
+  () => {
+    resetWalletState();
+    maybeInit();
+  },
+);
 </script>
 
 <template>

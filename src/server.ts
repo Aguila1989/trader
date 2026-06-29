@@ -7,6 +7,7 @@ import { config, isReadOnly, dbConfigured } from "./config";
 import { checkOrigin, isLoopbackBind } from "./csrf";
 import { createAuthRouter } from "./auth/routes";
 import { requireAuth, authRateLimiter } from "./auth/middleware";
+import { createWalletRouter } from "./wallet/routes";
 import { purgeExpiredSessions } from "./auth/store";
 import { aiReady, aiModel, aiProviderId } from "./ai";
 import { store } from "./trading/store";
@@ -51,6 +52,10 @@ import { getPricedPortfolio, type PricedPortfolio } from "./stellar/valuation";
 import { highTierSpecs, describeAsset } from "./stellar/universe";
 import { buildCancelOfferTransaction } from "./stellar/builder";
 import { signerPublicKey, signAndSubmit } from "./stellar/signer";
+import {
+  resolveTradingAccountOrNull,
+  WalletNotConfiguredError,
+} from "./stellar/keyProvider";
 import type { TradeProposal } from "./types";
 import { initDb, closeDb, dbReady } from "./db/pool";
 
@@ -173,6 +178,9 @@ app.use((req, res, next) => {
 app.use(authRateLimiter);
 app.use(requireAuth);
 app.use("/api/auth", createAuthRouter());
+// Feature 3: wallet management. Mounted AFTER requireAuth so every route runs in
+// the authenticated user's scope (currentUserId()); absent from PUBLIC_API_PATHS.
+app.use("/api/wallet", createWalletRouter());
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, network: config.network });
@@ -210,7 +218,7 @@ app.get("/api/stream", (req, res) => {
 });
 
 app.get("/api/balances", async (_req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.json([]);
     return;
@@ -229,11 +237,7 @@ app.get("/api/balances", async (_req, res) => {
  * armed" invariant the trade path enforces. Returns false (and writes the
  * response) when blocked.
  */
-function ensureCanSubmit(res: Response): boolean {
-  if (isReadOnly) {
-    res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
-    return false;
-  }
+async function ensureCanSubmit(res: Response): Promise<boolean> {
   if (store.killSwitch) {
     res.status(400).json({ error: "Kill switch is active - all on-chain actions are halted." });
     return false;
@@ -241,6 +245,15 @@ function ensureCanSubmit(res: Response): boolean {
   if (!store.liveTrading) {
     res.status(400).json({
       error: "Live trading is OFF - arm it on the dashboard before signing on-chain actions.",
+    });
+    return false;
+  }
+  // Feature 3: the current user must have a usable wallet. The env STELLAR_SECRET
+  // only backs the DEFAULT account (single-operator + background loops); a
+  // logged-in user must have set up their own wallet, else they are read-only.
+  if (!(await resolveTradingAccountOrNull())) {
+    res.status(400).json({
+      error: "No active wallet - set up or import a wallet before signing on-chain actions.",
     });
     return false;
   }
@@ -324,6 +337,12 @@ function llmGateRelease(): void {
  * 5xx failures; intentional 400 validation messages are returned verbatim.
  */
 function failGeneric(res: Response, err: unknown, code: 500 | 502 = 502): void {
+  // A missing wallet is a client-state problem, not a server fault: return a
+  // clean, actionable 400 (the message carries no secret material).
+  if (err instanceof WalletNotConfiguredError) {
+    if (!res.headersSent) res.status(400).json({ error: err.message });
+    return;
+  }
   store.log("error", `request failed (${code}): ${(err as Error)?.message ?? String(err)}`);
   if (!res.headersSent) res.status(code).json({ error: "request failed" });
 }
@@ -361,7 +380,7 @@ function parseTransferAmount(raw: unknown, res: Response, field = "amount"): num
 
 // Current non-native trustlines (asset, balance, limit). Read-only.
 app.get("/api/trustlines", async (_req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.json([]);
     return;
@@ -375,7 +394,7 @@ app.get("/api/trustlines", async (_req, res) => {
 
 // Add a trustline by {asset:"CODE:ISSUER"} or {code, issuer} or {code, homeDomain}.
 app.post("/api/trustlines", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   const b = req.body ?? {};
   const assetSpec = String(b.asset ?? "").trim();
   const code = String(b.code ?? "").trim();
@@ -408,7 +427,7 @@ app.post("/api/trustlines", async (req, res) => {
 
 // Remove (zero-limit) a trustline; refuses when a balance is still held.
 app.post("/api/trustlines/remove", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   const b = req.body ?? {};
   const assetSpec = String(b.asset ?? "").trim();
   const code = String(b.code ?? "").trim();
@@ -419,7 +438,7 @@ app.post("/api/trustlines/remove", async (req, res) => {
     return;
   }
   try {
-    const pub = signerPublicKey();
+    const pub = await resolveTradingAccountOrNull();
     if (pub) {
       const canon = canonicalAsset(spec).toUpperCase();
       const line = (await getTrustlines(pub)).find((l) => l.asset.toUpperCase() === canon);
@@ -441,7 +460,7 @@ app.post("/api/trustlines/remove", async (req, res) => {
 // --- Open orders (resting offers) -----------------------------------------
 // The signer account's resting offers — the user's "open manual orders" list.
 app.get("/api/offers", async (_req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.json([]);
     return;
@@ -456,9 +475,9 @@ app.get("/api/offers", async (_req, res) => {
 // Cancel a resting offer by id (manage*Offer amount 0). Live-gated + serialized
 // on the same execution queue as trades so it can't race a Horizon sequence.
 app.post("/api/offers/:id/cancel", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   const offerId = String(req.params.id);
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.status(400).json({ error: "No signing account configured." });
     return;
@@ -508,7 +527,7 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
 // --- Payments / swaps / claimable balances --------------------------------
 // Send a payment (same-asset) to a G... address or a federation address.
 app.post("/api/pay", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   // SEC-01: raw external transfers are OFF by default - the trading function
   // never needs to send funds to a third party, so a compromised dashboard
   // (CSRF/XSS) cannot drain the hot wallet here. Whitelist + egress cap still
@@ -573,7 +592,7 @@ app.get("/api/swap/quote", async (req, res) => {
 
 // Execute a strict-send swap (path payment to self, slippage-bounded).
 app.post("/api/swap", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   const b = req.body ?? {};
   const sendAsset = String(b.sendAsset ?? "").trim();
   const destAsset = String(b.destAsset ?? "").trim();
@@ -643,7 +662,7 @@ app.post("/api/swap", async (req, res) => {
 // ones (Feature 5) are hidden unless ?includeRejected=true; when included they
 // are flagged so the UI can render + un-reject them.
 app.get("/api/claimable", async (req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.json([]);
     return;
@@ -669,7 +688,7 @@ app.get("/api/claimable", async (req, res) => {
 // XLM: estimated XLM out, the token's USDC value, and the % value loss. The UI
 // uses this to show a favorable confirmation or a value-loss warning.
 app.get("/api/claimable/:id/swap-quote", async (req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
     return;
@@ -696,7 +715,7 @@ app.get("/api/claimable/:id/swap-quote", async (req, res) => {
 // Feature 3 — swap ONE pending payment to XLM (claim + path-payment, atomic).
 // Aborts when the value loss exceeds the configured threshold unless {force:true}.
 app.post("/api/claimable/:id/swap", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   if (!config.swap.allowToXlm) {
     res.status(403).json({ error: "Swap-to-XLM is disabled (enable it in Settings)." });
     return;
@@ -705,7 +724,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
   const force = Boolean(req.body?.force);
   let reserved = 0; // SEC-08: egress reservation to refund if the submit fails
   try {
-    const pub = signerPublicKey();
+    const pub = await resolveTradingAccountOrNull();
     const cb = pub
       ? (await listClaimableBalances(pub)).find((c) => c.id === id)
       : undefined;
@@ -779,7 +798,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
 
 // Feature 4 — batch value assessment for "Swap All to XLM" (the summary table).
 app.get("/api/claimable/swap-all/quote", async (_req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.json({ items: [], threshold: config.swap.valueLossThresholdPct });
     return;
@@ -821,14 +840,14 @@ app.get("/api/claimable/swap-all/quote", async (_req, res) => {
 // failures/skips never abort the batch; a summary is returned. {force:true}
 // converts even value-losing balances (the UI confirms first).
 app.post("/api/claimable/swap-all", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   if (!config.swap.allowToXlm) {
     res.status(403).json({ error: "Swap-to-XLM is disabled (enable it in Settings)." });
     return;
   }
   if (!ensureEgressAllowed(res, ["XLM"])) return;
   const force = Boolean(req.body?.force);
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     res.status(400).json({ error: "Read-only mode: no STELLAR_SECRET configured." });
     return;
@@ -900,7 +919,7 @@ app.post("/api/claimable/:id/reject", async (req, res) => {
   const id = req.params.id;
   const reason = String(req.body?.reason ?? "user-initiated").trim() || "user-initiated";
   try {
-    const pub = signerPublicKey();
+    const pub = await resolveTradingAccountOrNull();
     const cb = pub
       ? (await listClaimableBalances(pub)).find((c) => c.id === id)
       : undefined;
@@ -918,11 +937,11 @@ app.post("/api/claimable/:id/unreject", (req, res) => {
 });
 
 app.post("/api/claimable/:id/claim", async (req, res) => {
-  if (!ensureCanSubmit(res)) return;
+  if (!(await ensureCanSubmit(res))) return;
   const id = req.params.id;
   try {
     // Pre-check so a claim of a token we don't trust doesn't burn a fee failing.
-    const pub = signerPublicKey();
+    const pub = await resolveTradingAccountOrNull();
     if (pub) {
       const cb = (await listClaimableBalances(pub)).find((c) => c.id === id);
       if (!cb) {
@@ -1082,7 +1101,7 @@ app.get("/api/trades.csv", async (_req, res) => {
 
 // Portfolio: funded balances valued in XLM-equivalent (for the allocation view).
 app.get("/api/portfolio", async (_req, res) => {
-  const pub = signerPublicKey();
+  const pub = await resolveTradingAccountOrNull();
   if (!pub) {
     const empty: PricedPortfolio = {
       holdings: [],
@@ -1715,6 +1734,26 @@ async function start(): Promise<void> {
     console.error(
       "\n  REFUSING TO START: JWT_SECRET is too short (< 32 chars).\n" +
         "  A short secret is brute-forceable. Use `openssl rand -hex 32` (64 hex chars).\n",
+    );
+    process.exit(1);
+  }
+
+  // Feature 3: each user's Stellar secret is encrypted at rest (AES-256-GCM)
+  // with a per-user key derived from this master secret. Treat it exactly like
+  // JWT_SECRET: mandatory and high-entropy. Without it the wallet store cannot
+  // be sealed/opened, so refuse to start rather than risk a plaintext fallback.
+  if (config.walletEncryptionKey === "") {
+    console.error(
+      "\n  REFUSING TO START: WALLET_ENCRYPTION_KEY is not set.\n" +
+        "  It encrypts every user's wallet signing key at rest. Set a long random\n" +
+        "  secret, e.g. `openssl rand -hex 32`, in your environment / .env.\n",
+    );
+    process.exit(1);
+  }
+  if (config.walletEncryptionKey.length < 32) {
+    console.error(
+      "\n  REFUSING TO START: WALLET_ENCRYPTION_KEY is too short (< 32 chars).\n" +
+        "  A short secret weakens AES key derivation. Use `openssl rand -hex 32`.\n",
     );
     process.exit(1);
   }

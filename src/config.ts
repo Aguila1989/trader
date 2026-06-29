@@ -79,8 +79,26 @@ export const config = {
   horizonUrl: env("HORIZON_URL") || horizonDefaults[network],
   networkPassphrase: network === "public" ? Networks.PUBLIC : Networks.TESTNET,
 
+  // The env-based hot wallet. Since Feature 3 (per-user wallets) this is the
+  // SEED/FALLBACK wallet of the DEFAULT account only: it keeps the single-
+  // operator deployment and the background autopilot/monitor loops (which run
+  // outside any request scope, i.e. as DEFAULT_USER_ID) signing exactly as
+  // before. Logged-in users sign with their OWN encrypted wallet (dbo.Wallets);
+  // they NEVER fall back to this key (see src/stellar/keyProvider.ts).
   stellarPublic: env("STELLAR_PUBLIC"),
   stellarSecret: env("STELLAR_SECRET"),
+
+  /**
+   * REQUIRED (Feature 3 - wallet creation/import). Master secret from which a
+   * per-user key is derived (HKDF-SHA256, salted per wallet, userId bound in)
+   * to AES-256-GCM-encrypt each user's Stellar secret AT REST in dbo.Wallets.
+   * The server REFUSES TO START when this is empty or shorter than 32 chars
+   * (see start() in src/server.ts). Generate one with `openssl rand -hex 32`.
+   * NEVER commit it, NEVER log it. Rotating it makes every stored wallet
+   * undecryptable until re-encrypted (the blob carries a version byte so a
+   * future dual-key migration is possible).
+   */
+  walletEncryptionKey: env("WALLET_ENCRYPTION_KEY"),
 
   /**
    * The AI provider catalog. Every provider reads its OWN {PREFIX}_API_KEY +
