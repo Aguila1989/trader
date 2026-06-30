@@ -10,6 +10,7 @@ import { useTraderStore } from "../stores/trader";
 import { dateTimeStr } from "../format";
 import type { TrustlineSuggestion } from "../types";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -108,7 +109,7 @@ function dismiss(s: TrustlineSuggestion): void {
           </span>
           <span :class="scoreClass(s.scores.riskScore)">
             {{ t("trustlineSuggestions.scores.risk") }} {{ s.scores.riskScore }}
-            <InfoTip :text="t('trustlineSuggestions.riskHint')" :label="t('trustlineSuggestions.scores.risk')" />
+            <InfoTip :text="t('trustlineSuggestions.riskHint')" :label="t('trustlineSuggestions.scores.risk')" :learn-more="LESSONS.readingSuggestions" />
           </span>
         </div>
 
@@ -126,6 +127,10 @@ function dismiss(s: TrustlineSuggestion): void {
           <span v-else-if="!s.homeDomain" class="muted">{{ t("trustlineSuggestions.noToml") }}</span>
           <span v-else class="muted mono">{{ s.homeDomain }}</span>
         </p>
+
+        <RouterLink :to="LESSONS.whatIsTrustline" class="ts-learn">
+          {{ t("trustlineSuggestions.learnTrustlines") }}
+        </RouterLink>
 
         <div class="actions">
           <button class="btn primary" @click="add(s)">{{ t("trustlineSuggestions.actions.add") }}</button>
@@ -174,6 +179,8 @@ function dismiss(s: TrustlineSuggestion): void {
 .ts-desc { font-size: 12px; margin: 0; }
 .ts-links { margin: 0; font-size: 12px; }
 .ts-links a { color: var(--accent); }
+.ts-learn { font-size: 12px; color: var(--accent); text-decoration: none; }
+.ts-learn:hover { text-decoration: underline; }
 .actions { display: flex; gap: 8px; }
 .pos { color: var(--pos); }
 .warn { color: var(--warn); }

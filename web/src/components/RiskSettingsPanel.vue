@@ -8,6 +8,7 @@ import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 import {
   EXPERT_PRESETS,
   EXPERT_RANGES,
@@ -125,7 +126,7 @@ const beyondHigh = computed(() => {
       <div v-if="anyHigh" class="rs-warn">⚠ {{ t("riskSettings.highWarning") }}</div>
       <ul class="rs-list">
         <li v-for="f in FACTORS" :key="f.key" class="rs-row">
-          <span class="rs-label">{{ f.label }}<InfoTip :text="f.tip" :label="f.label" /></span>
+          <span class="rs-label">{{ f.label }}<InfoTip :text="f.tip" :label="f.label" :learn-more="LESSONS.riskFactors" /></span>
           <div class="segmented rs-seg" role="group" :aria-label="f.label">
             <button
               v-for="lvl in LEVELS"
@@ -214,7 +215,7 @@ const beyondHigh = computed(() => {
         <!-- Trade frequency = min confidence -->
         <div class="rs-xrow">
           <span class="rs-label">
-            {{ t("riskSettings.expert.minConfidence") }}<InfoTip :text="t('riskSettings.expert.minConfidenceTip')" :label="t('riskSettings.expert.minConfidence')" />
+            {{ t("riskSettings.expert.minConfidence") }}<InfoTip :text="t('riskSettings.expert.minConfidenceTip')" :label="t('riskSettings.expert.minConfidence')" :learn-more="LESSONS.riskFactors" />
           </span>
           <div class="rs-xinput">
             <input
@@ -227,7 +228,7 @@ const beyondHigh = computed(() => {
         <!-- Asset volatility tolerance -->
         <div class="rs-xrow">
           <span class="rs-label">
-            {{ t("riskSettings.expert.maxVolatility") }}<InfoTip :text="t('riskSettings.expert.maxVolatilityTip')" :label="t('riskSettings.expert.maxVolatility')" />
+            {{ t("riskSettings.expert.maxVolatility") }}<InfoTip :text="t('riskSettings.expert.maxVolatilityTip')" :label="t('riskSettings.expert.maxVolatility')" :learn-more="LESSONS.riskFactors" />
           </span>
           <div class="rs-xinput">
             <input

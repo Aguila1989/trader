@@ -6,6 +6,7 @@ import { fmtNum, dateTimeStr } from "../format";
 import TokenChart from "./TokenChart.vue";
 import InfoTip from "./InfoTip.vue";
 import AssetSelect from "./AssetSelect.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const store = useTraderStore();
 const { t } = useI18n();
@@ -209,7 +210,7 @@ onUnmounted(() => {
       <div>{{ t("tokenDetail.bid") }} <span class="mono pos">{{ fmtNum(store.tokenBook?.bestBid, 7) }}</span></div>
       <div>{{ t("tokenDetail.ask") }} <span class="mono neg">{{ fmtNum(store.tokenBook?.bestAsk, 7) }}</span></div>
       <div>
-        {{ t("tokenDetail.spread") }}<InfoTip :text="TIPS.spread" :label="t('tokenDetail.tips.spreadLabel')" />
+        {{ t("tokenDetail.spread") }}<InfoTip :text="TIPS.spread" :label="t('tokenDetail.tips.spreadLabel')" :learn-more="LESSONS.spread" />
         <span class="mono">
           {{ store.tokenBook?.spreadBps != null ? fmtNum(store.tokenBook.spreadBps, 1) + " bps" : "-" }}
         </span>
@@ -276,7 +277,7 @@ onUnmounted(() => {
         {{ t("tokenDetail.regularStopLoss") }}
       </button>
       <button class="seg" :class="{ active: stopType === 'trailing' }" @click="stopType = 'trailing'">
-        {{ t("tokenDetail.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('tokenDetail.trailingStopLoss')" placement="right" />
+        {{ t("tokenDetail.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('tokenDetail.trailingStopLoss')" placement="right" :learn-more="LESSONS.trailingStop" />
       </button>
     </div>
 
@@ -292,7 +293,7 @@ onUnmounted(() => {
       </label>
       <label v-if="stopType === 'regular'" class="order-field">
         <span class="order-label">
-          {{ t("tokenDetail.triggerPrice") }} ({{ quoteCode }})<InfoTip :text="TIPS.trigger" :label="t('tokenDetail.triggerPriceLabel')" />
+          {{ t("tokenDetail.triggerPrice") }} ({{ quoteCode }})<InfoTip :text="TIPS.trigger" :label="t('tokenDetail.triggerPriceLabel')" :learn-more="LESSONS.stopLoss" />
         </span>
         <input
           v-model="trigger"

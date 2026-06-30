@@ -11,6 +11,7 @@ import { fmtNum } from "../format";
 import type { ManualOrderInput } from "../types";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const store = useTraderStore();
 const { t } = useI18n();
@@ -196,7 +197,7 @@ async function cancel(id: string): Promise<void> {
         <div>{{ t("manualTrade.bid") }} <span class="mono pos">{{ fmtNum(store.market?.bestBid, 7) }}</span></div>
         <div>{{ t("manualTrade.ask") }} <span class="mono neg">{{ fmtNum(store.market?.bestAsk, 7) }}</span></div>
         <div>
-          {{ t("manualTrade.spread") }}<InfoTip :text="TIPS.spread" :label="t('manualTrade.aria.whatIsSpread')" />
+          {{ t("manualTrade.spread") }}<InfoTip :text="TIPS.spread" :label="t('manualTrade.aria.whatIsSpread')" :learn-more="LESSONS.spread" />
           <span class="mono">
             {{ store.market?.spreadBps != null ? fmtNum(store.market.spreadBps, 1) + " bps" : "-" }}
           </span>
@@ -346,7 +347,7 @@ async function cancel(id: string): Promise<void> {
         <div class="order-fields">
           <label class="order-field">
             <span class="order-label">
-              {{ t("manualTrade.slippageTolerance") }}<InfoTip :text="TIPS.slippage" :label="t('manualTrade.aria.slippageTolerance')" />
+              {{ t("manualTrade.slippageTolerance") }}<InfoTip :text="TIPS.slippage" :label="t('manualTrade.aria.slippageTolerance')" :learn-more="LESSONS.slippage" />
             </span>
             <input
               v-model="slippagePct"
@@ -365,13 +366,13 @@ async function cancel(id: string): Promise<void> {
         <div v-if="showAdvanced" class="order-fields">
           <label class="order-field">
             <span class="order-label">
-              {{ t("manualTrade.targetPrice") }}<InfoTip :text="TIPS.target" :label="t('manualTrade.aria.targetPrice')" />
+              {{ t("manualTrade.targetPrice") }}<InfoTip :text="TIPS.target" :label="t('manualTrade.aria.targetPrice')" :learn-more="LESSONS.targetPrice" />
             </span>
             <input v-model="targetPrice" class="order-input" type="text" inputmode="decimal" :placeholder="t('manualTrade.placeholders.optional')" :aria-label="t('manualTrade.aria.targetPrice')" />
           </label>
           <label class="order-field">
             <span class="order-label">
-              {{ t("manualTrade.invalidationPrice") }}<InfoTip :text="TIPS.invalidation" :label="t('manualTrade.aria.invalidationPrice')" />
+              {{ t("manualTrade.invalidationPrice") }}<InfoTip :text="TIPS.invalidation" :label="t('manualTrade.aria.invalidationPrice')" :learn-more="LESSONS.invalidationPrice" />
             </span>
             <input v-model="invalidationPrice" class="order-input" type="text" inputmode="decimal" :placeholder="t('manualTrade.placeholders.optional')" :aria-label="t('manualTrade.aria.invalidationPrice')" />
           </label>

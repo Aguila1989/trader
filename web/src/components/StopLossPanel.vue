@@ -10,6 +10,7 @@ import { api } from "../api";
 import { fmtNum, dateTimeStr } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const props = defineProps<{ mode: "manual" | "ai" }>();
 const store = useTraderStore();
@@ -126,7 +127,7 @@ async function submit(): Promise<void> {
           {{ t("stopLoss.regularStopLoss") }}
         </button>
         <button class="seg" :class="{ active: stopType === 'trailing' }" @click="stopType = 'trailing'">
-          {{ t("stopLoss.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('stopLoss.trailingStopLoss')" placement="right" />
+          {{ t("stopLoss.trailingStopLoss") }}<InfoTip :text="TIPS.trailing" :label="t('stopLoss.trailingStopLoss')" placement="right" :learn-more="LESSONS.trailingStop" />
         </button>
       </div>
 

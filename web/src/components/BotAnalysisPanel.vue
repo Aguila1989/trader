@@ -9,6 +9,7 @@ import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -35,21 +36,21 @@ const tokenChips = computed(() =>
   store.universe.filter((t) => t.spec.toUpperCase() !== "XLM"),
 );
 
-// AI config (read-only). Each row: [label, value, tooltip?].
+// AI config (read-only). Each row: [label, value, tooltip?, learnMoreDeeplink?].
 const configRows = computed(() => {
   const l = store.limits;
   if (!l) return [];
   return [
-    [t("botAnalysis.config.capStd"), fmtNum(l.maxAmountPerTrade), TIPS.value.cap],
-    [t("botAnalysis.config.capHigh"), fmtNum(l.maxAmountPerTradeHigh), TIPS.value.cap],
-    [t("botAnalysis.config.maxOpenExposure"), fmtNum(l.maxOpenExposure), TIPS.value.exposure],
-    [t("botAnalysis.config.perPairExposure"), String(l.pairExposureMultiplier), TIPS.value.exposure],
-    [t("botAnalysis.config.cooldown"), `${l.cooldownSeconds} s`, TIPS.value.cooldown],
-    [t("botAnalysis.config.minRiskReward"), String(l.minRiskReward), TIPS.value.risk],
-    [t("botAnalysis.config.maxSlippage"), `${l.maxSlippageBps} bps`, ""],
-    [t("botAnalysis.config.maxDailyVolume"), fmtNum(l.maxDailyVolume), ""],
-    [t("botAnalysis.config.maxTradesPerDay"), String(l.maxTradesPerDay), ""],
-    [t("botAnalysis.config.maxDailyLoss"), fmtNum(l.maxDailyLoss), ""],
+    [t("botAnalysis.config.capStd"), fmtNum(l.maxAmountPerTrade), TIPS.value.cap, LESSONS.tradingCap],
+    [t("botAnalysis.config.capHigh"), fmtNum(l.maxAmountPerTradeHigh), TIPS.value.cap, LESSONS.tradingCap],
+    [t("botAnalysis.config.maxOpenExposure"), fmtNum(l.maxOpenExposure), TIPS.value.exposure, LESSONS.tradingCap],
+    [t("botAnalysis.config.perPairExposure"), String(l.pairExposureMultiplier), TIPS.value.exposure, LESSONS.tradingCap],
+    [t("botAnalysis.config.cooldown"), `${l.cooldownSeconds} s`, TIPS.value.cooldown, LESSONS.riskFactors],
+    [t("botAnalysis.config.minRiskReward"), String(l.minRiskReward), TIPS.value.risk, LESSONS.targetPrice],
+    [t("botAnalysis.config.maxSlippage"), `${l.maxSlippageBps} bps`, "", ""],
+    [t("botAnalysis.config.maxDailyVolume"), fmtNum(l.maxDailyVolume), "", ""],
+    [t("botAnalysis.config.maxTradesPerDay"), String(l.maxTradesPerDay), "", ""],
+    [t("botAnalysis.config.maxDailyLoss"), fmtNum(l.maxDailyLoss), "", ""],
   ] as const;
 });
 </script>
@@ -96,14 +97,14 @@ const configRows = computed(() => {
     </section>
 
     <section class="panel">
-      <h2>{{ t("botAnalysis.tradingConfig") }}<InfoTip :text="TIPS.cap" :label="t('botAnalysis.tradingCap')" /></h2>
+      <h2>{{ t("botAnalysis.tradingConfig") }}<InfoTip :text="TIPS.cap" :label="t('botAnalysis.tradingCap')" :learn-more="LESSONS.tradingCap" /></h2>
       <p class="muted cfg-note">
         {{ t("botAnalysis.cfgNote") }}
       </p>
       <ul class="limits">
-        <li v-for="[k, v, tip] in configRows" :key="k">
+        <li v-for="[k, v, tip, learn] in configRows" :key="k">
           <span class="muted">
-            {{ k }}<InfoTip v-if="tip" :text="tip" :label="k" />
+            {{ k }}<InfoTip v-if="tip" :text="tip" :label="k" :learn-more="learn" />
           </span>
           <span class="mono">{{ v }}</span>
         </li>

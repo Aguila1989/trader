@@ -7,6 +7,7 @@ import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import type { TrustlineWarning } from "../types";
+import { warningLessonPath } from "../academy/deeplinks";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -59,6 +60,10 @@ function snooze(w: TrustlineWarning): void {
           </span>
         </p>
 
+        <RouterLink :to="warningLessonPath(w.triggers)" class="tw-learn">
+          {{ t("trustlineSuggestions.whatDoesThisMean") }}
+        </RouterLink>
+
         <div class="actions">
           <button class="btn accent" @click="review(w)">{{ t("trustlineSuggestions.actions.review") }}</button>
           <button class="btn" @click="snooze(w)">{{ t("trustlineSuggestions.actions.snooze") }}</button>
@@ -92,5 +97,7 @@ function snooze(w: TrustlineWarning): void {
 .tw-changed { margin: 0; padding-left: 16px; font-size: 12.5px; }
 .tw-explain { margin: 0; font-size: 13px; }
 .tw-holding { font-size: 12px; margin: 0; }
+.tw-learn { font-size: 12px; color: var(--accent); text-decoration: none; }
+.tw-learn:hover { text-decoration: underline; }
 .actions { display: flex; gap: 8px; }
 </style>

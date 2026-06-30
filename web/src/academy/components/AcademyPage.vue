@@ -5,12 +5,14 @@
 //
 // Imports only the static curriculum, the progress store, the shared locale
 // adapter, and i18n — no trading logic, AI service, or Stellar SDK.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { getChapterById } from "../content";
+import { lessonPath } from "../deeplinks";
 import { useLocale } from "../locale";
 import { useAcademyStore } from "../progress";
+import AcademySearch from "./AcademySearch.vue";
 import ChapterOverview from "./ChapterOverview.vue";
 import LessonView from "./LessonView.vue";
 import QuizView from "./QuizView.vue";
@@ -19,6 +21,7 @@ import { isLoggedIn } from "../../auth/session";
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
 const academy = useAcademyStore();
 const { locale } = useLocale();
 
@@ -74,6 +77,37 @@ function scrollTop(): void {
     /* SSR / non-browser — ignore */
   }
 }
+
+// Feature 5 — lesson deeplinks. Open a specific lesson by ids, BYPASSING the
+// unlock gate so any lesson is reachable directly (incl. for logged-out users
+// and EXPERT lessons). Invalid ids fall back to the overview (no-op).
+function openLessonByIds(cId: string, lId: string): void {
+  const ch = getChapterById(locale.value, cId);
+  if (!ch) return;
+  const idx = ch.lessons.findIndex((l) => l.id === lId);
+  if (idx < 0) return;
+  chapterId.value = cId;
+  lessonIndex.value = idx;
+  view.value = "lesson";
+  academy.markLessonViewed(cId, idx);
+  scrollTop();
+}
+
+// React to /academy/chapter/:chapterId/lesson/:lessonId on first load and on
+// later param changes (vue-router reuses this component across param changes).
+watch(
+  () => [route.params.chapterId, route.params.lessonId] as const,
+  ([cId, lId]) => {
+    if (typeof cId === "string" && typeof lId === "string") openLessonByIds(cId, lId);
+  },
+  { immediate: true },
+);
+
+// A search result was chosen: push the deeplink so the URL reflects it and the
+// watcher above opens the lesson — one code path for both entry points.
+function onSearchOpen(cId: string, lId: string): void {
+  void router.push(lessonPath(cId, lId));
+}
 </script>
 
 <template>
@@ -85,6 +119,8 @@ function scrollTop(): void {
       <span class="academy-brand"><span class="logo">◆</span> {{ t("common.academy") }}</span>
       <span class="academy-bar-end"><LangSwitcher /></span>
     </div>
+
+    <AcademySearch v-if="view === 'overview'" @open="onSearchOpen" />
 
     <ChapterOverview v-if="view === 'overview'" @open="openChapter" />
 

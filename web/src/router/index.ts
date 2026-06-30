@@ -16,6 +16,8 @@ const PUBLIC_ROUTES = new Set([
   "reset-password",
   "verify-email",
   "academy",
+  // Feature 5: lesson deeplinks are part of the public Academy.
+  "academy-lesson",
 ]);
 
 const router = createRouter({
@@ -42,6 +44,13 @@ const router = createRouter({
     {
       path: "/academy",
       name: "academy",
+      component: () => import("../academy/components/AcademyPage.vue"),
+    },
+    {
+      // Feature 5: stable lesson deeplink. Same AcademyPage component; it reads
+      // the chapterId/lessonId params and opens that lesson directly.
+      path: "/academy/chapter/:chapterId/lesson/:lessonId",
+      name: "academy-lesson",
       component: () => import("../academy/components/AcademyPage.vue"),
     },
     {

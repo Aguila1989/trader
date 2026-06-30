@@ -12,6 +12,8 @@ export default {
       "⚠ Adding a trustline is always a risk. A trustline reserves 0.5 XLM of your balance and exposes you to the token issuer. Never add a trustline based solely on this suggestion — do your own research.",
     empty: "No suggestions yet. Run a scan or wait for the next weekly scan.",
     emptyWarnings: "No deterioration warnings. Your held tokens look healthy.",
+    learnTrustlines: "Learn about trustlines →",
+    whatDoesThisMean: "What does this mean? →",
     overall: "Overall",
     scores: {
       liquidity: "Liquidity",
@@ -71,6 +73,8 @@ export default {
       "⚠ Een trustline toevoegen is altijd een risico. Een trustline reserveert 0.5 XLM van je saldo en stelt je bloot aan de token-uitgever. Voeg nooit een trustline toe louter op basis van deze suggestie — doe je eigen onderzoek.",
     empty: "Nog geen suggesties. Voer een scan uit of wacht op de volgende wekelijkse scan.",
     emptyWarnings: "Geen waarschuwingen. Je aangehouden tokens ogen gezond.",
+    learnTrustlines: "Meer over trustlines →",
+    whatDoesThisMean: "Wat betekent dit? →",
     overall: "Totaal",
     scores: {
       liquidity: "Liquiditeit",
@@ -130,6 +134,8 @@ export default {
       "⚠ Ajouter une ligne de confiance comporte toujours un risque. Une ligne de confiance réserve 0.5 XLM de votre solde et vous expose à l'émetteur du token. N'ajoutez jamais une ligne de confiance sur la seule base de cette suggestion — faites vos propres recherches.",
     empty: "Aucune suggestion pour l'instant. Lancez une analyse ou attendez la prochaine analyse hebdomadaire.",
     emptyWarnings: "Aucune alerte. Vos tokens détenus semblent sains.",
+    learnTrustlines: "En savoir plus sur les lignes de confiance →",
+    whatDoesThisMean: "Qu'est-ce que cela signifie ? →",
     overall: "Global",
     scores: {
       liquidity: "Liquidité",
@@ -189,6 +195,8 @@ export default {
       "⚠ Añadir una línea de confianza siempre es un riesgo. Una línea de confianza reserva 0.5 XLM de tu saldo y te expone al emisor del token. Nunca añadas una línea de confianza basándote únicamente en esta sugerencia — investiga por tu cuenta.",
     empty: "Aún no hay sugerencias. Ejecuta un análisis o espera al próximo análisis semanal.",
     emptyWarnings: "Sin alertas. Tus tokens mantenidos se ven saludables.",
+    learnTrustlines: "Más sobre líneas de confianza →",
+    whatDoesThisMean: "¿Qué significa esto? →",
     overall: "Global",
     scores: {
       liquidity: "Liquidez",

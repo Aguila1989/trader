@@ -5,6 +5,7 @@ import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import type { RankTrend, VolumeTrend } from "../types";
 import InfoTip from "./InfoTip.vue";
+import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -50,10 +51,10 @@ function trendClass(t?: string): string {
           <th>#</th>
           <th>{{ t("liquidity.cols.asset") }}</th>
           <th class="num">
-            {{ t("liquidity.cols.vol24h") }}<InfoTip :text="TIPS.liquidity" :label="t('liquidity.labels.liquidityScore')" placement="right" />
+            {{ t("liquidity.cols.vol24h") }}<InfoTip :text="TIPS.liquidity" :label="t('liquidity.labels.liquidityScore')" placement="right" :learn-more="LESSONS.liquidity" />
           </th>
           <th class="num">
-            {{ t("liquidity.cols.spread") }}<InfoTip :text="TIPS.spread" :label="t('liquidity.labels.spread')" placement="right" />
+            {{ t("liquidity.cols.spread") }}<InfoTip :text="TIPS.spread" :label="t('liquidity.labels.spread')" placement="right" :learn-more="LESSONS.spread" />
           </th>
           <th>{{ t("liquidity.cols.rankTrend") }}</th>
           <th>{{ t("liquidity.cols.volume") }}</th>

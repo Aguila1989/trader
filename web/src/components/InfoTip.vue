@@ -15,8 +15,13 @@ const props = withDefaults(
     label?: string;
     /** Which edge the popover aligns to (avoids clipping near a panel edge). */
     placement?: "left" | "right";
+    /**
+     * Feature 5: optional Academy deeplink. When set, a "Learn more →" link is
+     * rendered at the bottom of the popover (e.g. "/academy/chapter/c2/lesson/c2-l3").
+     */
+    learnMore?: string;
   }>(),
-  { label: "", placement: "left" },
+  { label: "", placement: "left", learnMore: "" },
 );
 
 // Fall back to the translated default when no explicit label is supplied.
@@ -77,6 +82,30 @@ onBeforeUnmount(() =>
       role="tooltip"
     >
       {{ text }}
+      <RouterLink
+        v-if="learnMore"
+        :to="learnMore"
+        class="infotip-learn"
+        @click="hide"
+      >
+        {{ t("infoTip.learnMore") }}
+      </RouterLink>
     </span>
   </span>
 </template>
+
+<style scoped>
+/* Feature 5: the "Learn more →" deeplink at the bottom of the popover. */
+.infotip-learn {
+  display: block;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.infotip-learn:hover {
+  text-decoration: underline;
+}
+</style>
