@@ -19,11 +19,20 @@ const whitelistCount = computed(() => store.limits?.assetWhitelist.length ?? 0);
 // Stops are recorded but DON'T fire while the kill switch is engaged — say so,
 // rather than letting the count imply protection is live.
 const killOn = computed(() => store.killSwitch);
+// Feature 4: deterioration warnings for held trustlines (always visible here).
+const trustlineWarnings = computed(() => store.trustlineWarnings.length);
+function viewWarnings(): void {
+  store.setActiveTab("bot");
+}
 </script>
 
 <template>
   <TopBar />
   <div class="header-body">
+    <div v-if="trustlineWarnings > 0" class="tl-banner" role="alert">
+      <span>⚠ {{ t("trustlineSuggestions.banner.warnings", { n: trustlineWarnings }, trustlineWarnings) }}</span>
+      <button class="btn" @click="viewWarnings">{{ t("trustlineSuggestions.banner.view") }}</button>
+    </div>
     <section class="panel bot-status">
       <WalletChip />
       <div class="bs-item">
@@ -70,6 +79,18 @@ const killOn = computed(() => store.killSwitch);
 }
 .bs-warn {
   font-size: 12px;
+}
+.tl-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border: 1px solid #5e4a1f;
+  background: rgba(245, 166, 35, 0.12);
+  color: var(--warn);
+  border-radius: 8px;
+  font-size: 13px;
 }
 .bs-dot {
   width: 8px;

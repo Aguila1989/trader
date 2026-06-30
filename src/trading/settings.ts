@@ -21,7 +21,7 @@
 import { config } from "../config";
 
 /** Which background loop (if any) must be re-scheduled when this value changes. */
-export type SettingLoop = "autopilot" | "monitor" | "liquidity" | "wallet";
+export type SettingLoop = "autopilot" | "monitor" | "liquidity" | "wallet" | "trustline";
 
 /** UI grouping (Feature 2 spec): AI / Risk & Safety / Automation / Swap. */
 export type SettingGroup = "ai" | "risk" | "automation" | "swap";
@@ -263,6 +263,54 @@ const CATALOG: SettingDef[] = [
     get: () => config.liquidityDiscoveryPages,
     set: (v) => {
       config.liquidityDiscoveryPages = v as number;
+    },
+  },
+
+  // ----- Feature 4: weekly AI trustline scan ----------------------------
+  {
+    key: "trustlineScanEnabled",
+    group: "automation",
+    label: "Weekly trustline scan",
+    description:
+      "Observe-only weekly AI analysis of the top Stellar tokens (+ your held tokens): produces add-suggestions and deterioration warnings. Never adds or removes a trustline.",
+    type: "boolean",
+    loop: "trustline",
+    get: () => config.trustlineScan.enabled,
+    set: (v) => {
+      config.trustlineScan.enabled = v as boolean;
+    },
+  },
+  {
+    key: "trustlineScanDayOfWeek",
+    group: "automation",
+    label: "Trustline scan day",
+    description: "Weekday the weekly scan runs (0 = Sunday … 6 = Saturday), in the configured timezone.",
+    type: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    int: true,
+    loop: "trustline",
+    get: () => config.trustlineScan.dayOfWeek,
+    set: (v) => {
+      config.trustlineScan.dayOfWeek = v as number;
+    },
+  },
+  {
+    key: "trustlineScanMinuteOfDay",
+    group: "automation",
+    label: "Trustline scan time",
+    description: "Minutes after local midnight (0–1439) the weekly scan fires, in the configured timezone. 180 = 03:00.",
+    type: "number",
+    min: 0,
+    max: 1439,
+    step: 15,
+    int: true,
+    unit: "min",
+    loop: "trustline",
+    get: () => config.trustlineScan.minuteOfDay,
+    set: (v) => {
+      config.trustlineScan.minuteOfDay = v as number;
     },
   },
 

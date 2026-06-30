@@ -349,6 +349,52 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         status          NVARCHAR(16)  NOT NULL
       );
     END
+
+    -- Feature 4: weekly AI trustline-scan snapshots. One row per analysed token
+    -- per scan (the top tokens by XLM volume + the tokens the user already
+    -- holds). Append-only; the scanner prunes rows older than the retention
+    -- window (>= 12 weeks). Scores are 1-10 ints (riskScore: higher = safer).
+    -- userId is added by ensureUserScoping (TrustlineScans is USER_SCOPED).
+    IF OBJECT_ID('dbo.TrustlineScans', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.TrustlineScans (
+        id              NVARCHAR(64)  NOT NULL CONSTRAINT PK_TrustlineScans PRIMARY KEY,
+        scanDate        DATETIME2(3)  NOT NULL,
+        network         NVARCHAR(16)  NOT NULL,
+        asset           NVARCHAR(120) NOT NULL,
+        assetCode       NVARCHAR(32)  NOT NULL,
+        assetIssuer     NVARCHAR(64)  NOT NULL,
+        liquidityScore  INT           NOT NULL,
+        legitimacyScore INT           NOT NULL,
+        trendScore      INT           NOT NULL,
+        riskScore       INT           NOT NULL,
+        overallScore    INT           NOT NULL,
+        summary         NVARCHAR(MAX) NULL,
+        redFlags        NVARCHAR(MAX) NULL,   -- JSON string[]
+        rawData         NVARCHAR(MAX) NULL,   -- JSON TokenRawData snapshot
+        held            BIT           NOT NULL CONSTRAINT DF_TrustlineScans_held DEFAULT 0
+      );
+      CREATE INDEX IX_TrustlineScans_net_asset_date
+        ON dbo.TrustlineScans (network, asset, scanDate DESC);
+    END
+
+    -- Feature 4: dismissed suggestions / snoozed warnings (per user). A
+    -- 'suggestion' row hides a card until the next scan (cleared at scan start);
+    -- a 'warning' row snoozes a card until expiresAt (now + 7 days). userId is
+    -- added by ensureUserScoping (TrustlineDismissals is USER_SCOPED).
+    IF OBJECT_ID('dbo.TrustlineDismissals', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.TrustlineDismissals (
+        id        NVARCHAR(64)  NOT NULL CONSTRAINT PK_TrustlineDismissals PRIMARY KEY,
+        createdAt DATETIME2(3)  NOT NULL,
+        network   NVARCHAR(16)  NOT NULL,
+        asset     NVARCHAR(120) NOT NULL,
+        kind      NVARCHAR(16)  NOT NULL,   -- 'suggestion' | 'warning'
+        expiresAt DATETIME2(3)  NULL
+      );
+      CREATE INDEX IX_TrustlineDismissals_net_kind
+        ON dbo.TrustlineDismissals (network, kind, asset);
+    END
   `);
 
   // User accounts + per-user scoping. Runs after the data tables exist so the
@@ -462,6 +508,8 @@ const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
   { table: "TradeLog", orderCol: "ts" },
   { table: "AiLog", orderCol: "ts" },
   { table: "Wallets", orderCol: "createdAt" },
+  { table: "TrustlineScans", orderCol: "scanDate" },
+  { table: "TrustlineDismissals", orderCol: "createdAt" },
 ];
 
 /** SQL-safe single-quote escaping for our own (non-user-supplied) constants. */

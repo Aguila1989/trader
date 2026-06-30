@@ -20,6 +20,8 @@ import type {
   StopLossAuditRow,
   StopLossSetBy,
   StopLossStatus,
+  TokenRawData,
+  TokenScanResult,
   TradeProposal,
   TradeSide,
   TradeStatus,
@@ -1313,4 +1315,251 @@ export async function setWalletStatus(id: string, status: WalletStatus): Promise
         WHERE id = @id AND userId = @userId;`,
     );
   return res.rowsAffected?.[0] ?? 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Feature 4 — weekly trustline-scan snapshots + dismissals.
+ *
+ * Same dbReady-guard + idempotent-insert + userId/network-scoped shape as the
+ * rest of the layer. Scan rows are append-only (one row per token per scan,
+ * all rows of a scan stamped with the SAME scanDate); the scanner prunes rows
+ * older than the retention window. Dismissals are a small per-user mutable set
+ * (DELETE allowed - this table does not use the upsert-fallback pattern).
+ * ------------------------------------------------------------------ */
+
+function parseJson<T>(json: string | null, fallback: T): T {
+  if (!json) return fallback;
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+interface RawTrustlineScanRow {
+  scanDate: Date | string;
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  liquidityScore: number;
+  legitimacyScore: number;
+  trendScore: number;
+  riskScore: number;
+  overallScore: number;
+  summary: string | null;
+  redFlags: string | null;
+  rawData: string | null;
+  held: boolean;
+}
+
+const EMPTY_RAW: TokenRawData = {
+  volume24h: null,
+  volume7d: null,
+  activeTraders: null,
+  orderBookDepth: null,
+  spreadPct: null,
+  priceTrend7d: null,
+  trustlineCount: null,
+  homeDomain: null,
+  tomlMissing: true,
+};
+
+function rowToTrustlineScan(r: RawTrustlineScanRow): TokenScanResult {
+  return {
+    scanDate: toIso(r.scanDate),
+    asset: r.asset,
+    assetCode: r.assetCode,
+    assetIssuer: r.assetIssuer,
+    liquidityScore: Number(r.liquidityScore) || 0,
+    legitimacyScore: Number(r.legitimacyScore) || 0,
+    trendScore: Number(r.trendScore) || 0,
+    riskScore: Number(r.riskScore) || 0,
+    overallScore: Number(r.overallScore) || 0,
+    summary: r.summary ?? "",
+    redFlags: parseJson<string[]>(r.redFlags, []),
+    rawData: parseJson<TokenRawData>(r.rawData, EMPTY_RAW),
+    held: Boolean(r.held),
+  };
+}
+
+const TRUSTLINE_SCAN_COLS = `scanDate, asset, assetCode, assetIssuer,
+  liquidityScore, legitimacyScore, trendScore, riskScore, overallScore,
+  summary, redFlags, rawData, held`;
+
+/** Insert one token's weekly scan result (idempotent on id). */
+export async function insertTrustlineScan(id: string, r: TokenScanResult): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), id)
+    .input("scanDate", sql.DateTime2, new Date(r.scanDate))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("asset", sql.NVarChar(120), r.asset)
+    .input("assetCode", sql.NVarChar(32), r.assetCode)
+    .input("assetIssuer", sql.NVarChar(64), r.assetIssuer)
+    .input("liquidityScore", sql.Int, Math.round(r.liquidityScore))
+    .input("legitimacyScore", sql.Int, Math.round(r.legitimacyScore))
+    .input("trendScore", sql.Int, Math.round(r.trendScore))
+    .input("riskScore", sql.Int, Math.round(r.riskScore))
+    .input("overallScore", sql.Int, Math.round(r.overallScore))
+    .input("summary", sql.NVarChar(sql.MAX), r.summary ?? null)
+    .input("redFlags", sql.NVarChar(sql.MAX), JSON.stringify(r.redFlags ?? []))
+    .input("rawData", sql.NVarChar(sql.MAX), JSON.stringify(r.rawData ?? {}))
+    .input("held", sql.Bit, r.held)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.TrustlineScans WHERE id = @id)
+       INSERT INTO dbo.TrustlineScans
+         (id, scanDate, network, userId, asset, assetCode, assetIssuer,
+          liquidityScore, legitimacyScore, trendScore, riskScore, overallScore,
+          summary, redFlags, rawData, held)
+       VALUES
+         (@id, @scanDate, @network, @userId, @asset, @assetCode, @assetIssuer,
+          @liquidityScore, @legitimacyScore, @trendScore, @riskScore, @overallScore,
+          @summary, @redFlags, @rawData, @held);`,
+    );
+}
+
+/** The most recent N distinct scan dates (ISO, newest first) for this user. */
+export async function distinctTrustlineScanDates(limit = 12): Promise<string[]> {
+  if (!dbReady()) return [];
+  const n = Math.min(Math.max(limit, 1), 100);
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("limit", sql.Int, n)
+    .query<{ scanDate: Date | string }>(
+      `SELECT DISTINCT TOP (@limit) scanDate FROM dbo.TrustlineScans
+        WHERE network = @net AND userId = @userId
+        ORDER BY scanDate DESC;`,
+    );
+  return res.recordset.map((r) => toIso(r.scanDate));
+}
+
+/** All token rows for one exact scanDate. */
+export async function listTrustlineScansForDate(scanDate: string): Promise<TokenScanResult[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("scanDate", sql.DateTime2, new Date(scanDate))
+    .query<RawTrustlineScanRow>(
+      `SELECT ${TRUSTLINE_SCAN_COLS} FROM dbo.TrustlineScans
+        WHERE network = @net AND userId = @userId AND scanDate = @scanDate
+        ORDER BY overallScore DESC;`,
+    );
+  return res.recordset.map(rowToTrustlineScan);
+}
+
+/** Per-token scan history (newest first), windowed by count. For the 12-week view. */
+export async function listTrustlineScansForAsset(
+  asset: string,
+  limit = 12,
+): Promise<TokenScanResult[]> {
+  if (!dbReady()) return [];
+  const n = Math.min(Math.max(limit, 1), 200);
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("asset", sql.NVarChar(120), asset)
+    .input("limit", sql.Int, n)
+    .query<RawTrustlineScanRow>(
+      `SELECT TOP (@limit) ${TRUSTLINE_SCAN_COLS} FROM dbo.TrustlineScans
+        WHERE network = @net AND userId = @userId AND asset = @asset
+        ORDER BY scanDate DESC;`,
+    );
+  return res.recordset.map(rowToTrustlineScan);
+}
+
+/** Delete scan rows older than `beforeIso` (retention prune). */
+export async function pruneTrustlineScans(beforeIso: string): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("before", sql.DateTime2, new Date(beforeIso))
+    .query(
+      `DELETE FROM dbo.TrustlineScans
+        WHERE network = @net AND userId = @userId AND scanDate < @before;`,
+    );
+}
+
+export interface TrustlineDismissal {
+  asset: string;
+  kind: "suggestion" | "warning";
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+interface RawDismissalRow {
+  asset: string;
+  kind: string;
+  createdAt: Date | string;
+  expiresAt: Date | string | null;
+}
+
+/** Record a dismissed suggestion / snoozed warning (idempotent on id). */
+export async function insertTrustlineDismissal(d: {
+  id: string;
+  asset: string;
+  kind: "suggestion" | "warning";
+  expiresAt?: string | null;
+}): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), d.id)
+    .input("createdAt", sql.DateTime2, new Date())
+    .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("asset", sql.NVarChar(120), d.asset)
+    .input("kind", sql.NVarChar(16), d.kind)
+    .input("expiresAt", sql.DateTime2, d.expiresAt ? new Date(d.expiresAt) : null)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.TrustlineDismissals WHERE id = @id)
+       INSERT INTO dbo.TrustlineDismissals
+         (id, createdAt, network, userId, asset, kind, expiresAt)
+       VALUES
+         (@id, @createdAt, @network, @userId, @asset, @kind, @expiresAt);`,
+    );
+}
+
+/** Active (non-expired) dismissals for this user: a suggestion row is active
+ *  until the next scan clears it; a warning row until its expiresAt. */
+export async function listActiveTrustlineDismissals(): Promise<TrustlineDismissal[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("now", sql.DateTime2, new Date())
+    .query<RawDismissalRow>(
+      `SELECT asset, kind, createdAt, expiresAt FROM dbo.TrustlineDismissals
+        WHERE network = @net AND userId = @userId
+          AND (expiresAt IS NULL OR expiresAt > @now);`,
+    );
+  return res.recordset.map((r) => ({
+    asset: r.asset,
+    kind: r.kind === "warning" ? "warning" : "suggestion",
+    createdAt: toIso(r.createdAt),
+    expiresAt: r.expiresAt ? toIso(r.expiresAt) : null,
+  }));
+}
+
+/** Delete dismissals of a kind (e.g. clear 'suggestion' rows at scan start). */
+export async function clearTrustlineDismissals(kind: "suggestion" | "warning"): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("kind", sql.NVarChar(16), kind)
+    .query(
+      `DELETE FROM dbo.TrustlineDismissals
+        WHERE network = @net AND userId = @userId AND kind = @kind;`,
+    );
 }

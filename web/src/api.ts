@@ -25,7 +25,10 @@ import type {
   SwapQuote,
   TradeProposal,
   TradesPage,
+  TokenScanResult,
   TrustlineInfo,
+  TrustlineSuggestion,
+  TrustlineWarning,
   UniverseResponse,
 } from "./types";
 
@@ -403,5 +406,25 @@ export const api = {
     postJSON<{ hash?: string; asset?: string; error?: string }>(
       "/api/trustlines/remove",
       body,
+    ),
+  // Feature 4: weekly AI trustline scan. Suggestions/warnings/status ride the
+  // SSE snapshot; these endpoints trigger a scan, dismiss/snooze cards, and read
+  // per-token score history. None perform an on-chain action (Add Trustline
+  // reuses addTrustline above).
+  runTrustlineScan: () =>
+    postJSON<{ started?: boolean; error?: string }>("/api/trustline-scan/run-now"),
+  // This user's own suggestion + warning cards (the shared scored set diffed
+  // against their trustlines + dismissals). No AI, no user data sent to the server.
+  trustlineViews: () =>
+    getJSON<{ suggestions: TrustlineSuggestion[]; warnings: TrustlineWarning[] }>(
+      "/api/trustline-scan/views",
+    ),
+  dismissTrustlineSuggestion: (asset: string) =>
+    postJSON<{ ok?: boolean; error?: string }>("/api/trustline-suggestions/dismiss", { asset }),
+  snoozeTrustlineWarning: (asset: string) =>
+    postJSON<{ ok?: boolean; error?: string }>("/api/trustline-warnings/snooze", { asset }),
+  trustlineScanHistory: (asset: string) =>
+    getJSON<{ asset: string; history: TokenScanResult[] }>(
+      `/api/trustline-scan/history?asset=${encodeURIComponent(asset)}`,
     ),
 };

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch, nextTick, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
@@ -10,12 +10,37 @@ const { t } = useI18n();
 const store = useTraderStore();
 const selected = ref("");
 const busy = ref(false);
+const panelEl = ref<HTMLElement | null>(null);
 
 // Feature 6: manual-entry fallback for a token not in the liquidity list.
 const manual = ref(false);
 const mCode = ref("");
 const mDomain = ref("");
 const mIssuer = ref("");
+
+// Feature 4: a "Add Trustline" click on a suggestion card sets store.trustlinePrefill.
+// Pre-fill the add form (from the dropdown if the token is addable there, else
+// the manual fields), scroll this panel into view, then clear the prefill.
+function applyPrefill(asset: string | null): void {
+  if (!asset) return;
+  const up = asset.toUpperCase();
+  if (addable.value.some((o) => o.spec.toUpperCase() === up)) {
+    manual.value = false;
+    selected.value = asset;
+  } else {
+    const [code = "", issuer = ""] = asset.split(":");
+    manual.value = true;
+    mCode.value = code;
+    mIssuer.value = issuer;
+    mDomain.value = "";
+  }
+  void nextTick(() => {
+    panelEl.value?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  store.clearTrustlinePrefill();
+}
+watch(() => store.trustlinePrefill, (v) => applyPrefill(v));
+onMounted(() => applyPrefill(store.trustlinePrefill));
 
 // Feature 6: the add dropdown is populated from the LIQUIDITY SCANNER's current
 // top tokens, sorted by liquidity (rank 1 = most liquid), each annotated with
@@ -85,7 +110,7 @@ async function remove(asset: string): Promise<void> {
 </script>
 
 <template>
-  <section class="panel">
+  <section ref="panelEl" class="panel">
     <h2>{{ t("trustlines.title") }}</h2>
     <p class="muted tl-note">
       {{ t("trustlines.intro") }}

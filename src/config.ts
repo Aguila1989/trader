@@ -254,6 +254,28 @@ export const config = {
   },
 
   /**
+   * Feature 4 — weekly AI TRUSTLINE SCAN. A decoupled, observe-only background
+   * job that ranks the top Stellar tokens (+ the tokens the user already holds),
+   * scores each as a trustline candidate via the AI, persists a weekly snapshot,
+   * and derives add-SUGGESTIONS + deterioration WARNINGS. Like the liquidity
+   * scanner it NEVER trades, and it NEVER adds or removes a trustline - it only
+   * informs. Scheduled at a fixed weekday + local time in config.timezone (so a
+   * restart never re-runs a fresh scan immediately, and the cadence is exactly
+   * "every 7 days from the configured slot"). enabled=false turns it off.
+   */
+  trustlineScan: {
+    enabled: bool("TRUSTLINE_SCAN_ENABLED", true),
+    /** 0 = Sunday … 6 = Saturday, interpreted in config.timezone. Default Monday. */
+    dayOfWeek: Math.min(6, Math.max(0, Math.round(num("TRUSTLINE_SCAN_DAY_OF_WEEK", 1)))),
+    /** Minutes after local midnight (0–1439) the scan fires. Default 180 = 03:00. */
+    minuteOfDay: Math.min(1439, Math.max(0, Math.round(num("TRUSTLINE_SCAN_MINUTE_OF_DAY", 180)))),
+    /** How many top tokens (by measured 24h XLM volume) to analyse. Default 10. */
+    topN: Math.min(25, Math.max(1, Math.round(num("TRUSTLINE_SCAN_TOP_N", 10)))),
+    /** Weeks of per-token scan history to retain (spec: ≥12). Default 16. */
+    retentionWeeks: Math.max(12, Math.round(num("TRUSTLINE_SCAN_RETENTION_WEEKS", 16))),
+  },
+
+  /**
    * IANA timezone whose LOCAL MIDNIGHT defines the trading-day boundary for the
    * daily caps (MAX_DAILY_LOSS / volume / trade count) and the dayKey. Defaults
    * to "UTC". E.g. "America/New_York", "Europe/Brussels", "Asia/Tokyo". An

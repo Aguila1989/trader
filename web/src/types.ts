@@ -148,7 +148,8 @@ export type AiLogEventType =
   | "stop_loss"
   | "trail_update"
   | "cooldown"
-  | "risk_profile";
+  | "risk_profile"
+  | "trustline";
 
 export interface AiLogEntry {
   id: string;
@@ -239,6 +240,9 @@ export interface Snapshot {
   /** Feature 2: live value of every UI-editable operational setting (key ->
    *  current value). Metadata/bounds come from GET /api/settings. */
   settings: Record<string, number | boolean>;
+  /** Feature 4: weekly trustline-scan schedule + status only. Per-user
+   *  suggestion/warning views are fetched via GET /api/trustline-scan/views. */
+  weeklyScanStatus: WeeklyScanStatus;
 }
 
 /** Feature 2: one operational setting's metadata + current value (GET /api/settings). */
@@ -254,7 +258,7 @@ export interface SettingMeta {
   unit?: string;
   default: number | boolean;
   value: number | boolean;
-  loop?: "autopilot" | "monitor" | "liquidity" | "wallet";
+  loop?: "autopilot" | "monitor" | "liquidity" | "wallet" | "trustline";
 }
 
 export type RiskLevel = "low" | "medium" | "high";
@@ -569,4 +573,93 @@ export interface LiquidityRec {
   consistencyPct?: number;
   volumeTrend?: VolumeTrend;
   recommended: boolean;
+}
+
+/* --- Feature 4: AI trustline suggestions (mirror of backend src/types.ts) --- */
+
+export type PriceTrend = "up" | "stable" | "down";
+
+export interface TokenTomlMeta {
+  projectName?: string;
+  description?: string;
+  website?: string;
+  conditions?: string;
+  image?: string;
+  links?: string[];
+}
+
+export interface TokenRawData {
+  volume24h: number | null;
+  volume7d: number | null;
+  activeTraders: number | null;
+  orderBookDepth: number | null;
+  spreadPct: number | null;
+  priceTrend7d: PriceTrend | null;
+  trustlineCount: number | null;
+  homeDomain: string | null;
+  toml?: TokenTomlMeta;
+  tomlMissing: boolean;
+}
+
+export interface TokenScores {
+  liquidityScore: number;
+  legitimacyScore: number;
+  trendScore: number;
+  /** 1 = very risky, 10 = very safe. */
+  riskScore: number;
+  overallScore: number;
+  summary: string;
+  redFlags: string[];
+}
+
+export interface TokenScanResult extends TokenScores {
+  scanDate: string;
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  rawData: TokenRawData;
+  held: boolean;
+}
+
+export interface TrustlineSuggestion {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  scanDate: string;
+  scores: TokenScores;
+  homeDomain: string | null;
+  toml?: TokenTomlMeta;
+}
+
+export type WarningTrigger =
+  | "score_drop"
+  | "liquidity_low"
+  | "volume_drop"
+  | "new_red_flags"
+  | "trustline_count_drop"
+  | "toml_lost"
+  | "trend_down";
+
+export interface TrustlineWarning {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  scanDate: string;
+  triggers: WarningTrigger[];
+  changed: string[];
+  previousOverall: number | null;
+  currentOverall: number;
+  explanation: string;
+  balance: string;
+  estimatedValueXlm: number | null;
+  redFlags: string[];
+}
+
+export interface WeeklyScanStatus {
+  enabled: boolean;
+  lastScanAt: string | null;
+  nextScanAt: string | null;
+  scanning: boolean;
+  lastScanTokenCount: number | null;
+  lastError: string | null;
 }

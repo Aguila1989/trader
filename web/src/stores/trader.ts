@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { api } from "../api";
 import type {
   Balance,
@@ -27,6 +27,8 @@ import type {
   TradeProposal,
   TradesPage,
   TrustlineInfo,
+  TrustlineSuggestion,
+  TrustlineWarning,
   UniverseToken,
 } from "../types";
 
@@ -166,6 +168,10 @@ export const useTraderStore = defineStore("trader", () => {
   const proposals = computed(() => snapshot.value?.proposals ?? []);
   const positions = computed(() => snapshot.value?.positions ?? []);
   const liquidityRecs = computed(() => snapshot.value?.liquidityRecs ?? []);
+  // Feature 4: the weekly-scan STATUS rides the snapshot (global, set by the
+  // scanner); the per-user suggestion/warning VIEWS are fetched on demand
+  // (loadTrustlineViews) since they depend on THIS user's trustlines.
+  const weeklyScanStatus = computed(() => snapshot.value?.weeklyScanStatus ?? null);
   // Active stops live in the snapshot (replaced wholesale on each 'state' push).
   const stopLosses = computed(() => snapshot.value?.stopLosses ?? []);
   const priceAlerts = computed(() => snapshot.value?.priceAlerts ?? []);
@@ -260,6 +266,7 @@ export const useTraderStore = defineStore("trader", () => {
     void loadOffers();
     void loadLiveLog();
     void loadTrustlines();
+    void loadTrustlineViews();
     void loadClaimables();
     void loadPortfolio();
     void loadEvolution();
@@ -747,6 +754,66 @@ export const useTraderStore = defineStore("trader", () => {
     return true;
   }
 
+  // --- Feature 4: AI trustline suggestions ---
+  // "Add Trustline" on a suggestion card sets this so the existing Trustlines
+  // panel pre-fills + scrolls to its add form (the user still confirms there).
+  const trustlinePrefill = ref<string | null>(null);
+  function prefillTrustline(asset: string): void {
+    trustlinePrefill.value = asset;
+    // The Trustlines panel lives on the Manual tab — jump there so the pre-filled
+    // add form is visible (the user reviews + confirms in the existing flow).
+    setActiveTab("manual");
+  }
+  function clearTrustlinePrefill(): void {
+    trustlinePrefill.value = null;
+  }
+
+  // Per-user views: a token is AI-scored once globally; these are THIS user's
+  // suggestions/warnings (the scored set diffed against their own trustlines).
+  // Fetched on demand — never on the snapshot — so no user data is broadcast.
+  const trustlineSuggestions = ref<TrustlineSuggestion[]>([]);
+  const trustlineWarnings = ref<TrustlineWarning[]>([]);
+  const trustlineScanError = ref("");
+
+  async function loadTrustlineViews(): Promise<void> {
+    try {
+      const v = await api.trustlineViews();
+      trustlineSuggestions.value = v.suggestions ?? [];
+      trustlineWarnings.value = v.warnings ?? [];
+    } catch {
+      /* leave previous views on a transient error */
+    }
+  }
+
+  // Re-fetch this user's views whenever a scan completes (the global status on
+  // the snapshot tells every client that fresh scores landed).
+  watch(
+    () => `${weeklyScanStatus.value?.lastScanAt ?? ""}|${weeklyScanStatus.value?.scanning ?? ""}`,
+    () => void loadTrustlineViews(),
+  );
+
+  /** Trigger the weekly scan now (background); status streams over SSE, then the
+   *  watcher above re-fetches this user's views when it completes. */
+  async function runTrustlineScan(): Promise<boolean> {
+    trustlineScanError.value = "";
+    const r = await api.runTrustlineScan();
+    if (r.error) {
+      trustlineScanError.value = r.error;
+      return false;
+    }
+    return true;
+  }
+  /** Dismiss a suggestion until the next scan, then re-fetch this user's views. */
+  async function dismissTrustlineSuggestion(asset: string): Promise<void> {
+    await api.dismissTrustlineSuggestion(asset).catch(() => {});
+    await loadTrustlineViews();
+  }
+  /** Snooze a deterioration warning for 7 days, then re-fetch this user's views. */
+  async function snoozeTrustlineWarning(asset: string): Promise<void> {
+    await api.snoozeTrustlineWarning(asset).catch(() => {});
+    await loadTrustlineViews();
+  }
+
   // --- wallet: send / swap / claimable ---
   async function loadClaimables(): Promise<void> {
     try {
@@ -1098,6 +1165,18 @@ export const useTraderStore = defineStore("trader", () => {
     loadTrustlines,
     addTrustline,
     removeTrustline,
+    // Feature 4: AI trustline suggestions / warnings (per-user, fetched)
+    trustlineSuggestions,
+    trustlineWarnings,
+    weeklyScanStatus,
+    loadTrustlineViews,
+    trustlinePrefill,
+    prefillTrustline,
+    clearTrustlinePrefill,
+    trustlineScanError,
+    runTrustlineScan,
+    dismissTrustlineSuggestion,
+    snoozeTrustlineWarning,
     claimables,
     walletError,
     swapQuoteResult,

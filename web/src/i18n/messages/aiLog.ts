@@ -24,6 +24,7 @@ export default {
       trailUpdate: "Trail Update",
       cooldown: "Cooldown",
       riskProfile: "Risk Profile",
+      trustline: "Trustline",
     },
     col: {
       timestamp: "Timestamp",
@@ -61,6 +62,7 @@ export default {
       trailUpdate: "Trail-update",
       cooldown: "Afkoeltijd",
       riskProfile: "Risicoprofiel",
+      trustline: "Trustline",
     },
     col: {
       timestamp: "Tijdstempel",
@@ -98,6 +100,7 @@ export default {
       trailUpdate: "Mise à jour du trailing",
       cooldown: "Temps de récupération",
       riskProfile: "Profil de risque",
+      trustline: "Ligne de confiance",
     },
     col: {
       timestamp: "Horodatage",
@@ -135,6 +138,7 @@ export default {
       trailUpdate: "Actualización del trailing",
       cooldown: "Tiempo de enfriamiento",
       riskProfile: "Perfil de riesgo",
+      trustline: "Línea de confianza",
     },
     col: {
       timestamp: "Marca de tiempo",

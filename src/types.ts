@@ -194,7 +194,9 @@ export type AiLogEventType =
   | "stop_loss"
   | "trail_update"
   | "cooldown"
-  | "risk_profile";
+  | "risk_profile"
+  /** Feature 4: weekly trustline scan lifecycle + deterioration warnings. */
+  | "trustline";
 
 export interface AiLogEntry {
   id: string;
@@ -410,6 +412,147 @@ export interface LiquidityRec {
   recommended: boolean;
 }
 
+/* ------------------------------------------------------------------ *
+ * Feature 4 — AI trustline suggestions (bidirectional).
+ *
+ * A weekly background scan analyses the top Stellar tokens (+ the tokens the
+ * user already trusts), scores each as a trustline candidate via the AI, and
+ * persists a snapshot per token (>=12 weeks history). From those snapshots it
+ * derives SUGGESTIONS (good tokens the user does not yet hold) and WARNINGS
+ * (held tokens whose metrics are deteriorating). It NEVER adds or removes a
+ * trustline - it only informs; the user decides.
+ * ------------------------------------------------------------------ */
+
+/** 7-day price direction derived from daily candles. */
+export type PriceTrend = "up" | "stable" | "down";
+
+/** Best-effort project metadata pulled from the issuer's stellar.toml. */
+export interface TokenTomlMeta {
+  projectName?: string;
+  description?: string;
+  website?: string;
+  /** The issuer's stated trustline conditions, if published. */
+  conditions?: string;
+  image?: string;
+  /** Documentation / social links discovered in the TOML (deduped). */
+  links?: string[];
+}
+
+/**
+ * Raw, pre-AI market + chain data collected for one token in a weekly scan.
+ * All metric fields are nullable: Horizon / TOML lookups are best-effort and a
+ * missing value is itself a signal (e.g. tomlMissing is a red-flag input).
+ */
+export interface TokenRawData {
+  /** 24h base-asset volume on the XLM pair (Horizon trade aggregations). */
+  volume24h: number | null;
+  /** 7d base-asset volume on the XLM pair. */
+  volume7d: number | null;
+  /** Distinct trader accounts seen in recent XLM-pair trades (approximation). */
+  activeTraders: number | null;
+  /** Sum of the top-10 bid + ask amounts (base units) - real book depth. */
+  orderBookDepth: number | null;
+  /** Top-of-book spread as a percentage. */
+  spreadPct: number | null;
+  priceTrend7d: PriceTrend | null;
+  /** Accounts holding a trustline (Horizon /assets num_accounts). */
+  trustlineCount: number | null;
+  /** The issuer account's home_domain (Horizon /accounts), if any. */
+  homeDomain: string | null;
+  /** Resolved project metadata, when a stellar.toml was reachable. */
+  toml?: TokenTomlMeta;
+  /** True when no stellar.toml could be resolved (anonymous / undocumented). */
+  tomlMissing: boolean;
+}
+
+/**
+ * The AI's structured evaluation of a token as a trustline candidate. Every
+ * score is 1-10. For riskScore, HIGHER = SAFER (10 = lowest risk), so all four
+ * scores and the overall are monotonic "higher is better" for the UI.
+ */
+export interface TokenScores {
+  liquidityScore: number;
+  legitimacyScore: number;
+  trendScore: number;
+  /** 1 = very risky, 10 = very safe. */
+  riskScore: number;
+  overallScore: number;
+  /** 2-3 sentence plain-language summary explaining the score. */
+  summary: string;
+  /** Red flags detected (no TOML, anonymous issuer, volume spike, ...). */
+  redFlags: string[];
+}
+
+/** One persisted weekly scan result for a token (a row in dbo.TrustlineScans). */
+export interface TokenScanResult extends TokenScores {
+  /** ISO timestamp of the scan that produced this row. */
+  scanDate: string;
+  /** Canonical "CODE:ISSUER". */
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  /** The full raw data snapshot the AI scored (persisted for audit + history). */
+  rawData: TokenRawData;
+  /** True when the user held a trustline for this token at scan time. */
+  held: boolean;
+}
+
+/** A suggestion card: a top token the user does NOT yet have a trustline for. */
+export interface TrustlineSuggestion {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  scanDate: string;
+  scores: TokenScores;
+  homeDomain: string | null;
+  toml?: TokenTomlMeta;
+}
+
+/** Which deterioration rule fired for a held token (spec 4C triggers). */
+export type WarningTrigger =
+  | "score_drop"
+  | "liquidity_low"
+  | "volume_drop"
+  | "new_red_flags"
+  | "trustline_count_drop"
+  | "toml_lost"
+  | "trend_down";
+
+/** A warning card: a held token whose metrics are deteriorating week-over-week. */
+export interface TrustlineWarning {
+  asset: string;
+  assetCode: string;
+  assetIssuer: string;
+  scanDate: string;
+  triggers: WarningTrigger[];
+  /** Human-readable lines naming the metric(s) that crossed a threshold. */
+  changed: string[];
+  previousOverall: number | null;
+  currentOverall: number;
+  /** The AI summary for the current scan (why it's flagged). */
+  explanation: string;
+  /** User's current held balance of this token (decimal string). */
+  balance: string;
+  /** Estimated value of the holding in XLM, when priceable. */
+  estimatedValueXlm: number | null;
+  redFlags: string[];
+}
+
+/** Weekly-scan schedule + status surfaced to the dashboard. */
+export interface WeeklyScanStatus {
+  enabled: boolean;
+  /** ISO of the last completed scan, or null if it has never run. */
+  lastScanAt: string | null;
+  /** ISO of the next scheduled scan (next day-of-week/time occurrence). */
+  nextScanAt: string | null;
+  /** True while a scan is currently running. */
+  scanning: boolean;
+  /** Tokens analysed in the last scan. */
+  lastScanTokenCount: number | null;
+  /** Last scan error message, if the last run failed. */
+  lastError: string | null;
+}
+
 /** A page of persisted trades for the history table. */
 export interface TradesPage {
   rows: TradeProposal[];
@@ -497,6 +640,11 @@ export interface Snapshot {
   /** Feature 2: live value of every UI-editable operational setting (key ->
    *  current value). Metadata/bounds come from GET /api/settings. */
   settings: Record<string, number | boolean>;
+  /** Feature 4: weekly trustline-scan schedule + status only. The per-user
+   *  suggestion + warning VIEWS are fetched on demand (GET
+   *  /api/trustline-scan/views), never broadcast — a token is AI-scored once
+   *  globally, then compared to each user's own trustlines without AI. */
+  weeklyScanStatus: WeeklyScanStatus;
 }
 
 /** Per-factor risk level. LOW reproduces the current (most conservative)

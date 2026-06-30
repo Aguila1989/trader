@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import helmet from "helmet";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -40,6 +41,17 @@ import {
   stopLiquidityScanner,
   getLiquidityRecommendations,
 } from "./trading/liquidityScanner";
+import {
+  startTrustlineScanner,
+  stopTrustlineScanner,
+  runTrustlineScanNow,
+  computeUserViews,
+} from "./trading/trustlineScanner";
+import { runWithUserId, DEFAULT_USER_ID } from "./users/context";
+import {
+  insertTrustlineDismissal,
+  listTrustlineScansForAsset,
+} from "./db/repo";
 import {
   getBalances,
   getMarketSnapshot,
@@ -1335,6 +1347,93 @@ app.post("/api/scan", async (_req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ *
+ * Feature 4 — AI trustline suggestions. These endpoints are READ + metadata
+ * only: they trigger an observe-only scan, snooze/dismiss cards, or read scan
+ * history. They perform NO on-chain action - the only on-chain step ("Add
+ * Trustline" on a suggestion card) reuses the existing SEC-01-gated
+ * POST /api/trustlines, so no new egress surface is introduced. All are
+ * default-deny (mounted after requireAuth; absent from PUBLIC_API_PATHS). The
+ * scan + dismissals operate as DEFAULT_USER_ID (the single-operator account the
+ * background loops run as), so manual + scheduled scans share one history.
+ * ------------------------------------------------------------------ */
+
+// "Run Now": trigger an immediate weekly scan in the background. Returns at once;
+// progress + results stream over SSE (weeklyScanStatus.scanning -> suggestions/
+// warnings). The scan itself makes the AI calls (gated by the AI master switch).
+app.post("/api/trustline-scan/run-now", (_req, res) => {
+  if (!ensureAiEnabled(res)) return;
+  if (store.snapshot().weeklyScanStatus.scanning) {
+    res.status(409).json({ error: "A trustline scan is already running." });
+    return;
+  }
+  // Fire-and-forget: errors are logged + surfaced in weeklyScanStatus.lastError.
+  void runTrustlineScanNow().catch(() => {});
+  res.json({ started: true });
+});
+
+// This user's own suggestion + warning cards: the shared scored set diffed
+// against THIS user's trustlines + dismissals. No AI, no user data leaves the
+// server, runs in the requesting user's scope (currentUserId via requireAuth).
+app.get("/api/trustline-scan/views", async (_req, res) => {
+  try {
+    res.json(await computeUserViews());
+  } catch (err) {
+    failGeneric(res, err, 500);
+  }
+});
+
+// Dismiss a suggestion until the next weekly scan (per user). The client re-fetches
+// its views afterwards; dismissals are scoped to the requesting user (currentUserId).
+app.post("/api/trustline-suggestions/dismiss", async (req, res) => {
+  const asset = String(req.body?.asset ?? "").trim();
+  if (!asset) {
+    res.status(400).json({ error: "asset is required" });
+    return;
+  }
+  try {
+    await insertTrustlineDismissal({ id: randomUUID(), asset, kind: "suggestion" });
+    res.json({ ok: true });
+  } catch (err) {
+    store.log("error", `Trustline suggestion dismiss failed: ${(err as Error).message}`);
+    failGeneric(res, err, 500);
+  }
+});
+
+// Snooze a deterioration warning for 7 days (per user).
+app.post("/api/trustline-warnings/snooze", async (req, res) => {
+  const asset = String(req.body?.asset ?? "").trim();
+  if (!asset) {
+    res.status(400).json({ error: "asset is required" });
+    return;
+  }
+  try {
+    const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    await insertTrustlineDismissal({ id: randomUUID(), asset, kind: "warning", expiresAt });
+    res.json({ ok: true });
+  } catch (err) {
+    store.log("error", `Trustline warning snooze failed: ${(err as Error).message}`);
+    failGeneric(res, err, 500);
+  }
+});
+
+// Per-token weekly score history (newest first) - powers the 12-week trend view.
+app.get("/api/trustline-scan/history", async (req, res) => {
+  const asset = String(req.query?.asset ?? "").trim();
+  if (!asset) {
+    res.status(400).json({ error: "asset query parameter is required" });
+    return;
+  }
+  try {
+    const rows = await runWithUserId(DEFAULT_USER_ID, () =>
+      listTrustlineScansForAsset(asset, 12),
+    );
+    res.json({ asset, history: rows });
+  } catch (err) {
+    failGeneric(res, err, 500);
+  }
+});
+
 // Place a MANUAL limit order. Runs the SAME policy + preflight + live-arm gates
 // as any trade (it just skips the AI auto-approve/conviction routing). Returns
 // the resulting proposal (submitted / blocked+violations / pending_approval).
@@ -1573,6 +1672,9 @@ function restartLoopForSetting(key: string): void {
       break;
     case "liquidity":
       startLiquidityScanner();
+      break;
+    case "trustline":
+      startTrustlineScanner();
       break;
     default:
       break; // "wallet" (frontend) or non-loop setting: nothing to restart
@@ -1857,6 +1959,7 @@ async function start(): Promise<void> {
     startAutoPilot();
     startMonitor();
     startLiquidityScanner();
+    startTrustlineScanner();
     // Feature 2: keep dbo.AuthSessions from growing unbounded. Purge expired
     // sessions at boot and every 12h. Unref'd so it never holds the process open.
     void purgeExpiredSessions().catch(() => {});
@@ -1911,6 +2014,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     stopAutoPilot();
     stopMonitor();
     stopLiquidityScanner();
+    stopTrustlineScanner();
     void closeDb().finally(() => process.exit(0));
   });
 }

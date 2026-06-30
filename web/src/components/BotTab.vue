@@ -8,6 +8,8 @@ import SettingsPanel from "./SettingsPanel.vue";
 import ProposalsPanel from "./ProposalsPanel.vue";
 import StopLossPanel from "./StopLossPanel.vue";
 import LiquidityPanel from "./LiquidityPanel.vue";
+import TrustlineWarningsPanel from "./TrustlineWarningsPanel.vue";
+import TrustlineSuggestionsPanel from "./TrustlineSuggestionsPanel.vue";
 import AlertsPanel from "./AlertsPanel.vue";
 import HistoryTable from "./HistoryTable.vue";
 </script>
@@ -19,6 +21,9 @@ import HistoryTable from "./HistoryTable.vue";
   <SettingsPanel />
   <ProposalsPanel />
   <StopLossPanel mode="ai" />
+  <!-- Feature 4: deterioration warnings first (held tokens), then add-suggestions. -->
+  <TrustlineWarningsPanel />
+  <TrustlineSuggestionsPanel />
   <LiquidityPanel />
   <AlertsPanel />
   <HistoryTable source="bot" />

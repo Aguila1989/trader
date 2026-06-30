@@ -40,6 +40,44 @@ export function dayStartUtc(d: Date = new Date()): Date {
   return new Date(guess.getTime() - offsetMin * 60_000);
 }
 
+/**
+ * The next UTC instant at which the LOCAL clock in config.timezone reads weekday
+ * `dayOfWeek` (0=Sun … 6=Sat) at `minuteOfDay` minutes after midnight, strictly
+ * AFTER `from`. Used by the Feature 4 weekly trustline-scan scheduler so the
+ * scan always fires at a fixed local weekday + time. DST-aware: the local
+ * time-of-day is held across transitions (the same <=1h edge tolerance as
+ * dayStartUtc). Falls back to "one week out" only if no slot is found in 8 days.
+ */
+export function nextWeeklyOccurrenceUtc(
+  dayOfWeek: number,
+  minuteOfDay: number,
+  from: Date = new Date(),
+): Date {
+  const dow = (((Math.round(dayOfWeek) % 7) + 7) % 7);
+  const mod = Math.min(1439, Math.max(0, Math.round(minuteOfDay)));
+  const hour = Math.floor(mod / 60);
+  const minute = mod % 60;
+  for (let addDays = 0; addDays <= 8; addDays++) {
+    const probe = new Date(from.getTime() + addDays * 86_400_000);
+    const ymd = dayKey(probe); // local calendar day (YYYY-MM-DD) in config.timezone
+    // Weekday of a calendar date is zone-independent; read it off UTC midnight.
+    const wd = new Date(`${ymd}T00:00:00.000Z`).getUTCDay();
+    if (wd !== dow) continue;
+    const utc = localWallClockToUtc(ymd, hour, minute);
+    if (utc.getTime() > from.getTime()) return utc;
+  }
+  return new Date(from.getTime() + 7 * 86_400_000);
+}
+
+/** UTC instant when local time in config.timezone is `ymd` at hour:minute. */
+function localWallClockToUtc(ymd: string, hour: number, minute: number): Date {
+  const hh = String(hour).padStart(2, "0");
+  const mm = String(minute).padStart(2, "0");
+  const guess = new Date(`${ymd}T${hh}:${mm}:00.000Z`);
+  const offsetMin = tzOffsetMinutes(guess, config.timezone);
+  return new Date(guess.getTime() - offsetMin * 60_000);
+}
+
 /** Offset of `tz` at instant `d`, in minutes east of UTC (e.g. -240 for EDT). */
 function tzOffsetMinutes(d: Date, tz: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {

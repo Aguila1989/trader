@@ -465,6 +465,93 @@ export async function listAssets(
   return out;
 }
 
+/** Per-asset stats from Horizon's /assets endpoint for ONE specific asset. */
+export interface AssetStat {
+  /** Trustlines holding this asset (the "accounts" / num_accounts field). */
+  numAccounts: number;
+  /** Total amount issued (decimal string), best-effort. */
+  amount: string | null;
+  /** True when the issuer's auth_required flag is set. */
+  authRequired: boolean;
+}
+
+/**
+ * Trustline count + issuance for a SINGLE asset (Feature 4). Queries Horizon
+ * /assets filtered by code + issuer (exact match), returning the first record.
+ * Best-effort: returns null when the asset is unknown or the call fails.
+ */
+export async function getAssetStat(
+  code: string,
+  issuer: string,
+): Promise<AssetStat | null> {
+  try {
+    const page = await horizon.assets().forCode(code).forIssuer(issuer).limit(1).call();
+    const rec = (page.records as unknown as RawAssetRecord[])[0];
+    if (!rec) return null;
+    const flags = (rec as unknown as { flags?: { auth_required?: boolean } }).flags;
+    return {
+      numAccounts: Number(rec.num_accounts ?? 0) || 0,
+      amount: rec.amount ?? null,
+      authRequired: flags?.auth_required === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The issuer account's home_domain (Feature 4). The home domain lives on the
+ * ACCOUNT, not on the /assets record, so we load the issuer account. Best-effort:
+ * returns null when the account can't be loaded or has no home_domain.
+ */
+export async function getIssuerHomeDomain(issuer: string): Promise<string | null> {
+  try {
+    const account = await horizon.loadAccount(issuer);
+    const hd = (account as unknown as { home_domain?: string }).home_domain;
+    return hd && hd.trim() ? hd.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+interface TraderTradeLike {
+  base_account?: string;
+  counter_account?: string;
+}
+
+/**
+ * Approximate count of distinct trader accounts active on the base/quote pair
+ * over the most recent `sample` trades (Feature 4). NOTE: this is a recent-flow
+ * proxy, NOT all-time unique traders, and is distinct from a token's trustline
+ * (holder) count. Best-effort: returns null when the pair has no trade history.
+ */
+export async function countRecentTraders(
+  baseSpec: string,
+  quoteSpec: string,
+  sample = 200,
+): Promise<number | null> {
+  try {
+    const base = parseAsset(baseSpec);
+    const quote = parseAsset(quoteSpec);
+    const page = await horizon
+      .trades()
+      .forAssetPair(base, quote)
+      .order("desc")
+      .limit(Math.min(Math.max(sample, 1), 200))
+      .call();
+    const records = page.records as unknown as TraderTradeLike[];
+    if (records.length === 0) return null;
+    const accounts = new Set<string>();
+    for (const t of records) {
+      if (t.base_account) accounts.add(t.base_account);
+      if (t.counter_account) accounts.add(t.counter_account);
+    }
+    return accounts.size;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Orderbook + recent trades + 24h summary for the base/quote pair.
  * Prices are quote units per 1 base unit:

@@ -47,6 +47,7 @@ import type {
   StopLossAuditRow,
   TradeProposal,
   TradesPage,
+  WeeklyScanStatus,
 } from "../types";
 
 const MAX_LOGS = 200;
@@ -188,6 +189,19 @@ class Store {
   private liquidityMem: LiquiditySnapshotRow[] = [];
   /** Active price alerts (observe-only). */
   private priceAlerts: PriceAlert[] = [];
+
+  /** Feature 4: weekly trustline-scan STATUS only (schedule + scanning flag).
+   *  This rides the global snapshot so every client knows when a scan ran; the
+   *  per-user suggestion/warning VIEWS are computed on demand in the requesting
+   *  user's scope (GET /api/trustline-scan/views) and never broadcast. */
+  private weeklyScanStatus: WeeklyScanStatus = {
+    enabled: config.trustlineScan.enabled,
+    lastScanAt: null,
+    nextScanAt: null,
+    scanning: false,
+    lastScanTokenCount: null,
+    lastError: null,
+  };
 
   /** Serializes DB writes so an insert always lands before its updates. */
   private writeChain: Promise<void> = Promise.resolve();
@@ -689,6 +703,16 @@ class Store {
     return this.liquidityRecs;
   }
 
+  /* ---- Feature 4: weekly trustline-scan status ------------------------- *
+   * The scanner publishes only the STATUS here (schedule + scanning flag); it
+   * rides the global snapshot so every client is told when a scan completes and
+   * can re-fetch its OWN per-user views. */
+
+  setWeeklyScanStatus(status: WeeklyScanStatus): void {
+    this.weeklyScanStatus = status;
+    this.emit("state", this.snapshot());
+  }
+
   /** Liquidity history (for the analyzer + GET /api/liquidity). DB or memory. */
   async getLiquidityHistory(opts: {
     since?: string;
@@ -1044,6 +1068,9 @@ class Store {
       // Feature 2: live values of every UI-editable operational setting, so the
       // Settings panel + dependent components (e.g. wallet refresh) react.
       settings: currentSettingsMap(),
+      // Feature 4: weekly-scan STATUS only (schedule + scanning). The per-user
+      // suggestion/warning views are fetched on demand, never broadcast.
+      weeklyScanStatus: this.weeklyScanStatus,
     };
   }
 }

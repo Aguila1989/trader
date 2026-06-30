@@ -33,6 +33,7 @@ const EVENT_TYPES = [
   ["trail_update", "trailUpdate"],
   ["cooldown", "cooldown"],
   ["risk_profile", "riskProfile"],
+  ["trustline", "trustline"],
 ] as const;
 
 async function load(): Promise<void> {
