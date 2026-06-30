@@ -4,6 +4,7 @@ import { dayKey, dayStartUtc } from "../time";
 import { aiReady, aiModel, aiProviderId, availableProviders, setActiveProvider } from "../ai";
 import { signerPublicKey } from "../stellar/signer";
 import { dbReady } from "../db/pool";
+import { runWithUserId, DEFAULT_USER_ID } from "../users/context";
 import * as repo from "../db/repo";
 import {
   ledger,
@@ -328,7 +329,13 @@ class Store {
       const id = randomUUID();
       this.persist(async () => {
         try {
-          await repo.insertLog(entry, id);
+          // Operator-global: the log streams (Logs/TradeLog/AiLog) are shared
+          // operational telemetry — already broadcast to every SSE client
+          // regardless of user. Background loops + boot run as DEFAULT_USER_ID,
+          // so persist + read them ALL under DEFAULT_USER_ID; otherwise a
+          // logged-in operator (a different, random registered userId) would
+          // never see the boot/monitor/scanner logs written by the loops.
+          await runWithUserId(DEFAULT_USER_ID, () => repo.insertLog(entry, id));
         } catch (err) {
           this.persistingLog = true;
           console.error(`Log persistence failed: ${(err as Error).message}`);
@@ -348,7 +355,8 @@ class Store {
     this.tradeLog.unshift(entry);
     if (this.tradeLog.length > MAX_TRADELOG_MEM) this.tradeLog.length = MAX_TRADELOG_MEM;
     this.emit("tradelog", entry);
-    this.persist(() => repo.insertTradeLog(entry));
+    // Operator-global scope (see log() above): always DEFAULT_USER_ID.
+    this.persist(() => runWithUserId(DEFAULT_USER_ID, () => repo.insertTradeLog(entry)));
     return entry;
   }
 
@@ -362,13 +370,14 @@ class Store {
     this.aiLog.unshift(entry);
     if (this.aiLog.length > MAX_AILOG_MEM) this.aiLog.length = MAX_AILOG_MEM;
     this.emit("ailog", entry);
-    this.persist(() => repo.insertAiLog(entry));
+    // Operator-global scope (see log() above): always DEFAULT_USER_ID.
+    this.persist(() => runWithUserId(DEFAULT_USER_ID, () => repo.insertAiLog(entry)));
     return entry;
   }
 
   /** Paginated trade-log page (DB when available, else the in-memory ring). */
   async getTradeLogPage(q: repo.TradeLogQuery): Promise<TradeLogPage> {
-    if (dbReady()) return repo.listTradeLog(q);
+    if (dbReady()) return runWithUserId(DEFAULT_USER_ID, () => repo.listTradeLog(q));
     const f = this.tradeLog.filter(
       (r) =>
         (!q.initiator || r.initiator === q.initiator) &&
@@ -382,7 +391,7 @@ class Store {
 
   /** Paginated AI-log page (DB when available, else the in-memory ring). */
   async getAiLogPage(q: repo.AiLogQuery): Promise<AiLogPage> {
-    if (dbReady()) return repo.listAiLog(q);
+    if (dbReady()) return runWithUserId(DEFAULT_USER_ID, () => repo.listAiLog(q));
     const f = this.aiLog.filter(
       (r) =>
         (!q.eventType || r.eventType === q.eventType) &&
@@ -763,7 +772,7 @@ class Store {
     q?: string;
     since?: string;
   }): Promise<LogsPage> {
-    if (dbReady()) return repo.listLogs(opts);
+    if (dbReady()) return runWithUserId(DEFAULT_USER_ID, () => repo.listLogs(opts));
     const limit = Math.min(Math.max(opts.limit, 1), 500);
     const offset = Math.max(opts.offset, 0);
     const q = opts.q ? opts.q.toLowerCase() : undefined;
