@@ -60,6 +60,9 @@ export interface Chapter {
   title: string;
   /** 1–2 line summary shown on the chapter card. */
   description: string;
+  /** Optional per-chapter "Who is this for?" one-liner; falls back to the
+   *  per-level line (academy.whoFor.<LEVEL>) on the card when absent. */
+  whoFor?: string;
   lessons: Lesson[];
   quiz: QuizQuestion[];
 }
