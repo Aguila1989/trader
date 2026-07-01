@@ -330,6 +330,21 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_AiLog_net_ts ON dbo.AiLog (network, ts DESC);
     END
 
+    -- Portfolio value snapshots over time (drives the "Portfolio Value Over
+    -- Time" chart). One row per throttled refresh. userId is added by
+    -- ensureUserScoping (PortfolioSnapshots is in USER_SCOPED_TABLES).
+    IF OBJECT_ID('dbo.PortfolioSnapshots', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.PortfolioSnapshots (
+        id        NVARCHAR(64)  NOT NULL CONSTRAINT PK_PortfolioSnapshots PRIMARY KEY,
+        ts        DATETIME2(3)  NOT NULL,
+        network   NVARCHAR(16)  NOT NULL,
+        totalUsd  DECIMAL(38,7) NULL,
+        totalXlm  DECIMAL(38,7) NOT NULL
+      );
+      CREATE INDEX IX_PortfolioSnapshots_net_ts ON dbo.PortfolioSnapshots (network, ts DESC);
+    END
+
     -- Per-user wallets (Feature 3). Stores ONLY the AES-256-GCM-encrypted
     -- Stellar secret (base64 blob = version|salt|iv|tag|ciphertext) + the public
     -- key, never plaintext. status: 'pending' (created, last-4 not confirmed) ->
@@ -507,6 +522,7 @@ const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
   { table: "StopLossAudit", orderCol: "ts" },
   { table: "TradeLog", orderCol: "ts" },
   { table: "AiLog", orderCol: "ts" },
+  { table: "PortfolioSnapshots", orderCol: "ts" },
   { table: "Wallets", orderCol: "createdAt" },
   { table: "TrustlineScans", orderCol: "scanDate" },
   { table: "TrustlineDismissals", orderCol: "createdAt" },

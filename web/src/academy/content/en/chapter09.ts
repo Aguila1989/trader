@@ -63,6 +63,19 @@ export const chapter09: Chapter = {
       example:
         "Over one day the Bot tab shows ten closed trades with 12 USDC realized profit and an open position up 5 USDC unrealized. The Manual tab shows three trades with 4 USDC realized loss. Total realized is 8 USDC up, but the split reveals the bot earned 12 while your manual trades lost 4. The honest read is to let the bot keep working and review why your manual entries underperformed.",
     },
+    {
+      id: "c9-l6",
+      title: "Reading the portfolio evolution graph",
+      paragraphs: [
+        "The evolution graph plots your total portfolio value, in USDC, over time. Each point is a snapshot of everything you held at that moment, priced and summed the way earlier lessons described. Read left to right and you are watching the story of your account: where it started, where it is now, and how bumpy the road between them was.",
+        "The single most important skill is separating two very different reasons the line can rise. Price appreciation is your existing holdings gaining value, and it shows up as a smooth-ish slope that tracks the market. Adding funds is money you deposited, and it shows up as a sudden vertical jump that no market move could explain. A leap from 100 to 300 USDC in one step is almost certainly a deposit, not a 200 percent rally, so do not credit the AI for it.",
+        "The shape of the line tells you about risk. A flat, level line means your value is holding steady, with little happening in either direction. A jagged line with big peaks and deep troughs means high volatility: larger swings, which are both more opportunity and more risk. Neither is automatically good; a flat line during a market rally may mean you are sitting in stablecoins and missing moves, while a violent line may mean you are taking on more than you intended.",
+        "Timeframe changes the whole story, so always check which one you are viewing. A 24-hour window is mostly noise: normal intraday wiggles look dramatic when zoomed in that far. A 1-year view smooths that noise into a genuine trend, showing whether the account is actually growing, drifting, or bleeding over the long run. Judge performance on the long timeframe and use the short one only to understand today.",
+        "Put together, the graph is how you judge whether the AI is really growing the portfolio. Mentally subtract every deposit jump, then ask if the remaining slope trends up over a meaningful window. If the line only climbs because you keep adding money, the strategy is not working, no matter how green the total looks.",
+      ],
+      example:
+        "Your 90-day evolution line starts at 200 USDC, rises smoothly to 240, then jumps straight up to 440 in a single step on day 45, and ends at 455. It is tempting to call that a 127 percent gain. But the vertical jump of 200 on day 45 is a deposit, not trading profit. Strip it out and the real picture is 200 to 240 before the deposit and 440 to 455 after, roughly 20 plus 15, about 35 USDC of genuine appreciation on 400 of capital, near 9 percent. Healthy, but a far cry from 127, and only the deposit-adjusted read tells you the AI is actually working.",
+    },
   ],
   quiz: [
     {
@@ -165,6 +178,52 @@ export const chapter09: Chapter = {
         },
       ],
       correctIndex: 0,
+    },
+    {
+      id: "c9-q5",
+      prompt:
+        "On the evolution graph the line jumps straight up from 100 to 300 USDC in a single step. What most likely happened?",
+      options: [
+        {
+          text: "You added funds; a sudden vertical jump is a deposit, not price appreciation.",
+          explanation:
+            "Correct. Deposits appear as instant vertical steps, while price appreciation shows as a slope that tracks the market, so this jump should not be credited to the AI.",
+        },
+        {
+          text: "The AI tripled your money in an instant through trading.",
+          explanation:
+            "Incorrect. Trading gains accrue as a slope over time, not a single vertical leap; a jump like this is almost always a deposit.",
+        },
+        {
+          text: "The graph is broken and the number should be ignored.",
+          explanation:
+            "Incorrect. The jump is real and meaningful, it just reflects new money you added rather than a market move.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c9-q6",
+      prompt:
+        "You want to judge whether the AI is genuinely growing the portfolio. Which reading is most reliable?",
+      options: [
+        {
+          text: "The 24-hour line, because it updates most often.",
+          explanation:
+            "Incorrect. A 24-hour window is mostly intraday noise; short wiggles look dramatic and hide the real long-run trend.",
+        },
+        {
+          text: "The long-timeframe trend with deposit jumps mentally subtracted.",
+          explanation:
+            "Correct. A long window reveals the true trend, and removing deposit jumps shows whether growth came from the AI rather than from money you added.",
+        },
+        {
+          text: "The single highest point the line ever reached.",
+          explanation:
+            "Incorrect. One peak says nothing about the trend or about how much of the value came from deposits versus real gains.",
+        },
+      ],
+      correctIndex: 1,
     },
   ],
 };

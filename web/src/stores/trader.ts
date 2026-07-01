@@ -15,6 +15,7 @@ import type {
   OpenOffer,
   OrderbookSnapshot,
   PortfolioResponse,
+  PortfolioSnapshot,
   RiskProfile,
   SettingMeta,
   SwapAllItem,
@@ -45,7 +46,8 @@ const MAX_LOGS = 200;
 /** One combined live-log item, tagged by which structured stream it came from. */
 export type LiveLogItem =
   | { stream: "trade"; entry: TradeLogEntry }
-  | { stream: "ai"; entry: AiLogEntry };
+  | { stream: "ai"; entry: AiLogEntry }
+  | { stream: "system"; entry: LogEntry };
 
 export const useTraderStore = defineStore("trader", () => {
   // --- live state mirrored from the backend ---
@@ -69,6 +71,7 @@ export const useTraderStore = defineStore("trader", () => {
   const swapQuoteResult = ref<SwapQuote | null>(null);
   const portfolio = ref<PortfolioResponse | null>(null);
   const portfolioLoading = ref(false);
+  const portfolioHistory = ref<PortfolioSnapshot[]>([]);
   const alertError = ref("");
 
   // --- Feature 2: operational settings catalog (metadata + bounds) ---
@@ -83,13 +86,15 @@ export const useTraderStore = defineStore("trader", () => {
   // --- open orders (resting offers) ---
   const openOffers = ref<OpenOffer[]>([]);
 
-  // --- active dashboard tab (persisted) ---
+  // --- Trading page sub-tab: Manual vs Bot (persisted) ---
+  // Top-level navigation (Trading / Receive & Send / Pending / Logs / Academy)
+  // is now real router routes; this only switches the two tabs WITHIN the
+  // Trading page. "logs" is no longer a value here — Logs is its own route.
   const TAB_KEY = "trader_active_tab";
-  type MainTab = "manual" | "bot" | "logs";
+  type MainTab = "manual" | "bot";
   function readTab(): MainTab {
     try {
-      const t = localStorage.getItem(TAB_KEY);
-      return t === "bot" || t === "logs" ? t : "manual";
+      return localStorage.getItem(TAB_KEY) === "bot" ? "bot" : "manual";
     } catch {
       return "manual";
     }
@@ -103,11 +108,13 @@ export const useTraderStore = defineStore("trader", () => {
       /* private mode / storage disabled — tab still works for the session */
     }
   }
-  // Deep-link target for "click a live-log entry -> open it in the Logs tab".
-  const logsFocus = ref<{ sub: "trade" | "ai"; id: string } | null>(null);
-  function focusLog(sub: "trade" | "ai", id: string): void {
+  // Deep-link target for "click a live-log entry -> open it in the Logs page".
+  // Setting this is enough; the Logs page reads it on mount and the tables watch
+  // it. Navigation to /logs is done by the caller (the live log lives on the
+  // Trading page, so it router.push-es to /logs before/after setting this).
+  const logsFocus = ref<{ sub: "trade" | "ai" | "system"; id: string } | null>(null);
+  function focusLog(sub: "trade" | "ai" | "system", id: string): void {
     logsFocus.value = { sub, id };
-    setActiveTab("logs");
   }
 
   // --- live log: last 20 combined trade+AI events (seeded from the persisted
@@ -119,10 +126,11 @@ export const useTraderStore = defineStore("trader", () => {
   }
   async function loadLiveLog(): Promise<void> {
     try {
-      const { trades, ai } = await api.logLive(LIVE_CAP);
+      const { trades, ai, system } = await api.logLive(LIVE_CAP);
       const merged: LiveLogItem[] = [
         ...trades.map((entry) => ({ stream: "trade" as const, entry })),
         ...ai.map((entry) => ({ stream: "ai" as const, entry })),
+        ...(system ?? []).map((entry) => ({ stream: "system" as const, entry })),
       ].sort((a, b) => (a.entry.ts < b.entry.ts ? 1 : -1));
       liveLog.value = merged.slice(0, LIVE_CAP);
     } catch {
@@ -218,7 +226,10 @@ export const useTraderStore = defineStore("trader", () => {
   // --- token lookup helpers (shared by the asset dropdowns) ---
   const universeBySpec = computed(() => {
     const m = new Map<string, UniverseToken>();
-    for (const t of universe.value) m.set(t.spec.toUpperCase(), t);
+    // Defensive: never assume the ref is an array (a malformed/empty API
+    // response must not throw and freeze the app — that would break router
+    // navigation, since a throwing page can't be unmounted).
+    for (const t of universe.value ?? []) m.set(t.spec.toUpperCase(), t);
     return m;
   });
   /**
@@ -237,7 +248,7 @@ export const useTraderStore = defineStore("trader", () => {
   }
   /** Funded holdings as token options (for "things you already hold" pickers). */
   const heldTokens = computed<UniverseToken[]>(() =>
-    balances.value
+    (balances.value ?? [])
       .filter((b) => Number(b.balance) > 0 && !b.asset.startsWith("LP:"))
       .map((b) => tokenFor(b.asset)),
   );
@@ -376,8 +387,16 @@ export const useTraderStore = defineStore("trader", () => {
     });
     es.addEventListener("log", (ev) => {
       markAlive();
+      let entry: LogEntry;
+      try {
+        entry = JSON.parse((ev as MessageEvent).data) as LogEntry;
+      } catch {
+        return; // malformed payload
+      }
+      // Feed the live log so it shows real-time activity (not just executed
+      // trades). This happens even before the first snapshot arrives.
+      pushLive({ stream: "system", entry });
       if (!snapshot.value) return;
-      const entry = JSON.parse((ev as MessageEvent).data) as LogEntry;
       snapshot.value.logs.unshift(entry);
       if (snapshot.value.logs.length > MAX_LOGS) {
         snapshot.value.logs.length = MAX_LOGS;
@@ -444,7 +463,7 @@ export const useTraderStore = defineStore("trader", () => {
   async function loadSettings(): Promise<void> {
     try {
       settingsError.value = "";
-      settingsCatalog.value = (await api.getSettings()).settings;
+      settingsCatalog.value = (await api.getSettings())?.settings ?? [];
     } catch (err) {
       settingsError.value = (err as Error).message;
     }
@@ -684,9 +703,19 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
+  // Portfolio VALUE history for the "Portfolio Value Over Time" chart. Leaves
+  // the previous series in place on error (never flashes empty mid-refresh).
+  async function loadPortfolioHistory(range: string): Promise<void> {
+    try {
+      portfolioHistory.value = (await api.portfolioHistory(range)) ?? [];
+    } catch {
+      /* leave previous data */
+    }
+  }
+
   async function loadUniverse(): Promise<void> {
     try {
-      universe.value = (await api.universe()).tokens;
+      universe.value = (await api.universe())?.tokens ?? [];
     } catch {
       /* leave previous data; dropdowns fall back to bare codes */
     }
@@ -1182,7 +1211,9 @@ export const useTraderStore = defineStore("trader", () => {
     swapQuoteResult,
     portfolio,
     portfolioLoading,
+    portfolioHistory,
     loadPortfolio,
+    loadPortfolioHistory,
     universe,
     loadUniverse,
     tokenFor,

@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { randomUUID } from "node:crypto";
 import { config } from "../config";
 import { dayStartUtc } from "../time";
 import { dbReady, getPool } from "./pool";
@@ -8,6 +9,7 @@ import type {
   AiLogEntry,
   AiLogPage,
   EvolutionPoint,
+  PortfolioSnapshot,
   LiquiditySnapshotRow,
   LogEntry,
   LogLevel,
@@ -369,6 +371,68 @@ export async function listSubmittedFills(): Promise<Fill[]> {
 /** Cumulative volume / trade-count / realized-PnL over time from submitted trades. */
 export async function getEvolution(): Promise<EvolutionPoint[]> {
   return computeEvolution(await listSubmittedFills());
+}
+
+/** Persist one portfolio-value snapshot for the current user. */
+export async function insertPortfolioSnapshot(e: PortfolioSnapshot): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), randomUUID())
+    .input("ts", sql.DateTime2, new Date(e.ts))
+    .input("network", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("totalUsd", sql.Decimal(38, 7), e.totalUsd != null ? Number(e.totalUsd) : null)
+    .input("totalXlm", sql.Decimal(38, 7), Number(e.totalXlm))
+    .query(
+      `INSERT INTO dbo.PortfolioSnapshots (id, ts, network, userId, totalUsd, totalXlm)
+       VALUES (@id, @ts, @network, @userId, @totalUsd, @totalXlm);`,
+    );
+}
+
+/**
+ * Portfolio-value snapshots for the current user, oldest-first. `sinceIso` bounds
+ * the window (null = all history). When `bucketMinutes` is set, the rows are
+ * downsampled to the LAST snapshot in each fixed-size time bucket, so a long
+ * range (e.g. 1Y at 5-min cadence) returns a few hundred points, not 100k.
+ */
+export async function getPortfolioSnapshots(
+  sinceIso: string | null,
+  bucketMinutes: number | null,
+): Promise<PortfolioSnapshot[]> {
+  if (!dbReady()) return [];
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .input("since", sql.DateTime2, sinceIso ? new Date(sinceIso) : null);
+  let query: string;
+  if (bucketMinutes && bucketMinutes > 0) {
+    req.input("bucket", sql.Int, bucketMinutes);
+    query = `
+      WITH b AS (
+        SELECT ts, totalUsd, totalXlm,
+          ROW_NUMBER() OVER (
+            PARTITION BY DATEDIFF(minute, '2000-01-01', ts) / @bucket
+            ORDER BY ts DESC) AS rn
+        FROM dbo.PortfolioSnapshots
+        WHERE network = @net AND userId = @userId AND (@since IS NULL OR ts >= @since)
+      )
+      SELECT ts, totalUsd, totalXlm FROM b WHERE rn = 1 ORDER BY ts ASC;`;
+  } else {
+    query = `
+      SELECT ts, totalUsd, totalXlm FROM dbo.PortfolioSnapshots
+      WHERE network = @net AND userId = @userId AND (@since IS NULL OR ts >= @since)
+      ORDER BY ts ASC;`;
+  }
+  const rs = await req.query(query);
+  return (rs.recordset as Array<{ ts: Date | string; totalUsd: number | null; totalXlm: number }>).map(
+    (r) => ({
+      ts: (r.ts instanceof Date ? r.ts : new Date(r.ts)).toISOString(),
+      totalUsd: r.totalUsd != null ? Number(r.totalUsd) : null,
+      totalXlm: r.totalXlm != null ? Number(r.totalXlm) : 0,
+    }),
+  );
 }
 
 /** Today's submitted volume/count/last-time, to restore same-day caps on boot. */

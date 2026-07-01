@@ -4,7 +4,7 @@ import { dayKey, dayStartUtc } from "../time";
 import { aiReady, aiModel, aiProviderId, availableProviders, setActiveProvider } from "../ai";
 import { signerPublicKey } from "../stellar/signer";
 import { dbReady } from "../db/pool";
-import { runWithUserId, DEFAULT_USER_ID } from "../users/context";
+import { runWithUserId, DEFAULT_USER_ID, currentUserId } from "../users/context";
 import * as repo from "../db/repo";
 import {
   ledger,
@@ -39,6 +39,7 @@ import type {
   LogEntry,
   LogLevel,
   LogsPage,
+  PortfolioSnapshot,
   PositionSummary,
   PriceAlert,
   RiskProfile,
@@ -61,6 +62,11 @@ const MAX_TRADELOG_MEM = 500;
 const MAX_AILOG_MEM = 500;
 /** How many combined trade+AI events the live log shows. */
 const LIVE_LOG_N = 20;
+/** Portfolio snapshots: at most one per user per this interval (keeps storage
+ *  sane — ~288/day at 5 min vs ~1440/day per raw 60s refresh). */
+const SNAPSHOT_THROTTLE_MS = 5 * 60 * 1000;
+/** In-memory snapshot ring per user when no DB is configured. */
+const MAX_SNAPSHOTS_MEM = 5000;
 
 function freshDaily(): DailyState {
   return {
@@ -70,6 +76,23 @@ function freshDaily(): DailyState {
     realizedPnl: 0,
     lastTradeAt: null,
   };
+}
+
+/** Map a portfolio-history timeframe to a start bound + downsample bucket.
+ *  Short ranges stay raw; longer ranges bucket to keep point counts sane. */
+function rangeToSnapshotQuery(range: string): { since: string | null; bucketMin: number | null } {
+  const now = Date.now();
+  const ago = (ms: number): string => new Date(now - ms).toISOString();
+  const H = 3_600_000;
+  const D = 86_400_000;
+  switch (range) {
+    case "24h": return { since: ago(24 * H), bucketMin: null }; // raw (~288 max)
+    case "7d": return { since: ago(7 * D), bucketMin: 30 }; // ~336
+    case "30d": return { since: ago(30 * D), bucketMin: 180 }; // ~240
+    case "1y": return { since: ago(365 * D), bucketMin: 1440 }; // ~365 (daily)
+    case "all": return { since: null, bucketMin: 1440 }; // daily
+    default: return { since: ago(7 * D), bucketMin: 30 };
+  }
 }
 
 /** Treat a submitted proposal as a fill, preferring the ACTUAL on-chain fill
@@ -131,6 +154,10 @@ class Store {
   // these serve reads when no DB is configured and seed the live log).
   private tradeLog: TradeLogEntry[] = [];
   private aiLog: AiLogEntry[] = [];
+  // Portfolio-value snapshots: throttle timestamp + in-memory ring, both keyed
+  // by userId (per-user history, unlike the operator-global trade/AI logs).
+  private lastSnapshotAt = new Map<string, number>();
+  private memSnapshots = new Map<string, PortfolioSnapshot[]>();
   private subscribers = new Set<Response>();
 
   killSwitch = false;
@@ -402,15 +429,49 @@ class Store {
     return { rows: f.slice(q.offset, q.offset + q.limit), total: f.length, limit: q.limit, offset: q.offset };
   }
 
-  /** Last N combined trade+AI events (newest first) for the live log on mount. */
+  /** Last N combined trade+AI+system events (newest first) for the live log on
+   *  mount. Includes the operational system log so the live feed shows real
+   *  activity (AI scans, warnings, etc.), not just executed trades. */
   async recentLogEvents(
     n = LIVE_LOG_N,
-  ): Promise<{ trades: TradeLogEntry[]; ai: AiLogEntry[] }> {
-    const [t, a] = await Promise.all([
+  ): Promise<{ trades: TradeLogEntry[]; ai: AiLogEntry[]; system: LogEntry[] }> {
+    const [t, a, s] = await Promise.all([
       this.getTradeLogPage({ limit: n, offset: 0 }),
       this.getAiLogPage({ limit: n, offset: 0 }),
+      this.getLogsPage({ limit: n, offset: 0 }),
     ]);
-    return { trades: t.rows, ai: a.rows };
+    return { trades: t.rows, ai: a.rows, system: s.rows };
+  }
+
+  /**
+   * Persist a portfolio-value snapshot for the CURRENT user (per-user history).
+   * Throttled to once per SNAPSHOT_THROTTLE_MS per user so frequent refreshes
+   * don't flood the table. Called from the /api/portfolio handler, so it runs in
+   * the request's user context (currentUserId + persist() both resolve to it).
+   * The first call for a user always writes (no prior timestamp).
+   */
+  recordPortfolioSnapshot(totalUsd: number | null, totalXlm: number): void {
+    const uid = currentUserId();
+    const now = Date.now();
+    if (now - (this.lastSnapshotAt.get(uid) ?? 0) < SNAPSHOT_THROTTLE_MS) return;
+    this.lastSnapshotAt.set(uid, now);
+    const entry: PortfolioSnapshot = { ts: new Date().toISOString(), totalUsd, totalXlm };
+    // In-memory ring (the read source when no DB is configured).
+    const arr = this.memSnapshots.get(uid) ?? [];
+    arr.push(entry);
+    if (arr.length > MAX_SNAPSHOTS_MEM) arr.shift();
+    this.memSnapshots.set(uid, arr);
+    // Durable write (per-user; persist() preserves the request's userId context).
+    this.persist(() => repo.insertPortfolioSnapshot(entry));
+  }
+
+  /** Portfolio-value history for the current user over a named timeframe. */
+  async getPortfolioHistory(range: string): Promise<PortfolioSnapshot[]> {
+    const { since, bucketMin } = rangeToSnapshotQuery(range);
+    if (dbReady()) return repo.getPortfolioSnapshots(since, bucketMin);
+    // In-memory fallback: filter the ring by the window (no downsampling needed).
+    const arr = this.memSnapshots.get(currentUserId()) ?? [];
+    return since ? arr.filter((s) => s.ts >= since) : arr.slice();
   }
 
   addProposal(p: TradeProposal): void {

@@ -5,24 +5,24 @@ export default {
     logViews: "Log views",
     tradeHistory: "Trade History",
     aiLog: "AI Log",
-    systemLog: "System Log",
+    systemLog: "All Activity",
   },
   nl: {
     logViews: "Logboekweergaven",
     tradeHistory: "Handelsgeschiedenis",
     aiLog: "AI-logboek",
-    systemLog: "Systeemlogboek",
+    systemLog: "Alle activiteit",
   },
   fr: {
     logViews: "Vues du journal",
     tradeHistory: "Historique des transactions",
     aiLog: "Journal IA",
-    systemLog: "Journal système",
+    systemLog: "Toute l'activité",
   },
   es: {
     logViews: "Vistas de registro",
     tradeHistory: "Historial de transacciones",
     aiLog: "Registro de IA",
-    systemLog: "Registro del sistema",
+    systemLog: "Toda la actividad",
   },
 };

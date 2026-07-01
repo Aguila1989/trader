@@ -14,13 +14,14 @@ const props = withDefaults(
   defineProps<{
     /** Currently-selected spec ("XLM" or "CODE:ISSUER"). */
     modelValue: string;
-    /** Selectable tokens. */
-    options: UniverseToken[];
+    /** Selectable tokens. Defaults to [] so a not-yet-loaded/malformed source
+     *  never makes this picker throw (which would break router navigation). */
+    options?: UniverseToken[];
     locked?: boolean;
     placeholder?: string;
     ariaLabel?: string;
   }>(),
-  { locked: false, placeholder: undefined, ariaLabel: undefined },
+  { locked: false, placeholder: undefined, ariaLabel: undefined, options: () => [] },
 );
 
 // Default labels are translated; parents can still override via props.

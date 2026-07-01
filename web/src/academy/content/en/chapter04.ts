@@ -57,6 +57,17 @@ export const chapter04: Chapter = {
       ],
       example: "Suppose you put all 100 USDC of value into XLM and it drops 8 percent overnight; you are down 8 USDC with nothing to soften it. If instead you held 50 USDC in XLM and 50 USDC in stable USDC, the same 8 percent XLM drop costs only 4 USDC, because half your wallet never moved. Same market, half the pain.",
     },
+    {
+      id: "c4-l6",
+      title: "What does my portfolio value mean?",
+      paragraphs: [
+        "Your total portfolio value is the sum of every token you hold multiplied by its current market price, added up in a single currency, usually USDC. It is not a number you type in; the app looks at each holding, checks what one unit is worth right now, and totals everything into one figure that answers a simple question: if I sold everything at this moment, roughly how much would I have?",
+        "Because it depends on live prices, your portfolio value changes even when you do nothing. You do not have to buy or sell for the number to move; the market moves it for you. A quiet afternoon where XLM drifts up a few percent will lift your total, and a sudden dip will lower it, all while you simply watch.",
+        "The donut chart is a picture of the same value, split by holding. Each slice is one token, and the size of the slice is that token's share of your total value as a percentage. A big XLM slice next to a small USDC slice tells you, at a glance, that most of your worth is riding on XLM and would move with its price.",
+        "A helpful way to picture it: your portfolio value is like the current market price of everything in your house. Your furniture and appliances are worth something today, a bit more or less next month, even if you never buy or sell a single item. Prices drift on their own, so the total worth of what you already own keeps changing quietly in the background.",
+      ],
+      example: "You hold 100 XLM and 20 USDC. This morning 1 XLM is worth 0.10 USDC, so your XLM is worth 10 USDC and your total portfolio value is 10 plus 20, which is 30 USDC. The donut shows XLM as a 33 percent slice and USDC as 67 percent. By the afternoon XLM rises to 0.12 USDC without you touching anything: your XLM is now worth 12 USDC, your total climbs to 32 USDC, and the XLM slice quietly grows. You did not trade, yet your portfolio value changed.",
+    },
   ],
   quiz: [
     {
@@ -138,6 +149,25 @@ export const chapter04: Chapter = {
         },
       ],
       correctIndex: 1,
+    },
+    {
+      id: "c4-q5",
+      prompt: "If you hold 100 XLM and the price rises, does your portfolio value change even though you did not trade?",
+      options: [
+        {
+          text: "Yes, because portfolio value is your holdings times their current price, which moves with the market",
+          explanation: "Correct. You do not have to trade for the total to change; when the price of a token you hold moves, your portfolio value moves with it.",
+        },
+        {
+          text: "No, the value only changes when you buy or sell",
+          explanation: "Incorrect. Trading changes what you hold, but even holdings you never touch are re-priced constantly, so the total moves on its own.",
+        },
+        {
+          text: "No, the value is fixed until you refresh the page manually",
+          explanation: "Incorrect. The app re-prices on a timer against live markets, so the value reflects real price moves whether or not you refresh.",
+        },
+      ],
+      correctIndex: 0,
     },
   ],
 };

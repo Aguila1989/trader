@@ -4,12 +4,14 @@
 // (PortfolioPanel). Everything here stays visible when the user switches tabs.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
 import TopBar from "./TopBar.vue";
 import PortfolioPanel from "./PortfolioPanel.vue";
 import WalletChip from "./wallet/WalletChip.vue";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
 
 const activeStops = computed(
@@ -22,7 +24,9 @@ const killOn = computed(() => store.killSwitch);
 // Feature 4: deterioration warnings for held trustlines (always visible here).
 const trustlineWarnings = computed(() => store.trustlineWarnings.length);
 function viewWarnings(): void {
+  // Warnings live on the Bot sub-tab of the Trading page (route "/").
   store.setActiveTab("bot");
+  void router.push("/");
 }
 </script>
 

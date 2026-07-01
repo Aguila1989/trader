@@ -1,63 +1,83 @@
-// App router. Hash history so a refresh on /#/academy works under static serving
-// with no server-side route config. Feature 2 adds the auth screens and a
-// navigation guard: the Academy is the ONLY app page reachable without a login;
-// every other route bounces to /login. The dashboard + Academy are lazy-loaded.
+// App router. Hash history so a refresh on any route works under static serving
+// with no server-side route config.
+//
+// Structure (Change 1): the authenticated app is a shell (AppLayout) with the
+// sidebar + header and a nested <router-view> for each sidebar destination —
+// Trading (/), Receive & Send (/receive), Pending Payments (/pending), Logs
+// (/logs). The Academy is a child too (so it gets the sidebar) but is marked
+// meta.standalone so the trading header isn't shown over it, and meta.public so
+// it's reachable with no session. Auth screens + the wallet-setup gate render
+// standalone, outside the shell.
+//
+// Auth is determined CLIENT-SIDE from the readable session marker cookie (no API
+// call). The server still enforces auth on every API call; this guard is only UX
+// (a strict allowlist via meta.public — anything else requires a session).
 import { createRouter, createWebHashHistory } from "vue-router";
-import Dashboard from "../components/Dashboard.vue";
+import AppLayout from "../components/AppLayout.vue";
+import TradingPage from "../components/TradingPage.vue";
+import ReceiveSendPage from "../components/ReceiveSendPage.vue";
+import PendingPaymentsPage from "../components/PendingPaymentsPage.vue";
+import LogsPage from "../components/LogsPage.vue";
 import { isLoggedIn } from "../auth/session";
 import { loadWalletStatus, walletState } from "../wallet/walletState";
-
-// Routes reachable WITHOUT a valid session (a STRICT allowlist by route name):
-// the five auth screens + the Academy. Anything not named here requires login.
-const PUBLIC_ROUTES = new Set([
-  "login",
-  "register",
-  "forgot-password",
-  "reset-password",
-  "verify-email",
-  "academy",
-  // Feature 5: lesson deeplinks are part of the public Academy.
-  "academy-lesson",
-]);
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: "/", name: "dashboard", component: Dashboard },
-    { path: "/login", name: "login", component: () => import("../components/auth/LoginPage.vue") },
-    { path: "/register", name: "register", component: () => import("../components/auth/RegisterPage.vue") },
+    // --- standalone (no shell) ---
+    { path: "/login", name: "login", component: () => import("../components/auth/LoginPage.vue"), meta: { public: true } },
+    { path: "/register", name: "register", component: () => import("../components/auth/RegisterPage.vue"), meta: { public: true } },
     {
       path: "/forgot-password",
       name: "forgot-password",
       component: () => import("../components/auth/ForgotPasswordPage.vue"),
+      meta: { public: true },
     },
     {
       path: "/reset-password",
       name: "reset-password",
       component: () => import("../components/auth/ResetPasswordPage.vue"),
+      meta: { public: true },
     },
     {
       path: "/verify-email",
       name: "verify-email",
       component: () => import("../components/auth/VerifyEmailPage.vue"),
+      meta: { public: true },
     },
-    {
-      path: "/academy",
-      name: "academy",
-      component: () => import("../academy/components/AcademyPage.vue"),
-    },
-    {
-      // Feature 5: stable lesson deeplink. Same AcademyPage component; it reads
-      // the chapterId/lessonId params and opens that lesson directly.
-      path: "/academy/chapter/:chapterId/lesson/:lessonId",
-      name: "academy-lesson",
-      component: () => import("../academy/components/AcademyPage.vue"),
-    },
+    // The forced wallet-setup gate: logged-in, but intentionally no sidebar/header
+    // so the user completes setup first.
     {
       path: "/wallet-setup",
       name: "wallet-setup",
       component: () => import("../components/wallet/WalletSetup.vue"),
     },
+
+    // --- authenticated shell + Academy ---
+    {
+      path: "/",
+      component: AppLayout,
+      children: [
+        { path: "", name: "trading", component: TradingPage },
+        { path: "receive", name: "receive", component: ReceiveSendPage },
+        { path: "pending", name: "pending", component: PendingPaymentsPage },
+        { path: "logs", name: "logs", component: LogsPage },
+        {
+          path: "academy",
+          name: "academy",
+          component: () => import("../academy/components/AcademyPage.vue"),
+          meta: { public: true, standalone: true },
+        },
+        {
+          // Stable lesson deeplink — same AcademyPage; it reads the params.
+          path: "academy/chapter/:chapterId/lesson/:lessonId",
+          name: "academy-lesson",
+          component: () => import("../academy/components/AcademyPage.vue"),
+          meta: { public: true, standalone: true },
+        },
+      ],
+    },
+
     { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
   scrollBehavior() {
@@ -65,12 +85,9 @@ const router = createRouter({
   },
 });
 
-// Login state is determined CLIENT-SIDE from the readable session marker cookie
-// (no authenticated API call) - see src/auth/session.ts. The server still
-// enforces auth on every API call; this guard is only UX (where to send the SPA).
 router.beforeEach(async (to) => {
   const authed = isLoggedIn();
-  const isPublic = PUBLIC_ROUTES.has(String(to.name ?? ""));
+  const isPublic = to.meta.public === true;
   // Already-logged-in users never need the login/register screens.
   if (authed && (to.name === "login" || to.name === "register")) return { path: "/" };
   // Unauthenticated users may only reach the public allowlist; everything else
@@ -79,10 +96,9 @@ router.beforeEach(async (to) => {
     const redirect = to.fullPath && to.fullPath !== "/" ? { redirect: to.fullPath } : {};
     return { path: "/login", query: redirect };
   }
-  // Feature 3: a logged-in user must set up a wallet before any trading screen.
-  // The Academy (public) and the wallet-setup screen itself are exempt. The gate
-  // fails OPEN if status can't be read (the server still enforces a wallet on
-  // every on-chain call), so a transient error never locks the user out.
+  // A logged-in user must set up a wallet before any trading screen. The Academy
+  // (public) and the wallet-setup screen itself are exempt. Fails OPEN if status
+  // can't be read (the server still enforces a wallet on every on-chain call).
   if (authed && !isPublic && to.name !== "wallet-setup") {
     await loadWalletStatus();
     if (walletState.loaded && !walletState.configured) {

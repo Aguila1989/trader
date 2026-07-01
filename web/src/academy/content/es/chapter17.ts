@@ -63,6 +63,18 @@ export const chapter17: Chapter = {
       example:
         "Un enfoque cuidadoso: escribe tu clave secreta a mano en una hoja de papel, séllala y guárdala bajo llave en un cajón o una caja fuerte en casa, quizá con una segunda copia en casa de un familiar de confianza. Un enfoque arriesgado: hazle una foto a la clave \"para no perderla\". Esa foto se sube en silencio a tu copia de seguridad en la nube, y en cuanto esa cuenta es vulnerada, tu billetera se va con ella.",
     },
+    {
+      id: "c17-l6",
+      title: "Orientarte en la app y recibir fondos",
+      paragraphs: [
+        "La app se organiza en torno a un menú lateral a la izquierda que te permite saltar entre sus páginas: Operar, Recibir y enviar, Pagos pendientes, Registros y la Academia. En el móvil ese menú está oculto: toca el icono ☰ (el menú de hamburguesa) en la esquina para desplegarlo, elige una página y se vuelve a cerrar. La Academia está debajo de un separador, apartada de las páginas de operaciones, porque es el lugar al que vienes a aprender, no a operar, y nunca te pide iniciar sesión.",
+        "Para recibir fondos, abre \"Recibir y enviar\" desde el menú. Allí verás la dirección pública de tu billetera —la misma dirección G... de las lecciones anteriores— junto con un código QR. Puedes copiar la dirección y enviársela a quien te vaya a pagar, o dejar que apunte la cámara de su app de billetera al código QR que aparece en tu pantalla.",
+        "Un código QR no es nada más misterioso que un código de barras cuadrado: en este caso simplemente codifica tu dirección pública como un patrón de puntos. Como solo es el lado público de tu billetera, es completamente seguro mostrarlo, compartirlo, capturarlo o imprimirlo. Lo peor que alguien puede hacer con él es enviarte dinero. Bajo el código verás la etiqueta \"Escanea para enviar a esta billetera\", que le indica al remitente que apunte la cámara de su app hacia él.",
+        "La única regla que nunca cambia viene directa de las lecciones anteriores: un código QR solo contiene tu dirección pública. Tu clave secreta nunca debe ir en un código QR, en una captura de pantalla ni en ningún sitio donde una cámara pudiera leerla. Si alguna vez una app o una persona te muestra un código QR diciendo que contiene una clave secreta o una frase semilla, considéralo una estafa y aléjate.",
+      ],
+      example:
+        "Un amigo quiere enviarte algo de XLM. Abres \"Recibir y enviar\" en el menú (en el móvil, primero tocas ☰ para que aparezca) y tu dirección G... se muestra con un código QR bajo las palabras \"Escanea para enviar a esta billetera\". Tu amigo abre su propia app de billetera, apunta la cámara a tu pantalla y la dirección se rellena automáticamente: sin teclear, sin errores. Los fondos llegan y en ningún momento revelaste nada secreto.",
+    },
   ],
   quiz: [
     {
@@ -173,6 +185,51 @@ export const chapter17: Chapter = {
           text: "No pasa nada mientras la web tenga aspecto profesional.",
           explanation:
             "No. Un aspecto pulido es justo la forma en que las estafas ganan confianza. La frase semilla nunca debe introducirse en ninguna web, sin importar cómo se vea.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q6",
+      prompt:
+        "¿Es seguro compartir el código QR de tu dirección pública para que alguien te pague?",
+      options: [
+        {
+          text: "Sí: un código QR de tu dirección pública es seguro de mostrar, compartir o capturar; lo peor que alguien puede hacer con él es enviarte dinero.",
+          explanation:
+            "Correcto. El código QR solo codifica tu dirección pública (G...), que está hecha para compartirse. No puede usarse para gastar tus fondos.",
+        },
+        {
+          text: "No: un código QR siempre contiene tu clave secreta, así que mostrarlo permite que cualquiera vacíe tu billetera.",
+          explanation:
+            "No. Tu código QR de recepción solo contiene la dirección pública. Tu clave secreta no debe ir nunca, de entrada, en un código QR.",
+        },
+        {
+          text: "Solo si primero difuminas una parte del código.",
+          explanation:
+            "No. No hay nada que ocultar: un código QR de dirección pública es seguro de compartir entero. Difuminarlo solo haría que el pago no funcionara.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q7",
+      prompt: "¿Adónde vas en la app para recibir fondos?",
+      options: [
+        {
+          text: "A la página \"Recibir y enviar\" del menú, donde se muestran tu dirección pública y su código QR.",
+          explanation:
+            "Correcto. \"Recibir y enviar\" muestra tu dirección pública y tu código QR, para que un remitente pueda copiar la dirección o escanear el código.",
+        },
+        {
+          text: "A la Academia, después de aprobar el cuestionario de seguridad.",
+          explanation:
+            "No. La Academia solo sirve para aprender y nunca maneja fondos. Recibes fondos desde la página \"Recibir y enviar\".",
+        },
+        {
+          text: "A la página de Registros, leyendo tu historial de transacciones.",
+          explanation:
+            "No. Los Registros solo muestran la actividad pasada. Para recibir fondos abre \"Recibir y enviar\" y comparte tu dirección o código QR.",
         },
       ],
       correctIndex: 0,

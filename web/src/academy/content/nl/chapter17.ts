@@ -63,6 +63,18 @@ export const chapter17: Chapter = {
       example:
         "Een zorgvuldige aanpak: schrijf je geheime sleutel met de hand op een vel papier, verzegel het en sluit het op in een lade of kluis thuis — eventueel met een tweede kopie bij een vertrouwd familielid. Een riskante aanpak: maak een foto van de sleutel \"zodat je hem niet kwijtraakt.\" Die foto uploadt stilletjes naar je cloudback-up, en op het moment dat dat account wordt gekraakt, gaat je wallet mee.",
     },
+    {
+      id: "c17-l6",
+      title: "De weg vinden in de app & geld ontvangen",
+      paragraphs: [
+        "De app is opgebouwd rond een menu aan de linkerkant waarmee je tussen de pagina's springt: Traden, Ontvangen & Versturen, Openstaande betalingen, Logs en de Academy. Op een telefoon is dat menu weggeschoven — tik op het ☰-icoon (hamburger) in de hoek om het open te schuiven, kies een pagina en het klapt weer dicht. De Academy staat onder een scheidingslijn, los van de tradingpagina's, want het is de plek waar je komt om te leren, niet om te traden — en je hoeft er nooit voor in te loggen.",
+        "Om geld te ontvangen open je \"Ontvangen & Versturen\" in het menu. Daar zie je het publieke adres van je wallet — hetzelfde G...-adres uit de vorige lessen — samen met een QR-code. Je kunt het adres kopiëren en doorsturen naar wie je betaalt, of die persoon de QR-code op je scherm laten scannen met zijn wallet-app.",
+        "Een QR-code is niets mysterieuzer dan een vierkante streepjescode: in dit geval bevat hij gewoon je publieke adres als een patroon van stipjes. Omdat het alleen de publieke kant van je wallet is, is hij volkomen veilig om te tonen, te delen, te screenshotten of af te drukken. Het ergste dat iemand ermee kan doen, is je geld sturen. Onder de code staat het label \"Scan om naar deze wallet te sturen\" — dat zegt de verzender dat hij de camera van zijn wallet-app erop moet richten.",
+        "De ene regel die nooit verandert loopt rechtstreeks door uit de eerdere lessen: een QR-code bevat altijd alleen je publieke adres. Je geheime sleutel mag nooit in een QR-code, een screenshot, of waar dan ook een camera hem zou kunnen lezen terechtkomen. Als een app of een persoon je ooit een QR-code toont en zegt dat die een geheime sleutel of seed phrase bevat, beschouw dat dan als oplichting en loop weg.",
+      ],
+      example:
+        "Een vriend wil je wat XLM sturen. Je opent \"Ontvangen & Versturen\" in het menu (op je telefoon tik je eerst op ☰ om het tevoorschijn te halen), en je G...-adres verschijnt met een QR-code onder de woorden \"Scan om naar deze wallet te sturen\". Je vriend opent zijn eigen wallet-app, richt de camera op je scherm en het adres wordt automatisch ingevuld — geen getik, geen fouten. Het geld komt binnen, en op geen enkel moment heb je iets geheims prijsgegeven.",
+    },
   ],
   quiz: [
     {
@@ -173,6 +185,51 @@ export const chapter17: Chapter = {
           text: "Het is prima zolang de website er professioneel uitziet.",
           explanation:
             "Nee. Een verzorgde uitstraling is juist hoe oplichting vertrouwen wint. De seed phrase mag nooit in een website worden ingevoerd, hoe hij er ook uitziet.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q6",
+      prompt:
+        "Is het veilig om de QR-code van je publieke adres te delen zodat iemand je kan betalen?",
+      options: [
+        {
+          text: "Ja — een QR-code van je publieke adres is veilig om te tonen, te delen of te screenshotten; het ergste dat iemand ermee kan doen, is je geld sturen.",
+          explanation:
+            "Juist. De QR-code bevat alleen je publieke (G...) adres, dat bedoeld is om te delen. Hij kan niet worden gebruikt om je geld uit te geven.",
+        },
+        {
+          text: "Nee — een QR-code bevat altijd je geheime sleutel, dus hem tonen laat iedereen je wallet leeghalen.",
+          explanation:
+            "Nee. Je ontvangst-QR-code bevat alleen het publieke adres. Je geheime sleutel hoort sowieso nooit in een QR-code terecht te komen.",
+        },
+        {
+          text: "Alleen als je eerst een deel van de code onleesbaar maakt.",
+          explanation:
+            "Nee. Er valt niets te verbergen — een QR-code met een publiek adres is in zijn geheel veilig om te delen. Hem onleesbaar maken zou de betaling alleen maar laten mislukken.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q7",
+      prompt: "Waar ga je in de app naartoe om geld te ontvangen?",
+      options: [
+        {
+          text: "Naar de pagina \"Ontvangen & Versturen\" in het menu, waar je publieke adres en de bijbehorende QR-code staan.",
+          explanation:
+            "Juist. \"Ontvangen & Versturen\" toont je publieke adres en QR-code, zodat een verzender het adres kan kopiëren of de code kan scannen.",
+        },
+        {
+          text: "Naar de Academy, nadat je de veiligheidsquiz hebt gehaald.",
+          explanation:
+            "Nee. De Academy is alleen om te leren en verwerkt nooit geld. Je ontvangt geld via de pagina \"Ontvangen & Versturen\".",
+        },
+        {
+          text: "Naar de Logs-pagina, door je transactiegeschiedenis te lezen.",
+          explanation:
+            "Nee. Logs toont alleen activiteit uit het verleden. Om geld te ontvangen open je \"Ontvangen & Versturen\" en deel je je adres of QR-code.",
         },
       ],
       correctIndex: 0,

@@ -63,6 +63,19 @@ export const chapter09: Chapter = {
       example:
         "Op één dag toont het Bot-tabblad tien gesloten trades met 12 USDC gerealiseerde winst en een open positie die 5 USDC ongerealiseerd in de plus staat. Het Handmatig-tabblad toont drie trades met 4 USDC gerealiseerd verlies. Het totale gerealiseerde resultaat is 8 USDC in de plus, maar de splitsing onthult dat de bot 12 verdiende terwijl je handmatige trades er 4 verloren. De eerlijke conclusie is de bot te laten doorwerken en na te gaan waarom je handmatige instappen onderpresteerden.",
     },
+    {
+      id: "c9-l6",
+      title: "De portfolio-evolutiegrafiek lezen",
+      paragraphs: [
+        "De evolutiegrafiek zet je totale portfoliowaarde, in USDC, uit in de tijd. Elk punt is een momentopname van alles wat je op dat moment aanhield, geprijsd en opgeteld zoals eerdere lessen beschreven. Lees van links naar rechts en je kijkt naar het verhaal van je account: waar het begon, waar het nu staat, en hoe hobbelig de weg ertussen was.",
+        "De belangrijkste vaardigheid is het onderscheiden van twee heel verschillende redenen waarom de lijn kan stijgen. Prijsstijging is je bestaande holdings die in waarde toenemen, en dat toont zich als een min of meer gladde helling die de markt volgt. Geld toevoegen is geld dat je stortte, en dat toont zich als een plotselinge verticale sprong die geen enkele marktbeweging kan verklaren. Een sprong van 100 naar 300 USDC in één stap is vrijwel zeker een storting, geen rally van 200 procent, dus geef de AI daar geen krediet voor.",
+        "De vorm van de lijn vertelt je iets over risico. Een vlakke, rechte lijn betekent dat je waarde stabiel blijft, met weinig beweging in beide richtingen. Een grillige lijn met grote pieken en diepe dalen betekent hoge volatiliteit: grotere uitslagen, wat zowel meer kans als meer risico is. Geen van beide is automatisch goed; een vlakke lijn tijdens een marktrally kan betekenen dat je in stablecoins zit en bewegingen mist, terwijl een heftige lijn kan betekenen dat je meer risico neemt dan je bedoelde.",
+        "De tijdspanne verandert het hele verhaal, dus controleer altijd welke je bekijkt. Een venster van 24 uur is vooral ruis: normale schommelingen binnen de dag lijken dramatisch als je zover inzoomt. Een jaaroverzicht strijkt die ruis glad tot een echte trend, en toont of het account op de lange termijn daadwerkelijk groeit, wegzakt of leegloopt. Beoordeel prestaties op de lange tijdspanne en gebruik de korte alleen om vandaag te begrijpen.",
+        "Alles bij elkaar is de grafiek de manier waarop je beoordeelt of de AI het portfolio echt laat groeien. Trek in gedachten elke stortingssprong eraf, en vraag je dan af of de resterende helling over een betekenisvol venster omhoog trendt. Als de lijn alleen klimt omdat je steeds geld toevoegt, werkt de strategie niet, hoe groen het totaal er ook uitziet.",
+      ],
+      example:
+        "Je evolutielijn over 90 dagen begint op 200 USDC, stijgt gladjes naar 240, springt dan op dag 45 in één stap recht omhoog naar 440, en eindigt op 455. Het is verleidelijk om dat een winst van 127 procent te noemen. Maar de verticale sprong van 200 op dag 45 is een storting, geen handelswinst. Haal die eruit en het echte beeld is 200 naar 240 vóór de storting en 440 naar 455 erna, ruwweg 20 plus 15, ongeveer 35 USDC aan echte waardestijging op 400 aan kapitaal, bijna 9 procent. Gezond, maar ver van 127, en alleen de voor-stortingen-gecorrigeerde lezing vertelt je dat de AI daadwerkelijk werkt.",
+    },
   ],
   quiz: [
     {
@@ -165,6 +178,52 @@ export const chapter09: Chapter = {
         },
       ],
       correctIndex: 0,
+    },
+    {
+      id: "c9-q5",
+      prompt:
+        "Op de evolutiegrafiek springt de lijn in één stap recht omhoog van 100 naar 300 USDC. Wat is er hoogstwaarschijnlijk gebeurd?",
+      options: [
+        {
+          text: "Je hebt geld toegevoegd; een plotselinge verticale sprong is een storting, geen prijsstijging.",
+          explanation:
+            "Juist. Stortingen verschijnen als directe verticale stappen, terwijl prijsstijging zich toont als een helling die de markt volgt, dus deze sprong mag niet aan de AI worden toegeschreven.",
+        },
+        {
+          text: "De AI heeft je geld in een oogwenk verdrievoudigd door te traden.",
+          explanation:
+            "Onjuist. Handelswinst bouwt op als een helling over tijd, niet als een enkele verticale sprong; een sprong als deze is vrijwel altijd een storting.",
+        },
+        {
+          text: "De grafiek is kapot en het getal moet genegeerd worden.",
+          explanation:
+            "Onjuist. De sprong is echt en betekenisvol, hij weerspiegelt alleen nieuw geld dat je toevoegde in plaats van een marktbeweging.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c9-q6",
+      prompt:
+        "Je wilt beoordelen of de AI het portfolio echt laat groeien. Welke lezing is het betrouwbaarst?",
+      options: [
+        {
+          text: "De 24-uurslijn, omdat die het vaakst wordt bijgewerkt.",
+          explanation:
+            "Onjuist. Een venster van 24 uur is vooral ruis binnen de dag; korte schommelingen lijken dramatisch en verbergen de echte langetermijntrend.",
+        },
+        {
+          text: "De trend op lange tijdspanne, met de stortingssprongen er in gedachten afgetrokken.",
+          explanation:
+            "Juist. Een lang venster onthult de echte trend, en het weghalen van stortingssprongen toont of de groei van de AI kwam in plaats van van geld dat je toevoegde.",
+        },
+        {
+          text: "Het enkele hoogste punt dat de lijn ooit bereikte.",
+          explanation:
+            "Onjuist. Eén piek zegt niets over de trend of over hoeveel van de waarde uit stortingen kwam versus echte winst.",
+        },
+      ],
+      correctIndex: 1,
     },
   ],
 };

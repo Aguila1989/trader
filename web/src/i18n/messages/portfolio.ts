@@ -9,6 +9,13 @@ export default {
     refresh: "Refresh",
     empty: "No holdings yet. Fund the account or add a trustline to see values here.",
     noPriceData: "(no price data)",
+    openDetail: "View {code} details (order book + price chart)",
+    history: {
+      title: "Portfolio Value Over Time",
+      hint: "Your total portfolio value (in USDC) at each refresh. Green means it rose over the selected period, red means it fell.",
+      valueLabel: "Value (USDC)",
+      notEnough: "Not enough data yet for this timeframe. Check back after the next refresh.",
+    },
     col: {
       token: "Token",
       balance: "Balance",
@@ -25,6 +32,13 @@ export default {
     refresh: "Vernieuwen",
     empty: "Nog geen posities. Stort op de account of voeg een trustline toe om hier waarden te zien.",
     noPriceData: "(geen prijsgegevens)",
+    openDetail: "Bekijk details van {code} (orderboek + prijsgrafiek)",
+    history: {
+      title: "Portefeuillewaarde in de tijd",
+      hint: "Je totale portefeuillewaarde (in USDC) bij elke vernieuwing. Groen betekent gestegen over de gekozen periode, rood betekent gedaald.",
+      valueLabel: "Waarde (USDC)",
+      notEnough: "Nog niet genoeg gegevens voor deze periode. Kom terug na de volgende vernieuwing.",
+    },
     col: {
       token: "Token",
       balance: "Saldo",
@@ -41,6 +55,13 @@ export default {
     refresh: "Actualiser",
     empty: "Aucune position pour le moment. Approvisionnez le compte ou ajoutez une ligne de confiance pour voir les valeurs ici.",
     noPriceData: "(pas de données de prix)",
+    openDetail: "Voir les détails de {code} (carnet d'ordres + graphique de prix)",
+    history: {
+      title: "Valeur du portefeuille dans le temps",
+      hint: "La valeur totale de votre portefeuille (en USDC) à chaque actualisation. Vert = hausse sur la période choisie, rouge = baisse.",
+      valueLabel: "Valeur (USDC)",
+      notEnough: "Pas encore assez de données pour cette période. Revenez après la prochaine actualisation.",
+    },
     col: {
       token: "Token",
       balance: "Solde",
@@ -57,6 +78,13 @@ export default {
     refresh: "Actualizar",
     empty: "Aún no tienes posiciones. Deposita fondos en la cuenta o añade una línea de confianza para ver los valores aquí.",
     noPriceData: "(sin datos de precio)",
+    openDetail: "Ver detalles de {code} (libro de órdenes + gráfico de precio)",
+    history: {
+      title: "Valor de la cartera a lo largo del tiempo",
+      hint: "El valor total de tu cartera (en USDC) en cada actualización. Verde = subió en el período elegido, rojo = bajó.",
+      valueLabel: "Valor (USDC)",
+      notEnough: "Aún no hay suficientes datos para este período. Vuelve tras la próxima actualización.",
+    },
     col: {
       token: "Token",
       balance: "Saldo",

@@ -10,7 +10,9 @@ import type {
   OrderbookSnapshot,
   AiLogEntry,
   AiLogPage,
+  LogEntry,
   PortfolioResponse,
+  PortfolioSnapshot,
   PriceAlert,
   RiskProfile,
   SettingMeta,
@@ -125,6 +127,18 @@ async function authRequest<T = Record<string, unknown>>(
   }
 }
 
+// GET sibling of authRequest: same non-throwing AuthApiResult shape so the
+// Account screen can read the server's messages without a try/catch.
+async function authGet<T = Record<string, unknown>>(path: string): Promise<AuthApiResult<T>> {
+  try {
+    const res = await fetch(path, { credentials: CREDENTIALS });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string; message?: string };
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Network error - please try again." } as T & { error?: string } };
+  }
+}
+
 export interface SessionUser {
   id: string;
   email: string;
@@ -142,6 +156,16 @@ export const authApi = {
     authRequest("/api/auth/reset-password", { token, password, confirmPassword }),
   verifyEmail: (token: string) => authRequest("/api/auth/verify-email", { token }),
   me: () => getJSON<{ user: SessionUser }>("/api/auth/me"),
+  // Self-service password change (authenticated). Keeps the current session alive
+  // server-side, so no re-login is needed after success.
+  changePassword: (currentPassword: string, newPassword: string) =>
+    authRequest<{}>("/api/auth/change-password", { currentPassword, newPassword }),
+  // Account details for the Account screen. Same data as me() plus createdAt,
+  // returned via the non-throwing AuthApiResult shape.
+  account: () =>
+    authGet<{ user: { id: string; email: string; displayName?: string; createdAt: string } }>(
+      "/api/auth/me",
+    ),
 };
 
 // --- Wallet API (Feature 3) -------------------------------------------------
@@ -236,7 +260,7 @@ export const api = {
     return getJSON<AiLogPage>(`/api/ailog?${q.toString()}`);
   },
   logLive: (n = 20) =>
-    getJSON<{ trades: TradeLogEntry[]; ai: AiLogEntry[] }>(`/api/loglive?n=${n}`),
+    getJSON<{ trades: TradeLogEntry[]; ai: AiLogEntry[]; system: LogEntry[] }>(`/api/loglive?n=${n}`),
   market: (base: string, quote: string) =>
     getJSON<MarketSnapshot & { error?: string }>(
       `/api/market?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
@@ -378,6 +402,8 @@ export const api = {
       `/api/claimable/${encodeURIComponent(id)}/unreject`,
     ),
   portfolio: () => getJSON<PortfolioResponse>("/api/portfolio"),
+  portfolioHistory: (range: string) =>
+    getJSON<PortfolioSnapshot[]>(`/api/portfolio/history?range=${encodeURIComponent(range)}`),
   universe: () => getJSON<UniverseResponse>("/api/universe"),
   offers: () => getJSON<OpenOffer[]>("/api/offers"),
   cancelOffer: (id: string) =>

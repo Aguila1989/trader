@@ -63,6 +63,18 @@ export const chapter17: Chapter = {
       example:
         "Une approche prudente : écrivez votre clé secrète à la main sur une feuille de papier, scellez-la et enfermez-la dans un tiroir ou un coffre chez vous — éventuellement avec une seconde copie chez un proche de confiance. Une approche risquée : prenez une photo de la clé « pour ne pas la perdre ». Cette photo se télécharge en silence vers votre sauvegarde cloud, et dès que ce compte est compromis, votre portefeuille part avec.",
     },
+    {
+      id: "c17-l6",
+      title: "S'orienter dans l'application et recevoir des fonds",
+      paragraphs: [
+        "L'application s'organise autour d'un menu latéral à gauche qui permet de passer d'une page à l'autre : Trading, Recevoir et envoyer, Paiements en attente, Journaux et l'Académie. Sur un téléphone, ce menu est masqué — touchez l'icône ☰ (le menu hamburger) dans le coin pour le faire glisser, choisissez une page et il se referme. L'Académie se trouve sous un séparateur, à l'écart des pages de trading, car c'est l'endroit où l'on vient apprendre, pas trader — et elle ne vous demande jamais de vous connecter.",
+        "Pour recevoir des fonds, ouvrez « Recevoir et envoyer » depuis le menu. Vous y verrez l'adresse publique de votre portefeuille — la même adresse G... des leçons précédentes — accompagnée d'un QR code. Vous pouvez soit copier l'adresse et l'envoyer à la personne qui vous paie, soit la laisser pointer l'appareil photo de son application de portefeuille sur le QR code affiché à l'écran.",
+        "Un QR code n'a rien de plus mystérieux qu'un code-barres carré : ici, il encode simplement votre adresse publique sous forme d'un motif de points. Comme il ne s'agit que du côté public de votre portefeuille, il est tout à fait sûr de l'afficher, de le partager, d'en faire une capture d'écran ou de l'imprimer. Le pire que quelqu'un puisse en faire, c'est vous envoyer de l'argent. Sous le code figure l'intitulé « Scannez pour envoyer vers ce portefeuille » — il indique à l'expéditeur d'y braquer l'appareil photo de son application.",
+        "La seule règle qui ne change jamais découle directement des leçons précédentes : un QR code ne contient toujours que votre adresse publique. Votre clé secrète ne doit jamais se retrouver dans un QR code, une capture d'écran, ni nulle part où un appareil photo pourrait la lire. Si une application ou une personne vous montre un jour un QR code en affirmant qu'il contient une clé secrète ou une phrase de récupération, considérez cela comme une arnaque et passez votre chemin.",
+      ],
+      example:
+        "Un ami veut vous envoyer un peu de XLM. Vous ouvrez « Recevoir et envoyer » dans le menu (sur votre téléphone, vous touchez d'abord ☰ pour le faire apparaître), et votre adresse G... s'affiche avec un QR code sous les mots « Scannez pour envoyer vers ce portefeuille ». Votre ami ouvre sa propre application de portefeuille, pointe l'appareil photo sur votre écran, et l'adresse se remplit automatiquement — aucune saisie, aucune erreur. Les fonds arrivent, et à aucun moment vous n'avez révélé quoi que ce soit de secret.",
+    },
   ],
   quiz: [
     {
@@ -173,6 +185,51 @@ export const chapter17: Chapter = {
           text: "Ce n'est pas grave tant que le site web a l'air professionnel.",
           explanation:
             "Non. Une apparence soignée est précisément la façon dont les arnaques gagnent la confiance. La phrase de récupération ne doit jamais être saisie sur un site web, quelle que soit son apparence.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q6",
+      prompt:
+        "Est-il sans danger de partager le QR code de votre adresse publique pour que l'on vous paie ?",
+      options: [
+        {
+          text: "Oui — un QR code de votre adresse publique peut être affiché, partagé ou capturé sans danger ; le pire que quelqu'un puisse en faire, c'est vous envoyer de l'argent.",
+          explanation:
+            "Correct. Le QR code n'encode que votre adresse publique (G...), qui est faite pour être partagée. Il ne peut pas servir à dépenser vos fonds.",
+        },
+        {
+          text: "Non — un QR code contient toujours votre clé secrète, donc l'afficher permet à n'importe qui de vider votre portefeuille.",
+          explanation:
+            "Non. Votre QR code de réception ne contient que l'adresse publique. Votre clé secrète ne doit de toute façon jamais se retrouver dans un QR code.",
+        },
+        {
+          text: "Seulement si vous floutez d'abord une partie du code.",
+          explanation:
+            "Non. Il n'y a rien à cacher — un QR code d'adresse publique peut être partagé en entier sans risque. Le flouter ne ferait qu'empêcher le paiement de fonctionner.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q7",
+      prompt: "Où allez-vous dans l'application pour recevoir des fonds ?",
+      options: [
+        {
+          text: "Sur la page « Recevoir et envoyer » du menu, où s'affichent votre adresse publique et son QR code.",
+          explanation:
+            "Correct. « Recevoir et envoyer » affiche votre adresse publique et votre QR code, pour qu'un expéditeur puisse copier l'adresse ou scanner le code.",
+        },
+        {
+          text: "Sur l'Académie, après avoir réussi le quiz de sécurité.",
+          explanation:
+            "Non. L'Académie ne sert qu'à apprendre et ne manipule jamais de fonds. Vous recevez des fonds depuis la page « Recevoir et envoyer ».",
+        },
+        {
+          text: "Sur la page Journaux, en consultant votre historique de transactions.",
+          explanation:
+            "Non. Les Journaux ne montrent que l'activité passée. Pour recevoir des fonds, ouvrez « Recevoir et envoyer » et partagez votre adresse ou votre QR code.",
         },
       ],
       correctIndex: 0,

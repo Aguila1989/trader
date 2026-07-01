@@ -173,6 +173,14 @@ export const useAcademyStore = defineStore("academy", () => {
     () => CHAPTER_INDEX.filter((c) => chapterProgress(c.id).quizPassed).length,
   );
 
+  /**
+   * True once the user has opened at least one lesson in any chapter. Lets a
+   * sidebar show a "New" badge on the Academy entry while this is still false.
+   */
+  const hasStartedAnyLesson = computed(() =>
+    Object.values(progress.value).some((ch) => ch.viewedLessons.length > 0),
+  );
+
   return {
     progress,
     levels: LEVELS,
@@ -189,5 +197,6 @@ export const useAcademyStore = defineStore("academy", () => {
     levelLessonStats,
     chapterLessonsViewed,
     totalPassed,
+    hasStartedAnyLesson,
   };
 });

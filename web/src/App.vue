@@ -10,7 +10,6 @@ import { useTraderStore } from "./stores/trader";
 import { setUnauthorizedHandler } from "./api";
 import { isLoggedIn, session, refreshSession } from "./auth/session";
 import { resetWalletState } from "./wallet/walletState";
-import LiveLogDrawer from "./components/LiveLogDrawer.vue";
 
 const store = useTraderStore();
 const router = useRouter();
@@ -49,7 +48,8 @@ watch(
 </script>
 
 <template>
+  <!-- The shell (sidebar + header) is provided by AppLayout for the
+       authenticated/Academy routes; auth screens render standalone. The live log
+       is scoped to the Trading page (see TradingPage.vue). -->
   <router-view />
-  <!-- The live log is only meaningful (and only authorized) once logged in. -->
-  <LiveLogDrawer v-if="session.user" />
 </template>

@@ -245,6 +245,14 @@ export interface EvolutionPoint {
   cumulativePnl: number;
 }
 
+/** A persisted snapshot of the total portfolio value at a moment in time.
+ *  Powers the "Portfolio Value Over Time" chart. Scoped per user. */
+export interface PortfolioSnapshot {
+  ts: string;
+  totalUsd: number | null;
+  totalXlm: number;
+}
+
 /** An open position from this system's own trading (signed-FIFO net). */
 export interface PositionSummary {
   pair: string;

@@ -93,6 +93,14 @@ export interface EvolutionPoint {
   cumulativePnl: number;
 }
 
+/** A persisted snapshot of total portfolio value (USDC + XLM) at a point in
+ *  time — drives the "Portfolio Value Over Time" chart. */
+export interface PortfolioSnapshot {
+  ts: string;
+  totalUsd: number | null;
+  totalXlm: number;
+}
+
 export interface PositionSummary {
   pair: string;
   base: string;

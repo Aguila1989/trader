@@ -9,14 +9,25 @@ import {
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, timeStr } from "../format";
 import type { PortfolioHolding } from "../types";
+import PortfolioHistoryChart from "./PortfolioHistoryChart.vue";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
+
+// Restore clickable token rows: open the token's detail page (order book + price
+// graph). The TokenDetail overlay lives on the Trading route, so ensure we're
+// there — this panel is in the persistent header, reachable from any page.
+function openToken(asset: string): void {
+  store.openToken(asset);
+  void router.push("/");
+}
 
 const PALETTE = [
   "#5b8cff", "#2fbf71", "#ffb454", "#e0607e", "#9b6bff",
@@ -180,8 +191,13 @@ const options: ChartOptions<"doughnut"> = {
             <tr
               v-for="h in rows"
               :key="h.asset"
-              class="pf-row"
+              class="pf-row pf-row-click"
               :class="changeClass(h)"
+              role="button"
+              tabindex="0"
+              :title="t('portfolio.openDetail', { code: store.tokenFor(h.asset).code })"
+              @click="openToken(h.asset)"
+              @keydown.enter="openToken(h.asset)"
             >
               <td :title="h.asset">{{ store.tokenFor(h.asset).code }}</td>
               <td class="num">{{ fmtNum(h.balance) }}</td>
@@ -193,6 +209,9 @@ const options: ChartOptions<"doughnut"> = {
         </table>
       </div>
     </div>
+
+    <!-- FIX 2: value-over-time graph, part of the same portfolio card. -->
+    <PortfolioHistoryChart />
   </section>
 </template>
 
@@ -215,5 +234,17 @@ const options: ChartOptions<"doughnut"> = {
 .pf-refresh {
   padding: 3px 12px;
   font-size: 12px;
+}
+/* Clickable token rows → token detail page (order book + price graph). */
+.pf-row-click {
+  cursor: pointer;
+}
+.pf-row-click:hover td,
+.pf-row-click:focus-visible td {
+  background: rgba(91, 140, 255, 0.1);
+}
+.pf-row-click:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 </style>

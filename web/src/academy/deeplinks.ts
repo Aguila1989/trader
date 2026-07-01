@@ -26,6 +26,8 @@ export const LESSON_IDS = {
   spread: ["c2", "c2-l3"],
   liquidity: ["c2", "c2-l5"],
   riskFactors: ["c11", "c11-l1"],
+  portfolioValue: ["c4", "c4-l6"],
+  receiveFunds: ["c17", "c17-l6"],
   whatIsTrustline: ["c19", "c19-l1"],
   trustlineRisk: ["c19", "c19-l3"],
   toml: ["c20", "c20-l2"],

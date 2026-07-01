@@ -57,6 +57,17 @@ export const chapter04: Chapter = {
       ],
       example: "Supon que pones los 100 USDC de valor enteros en XLM y baja un 8 por ciento de la noche a la manana; quedas 8 USDC abajo sin nada que lo suavice. Si en cambio tuvieras 50 USDC en XLM y 50 USDC en USDC estable, la misma caida del 8 por ciento en XLM cuesta solo 4 USDC, porque la mitad de tu billetera nunca se movio. Mismo mercado, la mitad del dolor.",
     },
+    {
+      id: "c4-l6",
+      title: "Que significa el valor de mi portafolio?",
+      paragraphs: [
+        "El valor total de tu portafolio es la suma de cada token que tienes multiplicado por su precio de mercado actual, sumado en una sola moneda, normalmente USDC. No es un numero que tu escribes; la app mira cada posicion, comprueba cuanto vale una unidad ahora mismo, y suma todo en una sola cifra que responde a una pregunta sencilla: si vendiera todo en este momento, cuanto tendria aproximadamente?",
+        "Como depende de precios en vivo, el valor de tu portafolio cambia incluso cuando no haces nada. No tienes que comprar ni vender para que el numero se mueva; el mercado lo mueve por ti. Una tarde tranquila en la que XLM sube unos pocos por ciento elevara tu total, y una caida repentina lo bajara, mientras tu solo miras.",
+        "El grafico de dona es una imagen de ese mismo valor, dividido por posicion. Cada porcion es un token, y el tamano de la porcion es la parte que ese token representa de tu valor total, expresada como porcentaje. Una porcion grande de XLM junto a una porcion pequena de USDC te dice, de un vistazo, que la mayor parte de tu valor depende de XLM y se moveria con su precio.",
+        "Una forma util de imaginarlo: el valor de tu portafolio es como el precio de mercado actual de todo lo que hay en tu casa. Tus muebles y electrodomesticos valen algo hoy, un poco mas o menos el mes que viene, aunque nunca compres ni vendas un solo objeto. Los precios se mueven solos, asi que el valor total de lo que ya posees sigue cambiando en silencio en segundo plano.",
+      ],
+      example: "Tienes 100 XLM y 20 USDC. Esta manana 1 XLM vale 0.10 USDC, asi que tu XLM vale 10 USDC y el valor total de tu portafolio es 10 mas 20, o sea 30 USDC. La dona muestra XLM como una porcion del 33 por ciento y USDC como el 67 por ciento. Para la tarde XLM sube a 0.12 USDC sin que toques nada: tu XLM ahora vale 12 USDC, tu total sube a 32 USDC, y la porcion de XLM crece en silencio. No operaste, y aun asi el valor de tu portafolio cambio.",
+    },
   ],
   quiz: [
     {
@@ -138,6 +149,25 @@ export const chapter04: Chapter = {
         },
       ],
       correctIndex: 1,
+    },
+    {
+      id: "c4-q5",
+      prompt: "Si tienes 100 XLM y el precio sube, cambia el valor de tu portafolio aunque no hayas operado?",
+      options: [
+        {
+          text: "Si, porque el valor del portafolio son tus posiciones por su precio actual, que se mueve con el mercado",
+          explanation: "Correcto. No necesitas operar para que el total cambie; cuando el precio de un token que tienes se mueve, el valor de tu portafolio se mueve con el.",
+        },
+        {
+          text: "No, el valor solo cambia cuando compras o vendes",
+          explanation: "Incorrecto. Operar cambia lo que tienes, pero incluso las posiciones que nunca tocas se vuelven a valorar constantemente, asi que el total se mueve solo.",
+        },
+        {
+          text: "No, el valor queda fijo hasta que refrescas la pagina manualmente",
+          explanation: "Incorrecto. La app vuelve a valorar con un temporizador frente a los mercados en vivo, asi que el valor refleja los movimientos reales de precio, refresques o no.",
+        },
+      ],
+      correctIndex: 0,
     },
   ],
 };

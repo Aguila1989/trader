@@ -80,7 +80,16 @@ export async function logout(): Promise<void> {
   try {
     await authApi.logout();
   } finally {
-    // Server cleared the cookies; reflect that locally regardless of the result.
+    // Reflect logout locally regardless of the server result. The server clears
+    // the httpOnly JWT cookie on success; we ALSO drop the readable session
+    // marker here so logout works even if the backend is unreachable (offline) —
+    // isLoggedIn() reads only the marker, so this alone logs the SPA out. The
+    // JWT is still enforced server-side on every API call.
+    try {
+      document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+    } catch {
+      /* no document */
+    }
     session.user = null;
     refreshSession();
   }

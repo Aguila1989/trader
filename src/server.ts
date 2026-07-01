@@ -1128,9 +1128,25 @@ app.get("/api/portfolio", async (_req, res) => {
   try {
     // USDC-primary valuation with an XLM-equivalent fallback. The pricing logic
     // lives in stellar/valuation.ts so it can be reused outside this endpoint.
-    res.json(await getPricedPortfolio(pub));
+    const portfolio = await getPricedPortfolio(pub);
+    // Persist a value snapshot for the "Portfolio Value Over Time" chart. This
+    // runs in the request's user context (per-user history) and is throttled in
+    // the store, so frequent refreshes don't flood the table.
+    store.recordPortfolioSnapshot(portfolio.totalUsd, portfolio.totalXlm);
+    res.json(portfolio);
   } catch (err) {
     failGeneric(res, err, 502);
+  }
+});
+
+// Per-user portfolio VALUE history over a timeframe (24h|7d|30d|1y|all), for the
+// "Portfolio Value Over Time" chart. Requires auth like every other data route.
+app.get("/api/portfolio/history", async (req, res) => {
+  const range = String(req.query.range ?? "7d");
+  try {
+    res.json(await store.getPortfolioHistory(range));
+  } catch (err) {
+    failGeneric(res, err, 500);
   }
 });
 

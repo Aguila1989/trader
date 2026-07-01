@@ -136,4 +136,56 @@ describe("auth/service (in-memory)", () => {
     const unknown = await auth.forgotPassword({ email: "ghost@b.com" });
     expect(known.message).toBe(unknown.message);
   });
+
+  // --- change password ---
+  it("change-password: rejects a wrong current password (generic error) and leaves it unchanged", async () => {
+    await auth.registerUser({ email: "cp1@b.com", password: GOOD_PW, confirmPassword: GOOD_PW });
+    const cred = await store.findCredentialByEmail("cp1@b.com");
+    const NEW_PW = "N3w!Passw0rd!!";
+    const r = await auth.changePassword({
+      userId: cred!.user.id,
+      currentJti: null,
+      currentPassword: "Wr0ng!Passw0rd",
+      newPassword: NEW_PW,
+    });
+    expect(r).toMatchObject({ ok: false, status: 400 });
+    // The original password still works; the new one does not (unchanged).
+    expect((await auth.login({ email: "cp1@b.com", password: GOOD_PW, ip: null })).ok).toBe(true);
+    expect((await auth.login({ email: "cp1@b.com", password: NEW_PW, ip: null })).ok).toBe(false);
+  });
+
+  it("change-password: rejects a weak new password", async () => {
+    await auth.registerUser({ email: "cp2@b.com", password: GOOD_PW, confirmPassword: GOOD_PW });
+    const cred = await store.findCredentialByEmail("cp2@b.com");
+    const r = await auth.changePassword({
+      userId: cred!.user.id,
+      currentJti: null,
+      currentPassword: GOOD_PW,
+      newPassword: "weak",
+    });
+    expect(r).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("change-password: updates the password, keeps the current session, revokes the others", async () => {
+    await auth.registerUser({ email: "cp3@b.com", password: GOOD_PW, confirmPassword: GOOD_PW });
+    const s1 = await auth.login({ email: "cp3@b.com", password: GOOD_PW, ip: null });
+    const s2 = await auth.login({ email: "cp3@b.com", password: GOOD_PW, ip: null });
+    const cred = await store.findCredentialByEmail("cp3@b.com");
+    const NEW_PW = "N3w!Passw0rd!!";
+    if (s1.ok && s2.ok) {
+      const r = await auth.changePassword({
+        userId: cred!.user.id,
+        currentJti: s1.jti,
+        currentPassword: GOOD_PW,
+        newPassword: NEW_PW,
+      });
+      expect(r).toMatchObject({ ok: true });
+      // The caller's session survives; every OTHER session is revoked.
+      expect(await store.isSessionActive(s1.jti)).toBe(true);
+      expect(await store.isSessionActive(s2.jti)).toBe(false);
+      // Old password no longer logs in; the new one does.
+      expect((await auth.login({ email: "cp3@b.com", password: GOOD_PW, ip: null })).ok).toBe(false);
+      expect((await auth.login({ email: "cp3@b.com", password: NEW_PW, ip: null })).ok).toBe(true);
+    }
+  });
 });

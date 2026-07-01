@@ -63,6 +63,19 @@ export const chapter09: Chapter = {
       example:
         "A lo largo de un dia la pestana de Trading con bot muestra diez operaciones cerradas con 12 USDC de ganancia realizada y una posicion abierta con 5 USDC de ganancia no realizada. La pestana de Trading manual muestra tres operaciones con 4 USDC de perdida realizada. El total realizado son 8 USDC a favor, pero la division revela que el bot gano 12 mientras tus operaciones manuales perdieron 4. La lectura honesta es dejar que el bot siga trabajando y revisar por que tus entradas manuales rindieron menos.",
     },
+    {
+      id: "c9-l6",
+      title: "Como leer el grafico de evolucion del portafolio",
+      paragraphs: [
+        "El grafico de evolucion traza el valor total de tu portafolio, en USDC, a lo largo del tiempo. Cada punto es una foto de todo lo que tenias en ese momento, valorado y sumado como describieron las lecciones anteriores. Lee de izquierda a derecha y estas viendo la historia de tu cuenta: donde empezo, donde esta ahora, y que tan accidentado fue el camino entre ambos.",
+        "La habilidad mas importante es separar dos razones muy distintas por las que la linea puede subir. La apreciacion de precio es que tus posiciones existentes ganan valor, y aparece como una pendiente mas o menos suave que sigue al mercado. Agregar fondos es dinero que depositaste, y aparece como un salto vertical repentino que ningun movimiento del mercado podria explicar. Un salto de 100 a 300 USDC en un solo paso es casi con seguridad un deposito, no un alza del 200 por ciento, asi que no le des el credito a la IA por eso.",
+        "La forma de la linea te dice sobre el riesgo. Una linea plana y nivelada significa que tu valor se mantiene estable, con poco moviendose en cualquier direccion. Una linea irregular con grandes picos y valles profundos significa alta volatilidad: oscilaciones mas grandes, que son tanto mas oportunidad como mas riesgo. Ninguna es automaticamente buena; una linea plana durante un alza del mercado puede significar que estas en stablecoins y te pierdes los movimientos, mientras que una linea violenta puede significar que estas asumiendo mas de lo que pretendias.",
+        "El periodo de tiempo cambia toda la historia, asi que revisa siempre cual estas viendo. Una ventana de 24 horas es sobre todo ruido: las oscilaciones normales dentro del dia parecen dramaticas cuando haces tanto zoom. Una vista de 1 ano suaviza ese ruido hasta una tendencia genuina, mostrando si la cuenta realmente crece, se estanca o se desangra a largo plazo. Juzga el rendimiento en el periodo largo y usa el corto solo para entender el dia de hoy.",
+        "En conjunto, el grafico es como juzgas si la IA de verdad esta haciendo crecer el portafolio. Resta mentalmente cada salto de deposito, y luego preguntate si la pendiente restante tiende hacia arriba en una ventana significativa. Si la linea solo sube porque sigues agregando dinero, la estrategia no esta funcionando, por muy verde que se vea el total.",
+      ],
+      example:
+        "Tu linea de evolucion de 90 dias empieza en 200 USDC, sube suavemente hasta 240, luego salta directo a 440 en un solo paso el dia 45, y termina en 455. Es tentador llamar a eso una ganancia del 127 por ciento. Pero el salto vertical de 200 el dia 45 es un deposito, no ganancia de trading. Quitalo y la imagen real es de 200 a 240 antes del deposito y de 440 a 455 despues, mas o menos 20 mas 15, unos 35 USDC de apreciacion genuina sobre 400 de capital, cerca del 9 por ciento. Sano, pero muy lejos de 127, y solo la lectura ajustada por depositos te dice que la IA de verdad esta funcionando.",
+    },
   ],
   quiz: [
     {
@@ -165,6 +178,52 @@ export const chapter09: Chapter = {
         },
       ],
       correctIndex: 0,
+    },
+    {
+      id: "c9-q5",
+      prompt:
+        "En el grafico de evolucion, la linea salta directo de 100 a 300 USDC en un solo paso. Que paso con mayor probabilidad?",
+      options: [
+        {
+          text: "Agregaste fondos; un salto vertical repentino es un deposito, no apreciacion de precio.",
+          explanation:
+            "Correcto. Los depositos aparecen como escalones verticales instantaneos, mientras que la apreciacion de precio se muestra como una pendiente que sigue al mercado, asi que este salto no debe atribuirse a la IA.",
+        },
+        {
+          text: "La IA triplico tu dinero en un instante mediante el trading.",
+          explanation:
+            "Incorrecto. Las ganancias de trading se acumulan como una pendiente a lo largo del tiempo, no como un solo salto vertical; un salto como este es casi siempre un deposito.",
+        },
+        {
+          text: "El grafico esta roto y el numero debe ignorarse.",
+          explanation:
+            "Incorrecto. El salto es real y significativo, solo refleja dinero nuevo que agregaste en lugar de un movimiento del mercado.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c9-q6",
+      prompt:
+        "Quieres juzgar si la IA de verdad esta haciendo crecer el portafolio. Que lectura es la mas fiable?",
+      options: [
+        {
+          text: "La linea de 24 horas, porque se actualiza con mas frecuencia.",
+          explanation:
+            "Incorrecto. Una ventana de 24 horas es sobre todo ruido dentro del dia; las oscilaciones cortas parecen dramaticas y ocultan la verdadera tendencia de largo plazo.",
+        },
+        {
+          text: "La tendencia en el periodo largo, con los saltos de deposito restados mentalmente.",
+          explanation:
+            "Correcto. Una ventana larga revela la verdadera tendencia, y quitar los saltos de deposito muestra si el crecimiento vino de la IA en lugar del dinero que agregaste.",
+        },
+        {
+          text: "El unico punto mas alto que la linea haya alcanzado.",
+          explanation:
+            "Incorrecto. Un solo pico no dice nada sobre la tendencia ni sobre cuanto del valor vino de depositos frente a ganancias reales.",
+        },
+      ],
+      correctIndex: 1,
     },
   ],
 };

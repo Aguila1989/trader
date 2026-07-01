@@ -57,6 +57,17 @@ export const chapter04: Chapter = {
       ],
       example: "Supposons que vous mettiez la totalite de vos 100 USDC de valeur dans le XLM et qu'il chute de 8 pour cent dans la nuit ; vous etes en baisse de 8 USDC sans rien pour amortir. Si au lieu de ca vous deteniez 50 USDC en XLM et 50 USDC en USDC stable, la meme chute de 8 pour cent du XLM ne coute que 4 USDC, parce que la moitie de votre portefeuille n'a jamais bouge. Meme marche, moitie moins de douleur.",
     },
+    {
+      id: "c4-l6",
+      title: "Que signifie la valeur de mon portefeuille ?",
+      paragraphs: [
+        "La valeur totale de votre portefeuille est la somme de chaque token que vous detenez multiplie par son prix de marche actuel, additionnee dans une seule monnaie, en general l'USDC. Ce n'est pas un chiffre que vous saisissez ; l'application regarde chaque avoir, verifie ce que vaut une unite en ce moment, et additionne le tout en un seul nombre qui repond a une question simple : si je vendais tout maintenant, combien aurais-je a peu pres ?",
+        "Parce qu'elle depend des prix en temps reel, la valeur de votre portefeuille change meme quand vous ne faites rien. Vous n'avez pas besoin d'acheter ou de vendre pour que le chiffre bouge ; le marche le fait pour vous. Un apres-midi tranquille ou le XLM monte de quelques pour cent fera grimper votre total, et une chute soudaine le fera baisser, pendant que vous vous contentez de regarder.",
+        "Le graphique en anneau est une image de cette meme valeur, repartie par avoir. Chaque part est un token, et la taille de la part est le poids de ce token dans votre valeur totale, exprime en pourcentage. Une grosse part de XLM a cote d'une petite part d'USDC vous dit, d'un coup d'oeil, que l'essentiel de votre valeur repose sur le XLM et bougerait avec son prix.",
+        "Une image utile : la valeur de votre portefeuille est comme le prix de marche actuel de tout ce qui se trouve dans votre maison. Vos meubles et vos appareils valent quelque chose aujourd'hui, un peu plus ou un peu moins le mois prochain, meme si vous n'achetez ni ne vendez jamais le moindre objet. Les prix derivent tout seuls, donc la valeur totale de ce que vous possedez deja continue de changer discretement en arriere-plan.",
+      ],
+      example: "Vous detenez 100 XLM et 20 USDC. Ce matin 1 XLM vaut 0.10 USDC, donc votre XLM vaut 10 USDC et votre valeur totale de portefeuille est de 10 plus 20, soit 30 USDC. L'anneau affiche le XLM comme une part de 33 pour cent et l'USDC comme 67 pour cent. Dans l'apres-midi le XLM monte a 0.12 USDC sans que vous touchiez a rien : votre XLM vaut maintenant 12 USDC, votre total grimpe a 32 USDC, et la part de XLM grossit discretement. Vous n'avez rien trade, et pourtant la valeur de votre portefeuille a change.",
+    },
   ],
   quiz: [
     {
@@ -138,6 +149,25 @@ export const chapter04: Chapter = {
         },
       ],
       correctIndex: 1,
+    },
+    {
+      id: "c4-q5",
+      prompt: "Si vous detenez 100 XLM et que le prix monte, la valeur de votre portefeuille change-t-elle meme si vous n'avez pas trade ?",
+      options: [
+        {
+          text: "Oui, parce que la valeur du portefeuille est vos avoirs multiplies par leur prix actuel, qui bouge avec le marche",
+          explanation: "Correct. Vous n'avez pas besoin de trader pour que le total change ; quand le prix d'un token que vous detenez bouge, la valeur de votre portefeuille bouge avec lui.",
+        },
+        {
+          text: "Non, la valeur ne change que lorsque vous achetez ou vendez",
+          explanation: "Faux. Trader change ce que vous detenez, mais meme les avoirs auxquels vous ne touchez jamais sont reevalues en continu, donc le total bouge tout seul.",
+        },
+        {
+          text: "Non, la valeur est figee jusqu'a ce que vous rafraichissiez la page manuellement",
+          explanation: "Faux. L'application reevalue a intervalle regulier face aux marches en temps reel, donc la valeur reflete les vrais mouvements de prix, que vous rafraichissiez ou non.",
+        },
+      ],
+      correctIndex: 0,
     },
   ],
 };

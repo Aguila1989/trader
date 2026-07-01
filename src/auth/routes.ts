@@ -141,6 +141,32 @@ export function createAuthRouter(): Router {
     res.json({ ok: true, message: "Your email is verified. You can now log in." });
   });
 
+  // POST /api/auth/change-password - authenticated self-service password change.
+  // Behind requireAuth (so currentUserId() is set) and already rate-limited by
+  // authRateLimiter (it lives under /api/auth/*). The current session is KEPT
+  // alive (keepJti) so the browser stays logged in; the cookie is NOT re-minted.
+  router.post("/change-password", async (req: Request, res: Response) => {
+    // Extract the current session's jti from the (already-verified) JWT so the
+    // service can preserve THIS session while revoking all the user's others.
+    let currentJti: string | null = null;
+    const token = parseCookies(req.headers.cookie)[JWT_COOKIE] ?? "";
+    if (token) {
+      const v = verifyJwt(token, config.jwtSecret, Math.floor(Date.now() / 1000));
+      if (v.ok) currentJti = v.claims.jti;
+    }
+    const r = await auth.changePassword({
+      userId: currentUserId(),
+      currentJti,
+      currentPassword: req.body?.currentPassword,
+      newPassword: req.body?.newPassword,
+    });
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
   // GET /api/auth/me - the authenticated user (this route is NOT in the public
   // allowlist, so the gate has already validated the session + set the context).
   router.get("/me", async (_req: Request, res: Response) => {
@@ -149,7 +175,14 @@ export function createAuthRouter(): Router {
       res.status(404).json({ error: "account not found" });
       return;
     }
-    res.json({ user: { id: user.id, email: user.email, displayName: user.displayName ?? null } });
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName ?? null,
+        createdAt: user.createdAt,
+      },
+    });
   });
 
   return router;

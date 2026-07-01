@@ -18,6 +18,7 @@ export default {
     resetTo: "Reset to default ({v})",
     on: "Enabled",
     off: "Disabled",
+    notLoaded: "Settings couldn't be loaded — they appear here once the backend is connected.",
   },
   nl: {
     title: "Instellingen",
@@ -33,6 +34,7 @@ export default {
     resetTo: "Terug naar standaard ({v})",
     on: "Ingeschakeld",
     off: "Uitgeschakeld",
+    notLoaded: "Instellingen konden niet worden geladen — ze verschijnen hier zodra de backend verbonden is.",
   },
   fr: {
     title: "Paramètres",
@@ -48,6 +50,7 @@ export default {
     resetTo: "Valeur par défaut ({v})",
     on: "Activé",
     off: "Désactivé",
+    notLoaded: "Les paramètres n'ont pas pu être chargés — ils apparaîtront ici une fois le backend connecté.",
   },
   es: {
     title: "Ajustes",
@@ -63,5 +66,6 @@ export default {
     resetTo: "Valor predeterminado ({v})",
     on: "Activado",
     off: "Desactivado",
+    notLoaded: "No se pudieron cargar los ajustes — aparecerán aquí cuando el backend esté conectado.",
   },
 };

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
+import LangSwitcher from "./LangSwitcher.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -24,40 +25,41 @@ const networkBadge = computed(() => {
 });
 
 const modeBadgeClass = computed(() => (store.isAutoTrade ? "warn" : ""));
-// Localized mode badge (replaces the English store.modeLabel). The .badge CSS
-// uppercases it, matching the original "AUTO-TRADE" / "APPROVE EVERY TRADE".
 const modeLabel = computed(() =>
   store.isAutoTrade ? t("topBar.autoTrade") : t("topBar.approveEveryTrade"),
 );
 
-// Providers with a configured API key — the dropdown's options. When none are
-// configured we fall back to a "no api key" badge instead of an empty select.
 const providers = computed(() => store.snapshot?.aiProviders ?? []);
 const activeProvider = computed(() => store.snapshot?.aiProvider ?? "");
-
 function onProviderChange(e: Event): void {
   const id = (e.target as HTMLSelectElement).value;
   if (id && id !== activeProvider.value) void store.switchProvider(id);
 }
 
 const killOn = computed(() => store.snapshot?.killSwitch ?? false);
+
+// Mobile: secondary status badges collapse behind a "More" toggle so the header
+// never wraps into disorganised rows. Desktop shows everything inline.
+const showMore = ref(false);
 </script>
 
 <template>
   <header class="topbar">
     <div class="brand"><span class="logo">&#10022;</span> {{ t("topBar.brand") }}</div>
 
-    <div class="badges">
-      <span class="badge" :class="networkBadge.cls">{{ networkBadge.text }}</span>
+    <!-- Network is safety-critical (mainnet!) — always visible, even on mobile. -->
+    <span class="badge net-badge" :class="networkBadge.cls">{{ networkBadge.text }}</span>
+
+    <!-- Secondary status: inline on desktop, collapses behind "More" on mobile. -->
+    <div class="badges" :class="{ open: showMore }">
       <span class="badge" :class="modeBadgeClass">{{ modeLabel }}</span>
-      <!-- Feature 1: AI trading master switch state, always visible. -->
+      <!-- Feature 1: AI trading master switch state. -->
       <span class="badge" :class="store.aiEnabled ? 'live' : 'danger'">
         {{ store.aiEnabled ? t("common.ai.active") : t("common.ai.paused") }}
       </span>
       <span v-if="store.isPaper" class="badge warn">{{ t("topBar.paper") }}</span>
       <span v-else-if="store.snapshot?.readOnly" class="badge warn">{{ t("topBar.readOnly") }}</span>
-      <!-- AI provider picker: lists every provider that has a key configured.
-           Switching is live; the model shown updates from the next snapshot. -->
+      <!-- AI provider picker: lists every provider that has a key configured. -->
       <select
         v-if="providers.length"
         class="ai-select"
@@ -85,14 +87,29 @@ const killOn = computed(() => store.snapshot?.killSwitch ?? false);
         <span class="vp-k">{{ t("topBar.value") }}</span>
         <span class="vp-amt">{{ totalText }}</span>
       </span>
+      <LangSwitcher class="tb-lang" />
     </div>
 
     <div class="controls">
-      <!-- Trading access (Read-only/Paper/Live) and the trade-mode toggle moved to
-           the Bot Trading tab (AiToggle) - the header was too busy. Only the
-           always-reachable emergency kill switch stays here. -->
+      <!-- The always-reachable emergency kill switch + settings gear stay here;
+           trade-access / mode controls live on the Bot Trading tab. On mobile a
+           "More" toggle reveals the collapsed status badges above. -->
       <button
-        class="btn danger"
+        class="btn icon-btn tb-more"
+        type="button"
+        :aria-label="t('common.more')"
+        :title="t('common.more')"
+        :aria-expanded="showMore"
+        @click="showMore = !showMore"
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.7" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+          <circle cx="19" cy="12" r="1.7" fill="currentColor" />
+        </svg>
+      </button>
+      <button
+        class="btn danger kill-btn"
         :class="{ active: killOn }"
         @click="store.setKill(!killOn)"
       >
@@ -101,3 +118,54 @@ const killOn = computed(() => store.snapshot?.killSwitch ?? false);
     </div>
   </header>
 </template>
+
+<style scoped>
+.net-badge {
+  flex-shrink: 0;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+/* The "More" toggle is desktop-hidden — everything is inline there. */
+.tb-more {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  /* The sidebar already shows the brand; drop it here to save width. */
+  .brand {
+    display: none;
+  }
+  /* Collapse secondary badges behind the "More" toggle. */
+  .badges {
+    display: none;
+    order: 99;
+    flex-basis: 100%;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .badges.open {
+    display: flex;
+  }
+  .tb-more {
+    display: inline-flex;
+  }
+  /* Keep the kill switch readable but compact so the essential row fits. */
+  .kill-btn {
+    padding: 7px 12px;
+  }
+  .controls {
+    margin-left: auto;
+  }
+}
+</style>

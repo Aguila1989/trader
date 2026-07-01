@@ -299,8 +299,13 @@ export async function setEmailVerified(userId: string): Promise<void> {
  * Set a new password hash AND revoke every existing session for the user (a
  * password change/reset should log other sessions out). Failure state is also
  * cleared so a freshly-reset user isn't still locked.
+ *
+ * `keepJti` (optional) is the session to PRESERVE: on a self-service password
+ * CHANGE the user's current browser session must stay logged in, so we revoke
+ * every OTHER session but leave that one active. Omitting it (the reset flow)
+ * revokes all sessions, as before.
  */
-export async function setPasswordHash(userId: string, passwordHash: string): Promise<void> {
+export async function setPasswordHash(userId: string, passwordHash: string, keepJti?: string): Promise<void> {
   if (!dbReady()) {
     const u = mem.users.get(userId);
     if (u) {
@@ -308,7 +313,7 @@ export async function setPasswordHash(userId: string, passwordHash: string): Pro
       u.failedLoginAttempts = 0;
       u.lockedUntil = null;
     }
-    await revokeAllSessionsForUser(userId);
+    await revokeAllSessionsForUser(userId, keepJti);
     return;
   }
   await getPool()
@@ -320,7 +325,7 @@ export async function setPasswordHash(userId: string, passwordHash: string): Pro
           SET passwordHash = @hash, failedLoginAttempts = 0, lockedUntil = NULL
         WHERE id = @id;`,
     );
-  await revokeAllSessionsForUser(userId);
+  await revokeAllSessionsForUser(userId, keepJti);
 }
 
 // --- sessions (server-side JWT revocation) ----------------------------------
@@ -412,16 +417,29 @@ export async function purgeExpiredSessions(): Promise<number> {
   return res.rowsAffected?.[0] ?? 0;
 }
 
-export async function revokeAllSessionsForUser(userId: string): Promise<void> {
+/**
+ * Revoke every active session for a user. When `keepJti` is supplied, the
+ * session with that id is left untouched so the caller's current session stays
+ * valid (self-service password change keeps the active browser logged in while
+ * logging out all other devices); omit it to revoke EVERY session (reset flow).
+ */
+export async function revokeAllSessionsForUser(userId: string, keepJti?: string): Promise<void> {
   if (!dbReady()) {
-    for (const s of mem.sessions.values()) if (s.userId === userId && s.revokedAt == null) s.revokedAt = Date.now();
+    for (const s of mem.sessions.values()) {
+      if (s.userId === userId && s.revokedAt == null && s.id !== keepJti) s.revokedAt = Date.now();
+    }
     return;
   }
-  await getPool()
+  const req = getPool()
     .request()
     .input("userId", sql.NVarChar(64), userId)
-    .input("now", sql.DateTime2, new Date())
-    .query(`UPDATE dbo.AuthSessions SET revokedAt = @now WHERE userId = @userId AND revokedAt IS NULL;`);
+    .input("now", sql.DateTime2, new Date());
+  let where = `userId = @userId AND revokedAt IS NULL`;
+  if (keepJti) {
+    req.input("keepJti", sql.NVarChar(64), keepJti);
+    where += ` AND id <> @keepJti`;
+  }
+  await req.query(`UPDATE dbo.AuthSessions SET revokedAt = @now WHERE ${where};`);
 }
 
 // --- single-use link tokens (verify / reset) --------------------------------

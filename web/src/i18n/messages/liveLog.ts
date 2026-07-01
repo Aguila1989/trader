@@ -4,7 +4,7 @@ export default {
   en: {
     title: "Live log",
     filterAria: "Live log filter",
-    filter: { all: "All", trades: "Trades" },
+    filter: { all: "All", trades: "Trades", system: "System" },
     actions: { pause: "Pause", resume: "Resume" },
     empty: "No events yet.",
     openInLogs: "Open in the Logs tab",
@@ -13,7 +13,7 @@ export default {
   nl: {
     title: "Live log",
     filterAria: "Live log-filter",
-    filter: { all: "Alles", trades: "Trades" },
+    filter: { all: "Alles", trades: "Trades", system: "Systeem" },
     actions: { pause: "Pauzeren", resume: "Hervatten" },
     empty: "Nog geen gebeurtenissen.",
     openInLogs: "Openen in het tabblad Logboek",
@@ -22,7 +22,7 @@ export default {
   fr: {
     title: "Journal en direct",
     filterAria: "Filtre du journal en direct",
-    filter: { all: "Tout", trades: "Trades" },
+    filter: { all: "Tout", trades: "Trades", system: "Système" },
     actions: { pause: "Pause", resume: "Reprendre" },
     empty: "Aucun événement pour le moment.",
     openInLogs: "Ouvrir dans l'onglet Journaux",
@@ -31,7 +31,7 @@ export default {
   es: {
     title: "Registro en vivo",
     filterAria: "Filtro del registro en vivo",
-    filter: { all: "Todo", trades: "Trades" },
+    filter: { all: "Todo", trades: "Trades", system: "Sistema" },
     actions: { pause: "Pausar", resume: "Reanudar" },
     empty: "Aún no hay eventos.",
     openInLogs: "Abrir en la pestaña Registros",

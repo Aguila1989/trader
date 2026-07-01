@@ -54,6 +54,7 @@ if (!loaded.value) void store.loadSettings();
     <p class="muted sp-note sp-risknote">↳ {{ t("settingsPanel.riskNote") }}</p>
 
     <p v-if="store.settingsError" class="sp-error">⚠ {{ store.settingsError }}</p>
+    <p v-if="!loaded" class="muted sp-note">{{ t("settingsPanel.notLoaded") }}</p>
 
     <div v-for="g in GROUPS" :key="g" class="sp-group">
       <h3 class="sp-group-title">{{ t("settingsPanel.groups." + g) }}</h3>
@@ -150,24 +151,37 @@ if (!loaded.value) void store.loadSettings();
   flex-direction: column;
   gap: 10px;
 }
+/* Aligned columns: label | value (input + unit) | Reset. A fixed-width value
+   column keeps every input/unit and every Reset button lined up down the panel. */
 .sp-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 168px auto;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 8px;
 }
 .sp-label {
   display: inline-flex;
   align-items: center;
   font-size: 13px;
-  min-width: 240px;
-  flex: 1 1 240px;
 }
 .sp-num,
 .sp-bool {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+.sp-reset {
+  justify-self: end;
+}
+/* Stack on very narrow screens: label on its own line, value + Reset below. */
+@media (max-width: 600px) {
+  .sp-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .sp-label {
+    grid-column: 1 / -1;
+  }
 }
 .sp-bool {
   cursor: pointer;
@@ -181,7 +195,8 @@ if (!loaded.value) void store.loadSettings();
   color: var(--text);
   padding: 6px 10px;
   font-family: ui-monospace, monospace;
-  max-width: 130px;
+  width: 112px;
+  box-sizing: border-box;
 }
 .sp-input:focus {
   outline: none;

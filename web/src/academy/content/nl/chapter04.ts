@@ -57,6 +57,17 @@ export const chapter04: Chapter = {
       ],
       example: "Stel dat je alle 100 USDC aan waarde in XLM steekt en hij over nacht 8 procent daalt; je staat dan 8 USDC in het rood zonder iets om het te verzachten. Als je in plaats daarvan 50 USDC in XLM en 50 USDC in stabiele USDC aanhield, kost dezelfde daling van 8 procent in XLM slechts 4 USDC, omdat de helft van je wallet nooit bewoog. Dezelfde markt, de helft van de pijn.",
     },
+    {
+      id: "c4-l6",
+      title: "Wat betekent mijn portfoliowaarde?",
+      paragraphs: [
+        "Je totale portfoliowaarde is de som van elke token die je aanhoudt, vermenigvuldigd met de huidige marktprijs, opgeteld in een enkele munteenheid, meestal USDC. Het is geen getal dat je zelf intikt; de app kijkt naar elke holding, controleert wat een eenheid op dit moment waard is, en telt alles op tot een cijfer dat een simpele vraag beantwoordt: als ik nu alles zou verkopen, hoeveel zou ik dan ongeveer hebben?",
+        "Omdat het van live prijzen afhangt, verandert je portfoliowaarde zelfs wanneer je niets doet. Je hoeft niet te kopen of te verkopen om het getal te laten bewegen; de markt doet dat voor je. Een rustige middag waarop XLM een paar procent oploopt tilt je totaal omhoog, en een plotselinge dip drukt het omlaag, terwijl jij enkel toekijkt.",
+        "De donutgrafiek is een beeld van diezelfde waarde, opgesplitst per holding. Elke schijf is een token, en de grootte van de schijf is het aandeel van die token in je totale waarde, uitgedrukt als een percentage. Een grote XLM-schijf naast een kleine USDC-schijf vertelt je in een oogopslag dat het grootste deel van je vermogen op XLM rust en met zijn prijs zou meebewegen.",
+        "Een handige manier om het voor te stellen: je portfoliowaarde is als de huidige marktprijs van alles in je huis. Je meubels en apparaten zijn vandaag iets waard, volgende maand iets meer of minder, ook al koop of verkoop je nooit een enkel stuk. Prijzen bewegen vanzelf, dus de totale waarde van wat je al bezit blijft stilletjes op de achtergrond veranderen.",
+      ],
+      example: "Je houdt 100 XLM en 20 USDC aan. Vanochtend is 1 XLM 0.10 USDC waard, dus je XLM is 10 USDC waard en je totale portfoliowaarde is 10 plus 20, oftewel 30 USDC. De donut toont XLM als een schijf van 33 procent en USDC als 67 procent. Tegen de middag stijgt XLM naar 0.12 USDC zonder dat je iets aanraakt: je XLM is nu 12 USDC waard, je totaal klimt naar 32 USDC, en de XLM-schijf groeit stilletjes. Je hebt niet getraded, en toch veranderde je portfoliowaarde.",
+    },
   ],
   quiz: [
     {
@@ -138,6 +149,25 @@ export const chapter04: Chapter = {
         },
       ],
       correctIndex: 1,
+    },
+    {
+      id: "c4-q5",
+      prompt: "Als je 100 XLM aanhoudt en de prijs stijgt, verandert je portfoliowaarde dan ook al heb je niet getraded?",
+      options: [
+        {
+          text: "Ja, want portfoliowaarde is je holdings maal hun huidige prijs, en die beweegt mee met de markt",
+          explanation: "Juist. Je hoeft niet te traden om het totaal te laten veranderen; wanneer de prijs van een token die je aanhoudt beweegt, beweegt je portfoliowaarde mee.",
+        },
+        {
+          text: "Nee, de waarde verandert alleen wanneer je koopt of verkoopt",
+          explanation: "Onjuist. Traden verandert wat je aanhoudt, maar ook holdings die je nooit aanraakt worden voortdurend opnieuw geprijsd, dus het totaal beweegt vanzelf.",
+        },
+        {
+          text: "Nee, de waarde staat vast tot je de pagina handmatig ververst",
+          explanation: "Onjuist. De app herberekent de prijzen op een timer tegen live markten, dus de waarde weerspiegelt echte prijsbewegingen of je nu ververst of niet.",
+        },
+      ],
+      correctIndex: 0,
     },
   ],
 };

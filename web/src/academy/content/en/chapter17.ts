@@ -63,6 +63,18 @@ export const chapter17: Chapter = {
       example:
         "A careful approach: write your secret key by hand on a piece of paper, seal it, and lock it in a drawer or safe at home — perhaps with a second copy at a trusted relative's house. A risky approach: snap a photo of the key \"so you don't lose it.\" That photo silently uploads to your cloud backup, and the moment that account is breached, your wallet goes with it.",
     },
+    {
+      id: "c17-l6",
+      title: "Finding your way around & receiving funds",
+      paragraphs: [
+        "The app is laid out around a left sidebar that lets you jump between its pages: Trading, Receive & Send, Pending Payments, Logs, and the Academy. On a phone the sidebar is tucked away — tap the ☰ (hamburger) icon in the corner to slide it open, pick a page, and it closes again. The Academy sits below a divider, set apart from the trading pages because it is the place you come to learn, not to trade — and it never asks you to log in.",
+        "To receive funds, open \"Receive & Send\" from the sidebar. There you will see your wallet's public address — the same G... address from the last lessons — together with a QR code. You can either copy the address and send it to whoever is paying you, or let them point their wallet app at the QR code on your screen.",
+        "A QR code is nothing more mysterious than a square barcode: in this case it simply encodes your public address as a pattern of dots. Because it is only the public side of your wallet, it is completely safe to show, share, screenshot, or print. The worst anyone can do with it is send you money. Under the code you will see the label \"Scan to send to this wallet\" — that tells the sender to aim their wallet app's camera at it.",
+        "The one rule that never changes carries straight over from the earlier lessons: a QR code only ever holds your public address. Your secret key must never go into a QR code, a screenshot, or anywhere a camera could read it. If an app or a person ever shows you a QR code and says it contains a secret key or seed phrase, treat that as a scam and walk away.",
+      ],
+      example:
+        "A friend wants to send you some XLM. You open \"Receive & Send\" in the sidebar (on your phone, you first tap ☰ to reveal it), and your G... address appears with a QR code beneath the words \"Scan to send to this wallet.\" Your friend opens their own wallet app, points the camera at your screen, and the address fills in automatically — no typing, no mistakes. The funds arrive, and at no point did you reveal anything secret.",
+    },
   ],
   quiz: [
     {
@@ -173,6 +185,51 @@ export const chapter17: Chapter = {
           text: "It is fine as long as the website looks professional.",
           explanation:
             "No. A polished look is exactly how scams gain trust. The seed phrase should never be entered into any website, no matter how it appears.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q6",
+      prompt:
+        "Is it safe to share the QR code of your public address so someone can pay you?",
+      options: [
+        {
+          text: "Yes — a QR code of your public address is safe to show, share, or screenshot; the worst anyone can do with it is send you money.",
+          explanation:
+            "Correct. The QR code only encodes your public (G...) address, which is meant to be shared. It cannot be used to spend your funds.",
+        },
+        {
+          text: "No — a QR code always contains your secret key, so showing it lets anyone drain your wallet.",
+          explanation:
+            "No. Your receive QR code holds only the public address. Your secret key must never go into a QR code in the first place.",
+        },
+        {
+          text: "Only if you blur out part of the code first.",
+          explanation:
+            "No. There is nothing to hide — a public-address QR code is safe to share whole. Blurring it would just stop the payment from working.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c17-q7",
+      prompt: "Where do you go in the app to receive funds?",
+      options: [
+        {
+          text: "The \"Receive & Send\" page in the sidebar, where your public address and its QR code are shown.",
+          explanation:
+            "Correct. \"Receive & Send\" displays your public address and QR code so a sender can copy the address or scan the code.",
+        },
+        {
+          text: "The Academy, after passing the security quiz.",
+          explanation:
+            "No. The Academy is only for learning and never handles funds. You receive funds from the \"Receive & Send\" page.",
+        },
+        {
+          text: "The Logs page, by reading your transaction history.",
+          explanation:
+            "No. Logs only shows past activity. To receive funds you open \"Receive & Send\" and share your address or QR code.",
         },
       ],
       correctIndex: 0,

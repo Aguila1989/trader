@@ -5,6 +5,8 @@ export default {
   en: {
     appName: "Atrium",
     academy: "Academy",
+    more: "More",
+    less: "Less",
     backToTrading: "← Back to Trading",
     backToApp: "← Back to App",
     backToLogin: "← Back to Login",
@@ -32,6 +34,8 @@ export default {
   nl: {
     appName: "Atrium",
     academy: "Academy",
+    more: "Meer",
+    less: "Minder",
     backToTrading: "← Terug naar handelen",
     backToApp: "← Terug naar app",
     backToLogin: "← Terug naar aanmelden",
@@ -59,6 +63,8 @@ export default {
   fr: {
     appName: "Atrium",
     academy: "Académie",
+    more: "Plus",
+    less: "Moins",
     backToTrading: "← Retour au trading",
     backToApp: "← Retour à l'app",
     backToLogin: "← Retour à la connexion",
@@ -86,6 +92,8 @@ export default {
   es: {
     appName: "Atrium",
     academy: "Academia",
+    more: "Más",
+    less: "Menos",
     backToTrading: "← Volver al trading",
     backToApp: "← Volver a la app",
     backToLogin: "← Volver al inicio de sesión",

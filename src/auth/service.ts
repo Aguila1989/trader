@@ -265,6 +265,59 @@ export async function resetPassword(input: {
   return { ok: true };
 }
 
+// --- change password (authenticated, self-service) --------------------------
+
+/** Neutral error for a wrong current-password, mirroring GENERIC_LOGIN_ERROR. */
+const GENERIC_CHANGE_PW_ERROR = "Current password is incorrect.";
+
+export type ChangePasswordResult = { ok: true } | { ok: false; status: number; error: string };
+
+/**
+ * Change the signed-in user's password. Runs behind requireAuth, so `userId`
+ * comes from the verified JWT (currentUserId()) and the route is already
+ * rate-limited by authRateLimiter.
+ *
+ * Order matters for anti-enumeration / no-state-leak:
+ *  1) Verify the CURRENT password FIRST. On any mismatch (or a missing account)
+ *     return the SAME generic error, before revealing anything else (e.g. we do
+ *     not surface lockout state here - only the real owner reaches step 2).
+ *  2) Validate the NEW password against the same policy as register/reset.
+ *  3) Persist the new bcrypt hash and revoke every OTHER session, KEEPING the
+ *     caller's current session (`keepJti`) alive so the browser stays logged in.
+ *     The existing JWT/cookie is intentionally NOT re-minted or rotated.
+ *
+ * The plaintext passwords are never logged or echoed anywhere.
+ */
+export async function changePassword(input: {
+  userId: string;
+  currentJti: string | null;
+  currentPassword: unknown;
+  newPassword: unknown;
+}): Promise<ChangePasswordResult> {
+  const currentPassword = String(input.currentPassword ?? "");
+  const newPassword = String(input.newPassword ?? "");
+
+  // 1) Verify the current password first (owner check, no state leak). The
+  // credential (with the bcrypt hash) is keyed by email, so resolve the account
+  // from the verified JWT's userId, then load its credential.
+  const account = await authStore.findUserById(input.userId);
+  const cred = account ? await authStore.findCredentialByEmail(account.email) : null;
+  if (!cred || !(await verifyPassword(currentPassword, cred.passwordHash))) {
+    return { ok: false, status: 400, error: GENERIC_CHANGE_PW_ERROR };
+  }
+
+  // 2) New password must satisfy the policy (same as register/reset).
+  const pwError = validatePasswordOrError(newPassword);
+  if (pwError) return { ok: false, status: 400, error: pwError };
+
+  // 3) Persist + revoke all OTHER sessions, keeping the current one alive.
+  const passwordHash = await hashPassword(newPassword);
+  await authStore.setPasswordHash(cred.user.id, passwordHash, input.currentJti ?? undefined);
+  // Fire-and-forget audit (never await; no password in the payload).
+  store.log("info", "User password changed", { userId: cred.user.id });
+  return { ok: true };
+}
+
 // --- email verification -----------------------------------------------------
 
 export type VerifyResult = { ok: true } | { ok: false; status: number; error: string };

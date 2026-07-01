@@ -63,6 +63,19 @@ export const chapter09: Chapter = {
       example:
         "Sur une journee, l'onglet du bot affiche dix trades clotures avec 12 USDC de profit realise et une position ouverte en hausse de 5 USDC non realises. L'onglet manuel affiche trois trades avec 4 USDC de perte realisee. Le total realise est de 8 USDC en hausse, mais la separation revele que le bot a gagne 12 tandis que vos trades manuels ont perdu 4. La lecture honnete est de laisser le bot continuer et d'examiner pourquoi vos entrees manuelles ont sous-performe.",
     },
+    {
+      id: "c9-l6",
+      title: "Lire le graphique d'evolution du portefeuille",
+      paragraphs: [
+        "Le graphique d'evolution trace la valeur totale de votre portefeuille, en USDC, au fil du temps. Chaque point est un instantane de tout ce que vous deteniez a ce moment, evalue et additionne comme les lecons precedentes l'ont decrit. Lisez de gauche a droite et vous regardez l'histoire de votre compte : ou il a commence, ou il en est maintenant, et a quel point la route entre les deux a ete cahoteuse.",
+        "La competence la plus importante est de distinguer deux raisons tres differentes pour lesquelles la ligne peut monter. L'appreciation de prix, c'est vos avoirs existants qui prennent de la valeur, et cela apparait comme une pente plutot lisse qui suit le marche. L'ajout de fonds, c'est de l'argent que vous avez depose, et cela apparait comme un saut vertical soudain qu'aucun mouvement de marche ne pourrait expliquer. Un bond de 100 a 300 USDC en une seule etape est presque surement un depot, pas une hausse de 200 pour cent, donc n'en creditez pas l'IA.",
+        "La forme de la ligne vous renseigne sur le risque. Une ligne plate et horizontale signifie que votre valeur se maintient stable, avec peu de choses dans un sens ou dans l'autre. Une ligne en dents de scie avec de grands sommets et des creux profonds signifie une forte volatilite : de plus grandes variations, ce qui represente a la fois plus d'opportunite et plus de risque. Aucune des deux n'est automatiquement bonne ; une ligne plate pendant une hausse du marche peut vouloir dire que vous restez en stablecoins et manquez les mouvements, tandis qu'une ligne violente peut vouloir dire que vous prenez plus de risque que prevu.",
+        "La periode change toute l'histoire, alors verifiez toujours celle que vous consultez. Une fenetre de 24 heures est surtout du bruit : les oscillations normales d'une journee paraissent dramatiques quand on zoome autant. Une vue sur 1 an lisse ce bruit en une vraie tendance, montrant si le compte croit reellement, derive ou saigne sur le long terme. Jugez la performance sur la longue periode et n'utilisez la courte que pour comprendre la journee.",
+        "Mis ensemble, le graphique est la facon dont vous jugez si l'IA fait vraiment croitre le portefeuille. Soustrayez mentalement chaque saut de depot, puis demandez-vous si la pente restante tend vers le haut sur une fenetre significative. Si la ligne ne monte que parce que vous ajoutez sans cesse de l'argent, la strategie ne fonctionne pas, aussi vert que le total puisse paraitre.",
+      ],
+      example:
+        "Votre ligne d'evolution sur 90 jours part de 200 USDC, monte en douceur jusqu'a 240, puis bondit tout droit a 440 en une seule etape le jour 45, et se termine a 455. Il est tentant d'appeler cela un gain de 127 pour cent. Mais le saut vertical de 200 le jour 45 est un depot, pas un profit de trading. Retirez-le et l'image reelle est 200 vers 240 avant le depot et 440 vers 455 apres, soit environ 20 plus 15, a peu pres 35 USDC d'appreciation reelle sur 400 de capital, pres de 9 pour cent. Sain, mais loin des 127, et seule la lecture corrigee des depots vous dit que l'IA fonctionne vraiment.",
+    },
   ],
   quiz: [
     {
@@ -165,6 +178,52 @@ export const chapter09: Chapter = {
         },
       ],
       correctIndex: 0,
+    },
+    {
+      id: "c9-q5",
+      prompt:
+        "Sur le graphique d'evolution, la ligne bondit tout droit de 100 a 300 USDC en une seule etape. Que s'est-il le plus probablement passe ?",
+      options: [
+        {
+          text: "Vous avez ajoute des fonds ; un saut vertical soudain est un depot, pas une appreciation de prix.",
+          explanation:
+            "Correct. Les depots apparaissent comme des marches verticales instantanees, tandis que l'appreciation de prix se montre comme une pente qui suit le marche, donc ce saut ne doit pas etre credite a l'IA.",
+        },
+        {
+          text: "L'IA a triple votre argent en un instant grace au trading.",
+          explanation:
+            "Incorrect. Les gains de trading s'accumulent comme une pente dans le temps, pas comme un unique bond vertical ; un saut comme celui-ci est presque toujours un depot.",
+        },
+        {
+          text: "Le graphique est casse et le chiffre doit etre ignore.",
+          explanation:
+            "Incorrect. Le saut est reel et significatif, il reflete simplement de l'argent neuf que vous avez ajoute plutot qu'un mouvement de marche.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c9-q6",
+      prompt:
+        "Vous voulez juger si l'IA fait vraiment croitre le portefeuille. Quelle lecture est la plus fiable ?",
+      options: [
+        {
+          text: "La ligne sur 24 heures, parce qu'elle se met a jour le plus souvent.",
+          explanation:
+            "Incorrect. Une fenetre de 24 heures est surtout du bruit intrajournalier ; les petites oscillations paraissent dramatiques et cachent la vraie tendance de long terme.",
+        },
+        {
+          text: "La tendance sur longue periode, avec les sauts de depot soustraits mentalement.",
+          explanation:
+            "Correct. Une longue fenetre revele la vraie tendance, et retirer les sauts de depot montre si la croissance vient de l'IA plutot que de l'argent que vous avez ajoute.",
+        },
+        {
+          text: "Le point le plus haut que la ligne ait jamais atteint.",
+          explanation:
+            "Incorrect. Un seul pic ne dit rien de la tendance ni de la part de la valeur provenant des depots par rapport aux vrais gains.",
+        },
+      ],
+      correctIndex: 1,
     },
   ],
 };
