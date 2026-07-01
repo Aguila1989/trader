@@ -125,7 +125,7 @@ function doReset(): void {
 
           <div class="cc-title">{{ ch.title }}</div>
           <div class="cc-desc">{{ ch.description }}</div>
-          <div class="cc-whofor">{{ t("academy.whoFor." + ch.level) }}</div>
+          <div class="cc-whofor">{{ ch.whoFor ?? t("academy.whoFor." + ch.level) }}</div>
 
           <div class="cc-foot">
             <span class="cc-pips">

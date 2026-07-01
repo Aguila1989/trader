@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Technical Analysis — Chart Patterns. An ADVANCED chapter on reading structure
 // straight off the chart: support and resistance, trends, classic chart
 // patterns, Fibonacci retracements, and applying them on this app's price

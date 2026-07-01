@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Expert-hoofdstuk over blockchain-architectuur: consensus en het double-spend-
 // probleem, het Stellar Consensus Protocol als Federated Byzantine Agreement,
 // nodes en quorumsets, het volledige leven van een transactie via Horizon en de

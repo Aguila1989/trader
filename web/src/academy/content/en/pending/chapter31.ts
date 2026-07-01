@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Chapter 31 (Tokenomics): supply, market cap, minting and burning, and using
 // tokenomics as a complementary lens on an AI trustline suggestion. Authored to
 // the same shape as content/en/chapter22.ts, ADVANCED level, with the per-chapter

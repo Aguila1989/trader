@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Microstructuur-uitbreiding voor hoofdstuk 12 ("Geavanceerde Stellar-functies").
 // Dit is GEEN losstaand hoofdstuk. Bij groen licht voeg je c12ExtraLessons toe aan
 // chapter12.lessons[] (na c12-l5) en c12ExtraQuiz aan chapter12.quiz[] (na

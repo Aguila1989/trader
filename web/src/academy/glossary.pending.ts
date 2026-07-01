@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // New BASIC glossary terms introduced by the pending Academy chapters
 // (c22 Trading Psychology, c23 Market Cycles, c24 Stablecoins and USDC,
 // c25 Crypto and Taxes, c26 How to Read Crypto News Critically).

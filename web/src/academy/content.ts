@@ -99,10 +99,33 @@ import { chapter19 as es19 } from "./content/es/chapter19";
 import { chapter20 as es20 } from "./content/es/chapter20";
 import { chapter21 as es21 } from "./content/es/chapter21";
 
-const EN: Chapter[] = [en01, en02, en03, en04, en05, en06, en07, en08, en09, en10, en11, en12, en13, en14, en15, en16, en17, en18, en19, en20, en21];
-const NL: Chapter[] = [nl01, nl02, nl03, nl04, nl05, nl06, nl07, nl08, nl09, nl10, nl11, nl12, nl13, nl14, nl15, nl16, nl17, nl18, nl19, nl20, nl21];
-const FR: Chapter[] = [fr01, fr02, fr03, fr04, fr05, fr06, fr07, fr08, fr09, fr10, fr11, fr12, fr13, fr14, fr15, fr16, fr17, fr18, fr19, fr20, fr21];
-const ES: Chapter[] = [es01, es02, es03, es04, es05, es06, es07, es08, es09, es10, es11, es12, es13, es14, es15, es16, es17, es18, es19, es20, es21];
+// Academy content expansion (chapters 22–37 + the Chapter-12 microstructure
+// extension), authored under ./content/<locale>/pending/ and aggregated in
+// ./pending. New chapters append to the end of each locale list (so they land at
+// the tail of their level group); the C12 extension is spliced onto chapter 12.
+import {
+  PENDING_EN,
+  PENDING_NL,
+  PENDING_FR,
+  PENDING_ES,
+  C12_EXT_LESSONS,
+  C12_EXT_QUIZ,
+} from "./pending";
+
+/** Splice the C12 microstructure lessons/quiz onto the Advanced Stellar Features
+ *  chapter for a locale, without editing the chapter12 source files. */
+function withC12Ext(ch12: Chapter, loc: "en" | "nl" | "fr" | "es"): Chapter {
+  return {
+    ...ch12,
+    lessons: [...ch12.lessons, ...C12_EXT_LESSONS[loc]],
+    quiz: [...ch12.quiz, ...C12_EXT_QUIZ[loc]],
+  };
+}
+
+const EN: Chapter[] = [en01, en02, en03, en04, en05, en06, en07, en08, en09, en10, en11, withC12Ext(en12, "en"), en13, en14, en15, en16, en17, en18, en19, en20, en21, ...PENDING_EN];
+const NL: Chapter[] = [nl01, nl02, nl03, nl04, nl05, nl06, nl07, nl08, nl09, nl10, nl11, withC12Ext(nl12, "nl"), nl13, nl14, nl15, nl16, nl17, nl18, nl19, nl20, nl21, ...PENDING_NL];
+const FR: Chapter[] = [fr01, fr02, fr03, fr04, fr05, fr06, fr07, fr08, fr09, fr10, fr11, withC12Ext(fr12, "fr"), fr13, fr14, fr15, fr16, fr17, fr18, fr19, fr20, fr21, ...PENDING_FR];
+const ES: Chapter[] = [es01, es02, es03, es04, es05, es06, es07, es08, es09, es10, es11, withC12Ext(es12, "es"), es13, es14, es15, es16, es17, es18, es19, es20, es21, ...PENDING_ES];
 
 // Any locale missing (or with an incomplete) list falls back to English.
 const BY_LOCALE: Partial<Record<Locale, Chapter[]>> = {

@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Capítulo avanzado sobre los indicadores esenciales del análisis técnico: medias
 // móviles, RSI, MACD, Bandas de Bollinger y cómo combinar un pequeño conjunto
 // confluente sin ahogarse en señales contradictorias. Redactado con exactamente la

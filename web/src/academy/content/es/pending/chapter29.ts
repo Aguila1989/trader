@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Advanced chapter on Trading Strategies (day/swing/HODL, dollar-cost averaging,
 // risk/reward ratio, position sizing, and the power of doing nothing). Authored
 // to the exact same shape as content/en/chapter01.ts, with the per-chapter

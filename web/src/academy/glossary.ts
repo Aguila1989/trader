@@ -7,6 +7,8 @@
 // without an entry for a term simply shows no tooltip for it (English fallback
 // at the locale level via glossaryFor).
 import type { Locale } from "./types";
+// New BASIC terms introduced by the Academy expansion (chapters 22–26).
+import { PENDING_GLOSSARY } from "./glossary.pending";
 
 export interface GlossaryEntry {
   term: string;
@@ -142,7 +144,12 @@ const es: Glossary = {
   taker: { term: "taker", def: "Una orden que cruza el spread para ejecutarse de inmediato contra una oferta en espera." },
 };
 
-export const GLOSSARY: Partial<Record<Locale, Glossary>> = { en, nl, fr, es };
+export const GLOSSARY: Partial<Record<Locale, Glossary>> = {
+  en: { ...en, ...PENDING_GLOSSARY.en },
+  nl: { ...nl, ...PENDING_GLOSSARY.nl },
+  fr: { ...fr, ...PENDING_GLOSSARY.fr },
+  es: { ...es, ...PENDING_GLOSSARY.es },
+};
 
 /** The glossary for a locale, falling back to English when not yet translated. */
 export function glossaryFor(locale: Locale): Glossary {

@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Advanced chapter on core technical-analysis indicators: moving averages, RSI,
 // MACD, Bollinger Bands, and how to combine a small confluent set without
 // drowning in conflicting signals. Authored to the exact same shape as

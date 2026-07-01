@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // ADVANCED hoofdstuk over liquiditeitspools en rendement: hoe AMM-pools werken en
 // uitbetalen, het verborgen risico van impermanent loss, yield farming, Stellars
 // poolvergoeding van 0,30% en wie die ontvangt, en wanneer liquiditeit leveren

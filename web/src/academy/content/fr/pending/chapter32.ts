@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Chapitre AVANCÉ sur les pools de liquidité et le rendement : comment fonctionnent et
 // rémunèrent les pools AMM, le risque caché de la perte impermanente, le yield farming,
 // les frais de pool de 0,30 % sur Stellar et qui les perçoit, et quand fournir de la

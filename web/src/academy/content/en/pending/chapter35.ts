@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Arbitrage and Market Efficiency (EXPERT): what arbitrage is, how Stellar path
 // payments enable atomic price-gap capture, why arbitrageurs tighten spreads and
 // add liquidity, whether MEV exists on Stellar, and how all of this shapes the

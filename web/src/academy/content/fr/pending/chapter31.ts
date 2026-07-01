@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Chapitre 31 (Tokenomics) : offre, capitalisation boursière, création et
 // destruction de tokens, et l'usage de la tokenomics comme grille de lecture
 // complémentaire face à une suggestion de ligne de confiance de l'IA. Rédigé sur

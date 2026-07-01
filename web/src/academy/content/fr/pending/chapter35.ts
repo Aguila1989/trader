@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Arbitrage et efficience des marchés (EXPERT) : ce qu'est l'arbitrage, comment
 // les paiements par chemin de Stellar permettent de capturer atomiquement les
 // écarts de prix, pourquoi les arbitragistes resserrent les spreads et ajoutent

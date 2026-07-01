@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Reference/gold-standard chapter for the Academy content expansion (Trading
 // Psychology). Authored to the exact same shape as content/en/chapter01.ts. The
 // only addition is the per-chapter `whoFor` one-liner, typed via a local

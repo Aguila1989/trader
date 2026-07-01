@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // EXPERT hoofdstuk over AI in trading: hoe modellen worden getraind, overfitting,
 // ethische en systemische risico's, hoe de transparante AI met mens-in-de-lus van
 // Atrium verschilt van een black-box-algoritme, en wanneer je de AI uitschakelt.

@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Crypto en belastingen: een BASIC-hoofdstuk in gewone taal over of je crypto
 // moet aangeven, wat als belastbaar feit telt, hoe je je administratie bijhoudt
 // met het tabblad Logboeken van deze app, en wat MiCA voor jou als dagelijkse

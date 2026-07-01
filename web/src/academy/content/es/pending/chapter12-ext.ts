@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Complemento de microestructura de mercado para el Capítulo 12 ("Funciones avanzadas de Stellar").
 // Esto NO es un capítulo independiente. Con la luz verde, añade c12ExtraLessons a
 // chapter12.lessons[] (después de c12-l5) y c12ExtraQuiz a chapter12.quiz[] (después de

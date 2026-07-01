@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // EXPERT chapter on regulation, compliance and crypto's future: MiCA for
 // European traders, FSMA and platform licensing, GDPR for platforms holding
 // personal data, CBDCs, and where crypto (and Stellar) is heading. This chapter

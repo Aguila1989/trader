@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // BASIC chapter on Stablecoins and USDC: what a stablecoin is, what USDC is and
 // who backs it, why it works as a portfolio base, the real risks (depeg), and
 // how to use it in this app. Authored to the exact same shape as

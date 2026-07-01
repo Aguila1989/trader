@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Chapitre EXPERT sur l'IA dans le trading : comment les modèles sont entraînés,
 // le surapprentissage, les risques éthiques et systémiques, en quoi l'IA
 // transparente d'Atrium avec humain dans la boucle diffère d'un algo boîte noire,

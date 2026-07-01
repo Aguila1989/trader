@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Drop-in registry for the Academy content expansion: 16 new chapters
 // (c22–c37) across all four locales, plus a two-lesson extension to Chapter 12
 // (c12-l6 maker/taker, c12-l7 price impact). NOTHING in the live app imports

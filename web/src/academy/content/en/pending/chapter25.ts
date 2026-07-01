@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Crypto and Taxes: a plain-language BASIC chapter on whether you must declare
 // crypto, what counts as a taxable event, how to keep records with this app's
 // Logs tab, and what MiCA means for you as an everyday user. Authored to the

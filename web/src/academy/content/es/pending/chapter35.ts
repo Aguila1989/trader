@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Arbitraje y eficiencia del mercado (EXPERTO): qué es el arbitraje, cómo los pagos
 // por ruta de Stellar permiten capturar de forma atómica las diferencias de precio,
 // por qué los arbitrajistas estrechan los diferenciales y aportan liquidez, si el MEV

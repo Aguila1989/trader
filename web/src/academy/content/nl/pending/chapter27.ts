@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Gevorderd hoofdstuk over de kern-indicatoren van technische analyse: voortschrijdende
 // gemiddelden, RSI, MACD, Bollinger Bands, en hoe je een kleine, samenlopende set combineert
 // zonder te verdrinken in tegenstrijdige signalen. Geschreven in exact dezelfde vorm als

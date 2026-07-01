@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // BASIC chapter on reading crypto news critically: why crypto news is different,
 // the common manipulation tactics, how to verify a claim, and which sources you
 // can trust. Authored to the exact same shape as content/en/chapter01.ts, with

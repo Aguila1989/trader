@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 import type { Chapter } from "../../../types";
 
 export const chapter26: Chapter & { whoFor: string } = {

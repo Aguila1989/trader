@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // EXPERT chapter on smart contracts and Soroban, Stellar's Rust/WASM
 // smart-contract platform: what a contract is, how it differs from a classic
 // operation, its risks, and DeFi composability via Blend, DeFindex and

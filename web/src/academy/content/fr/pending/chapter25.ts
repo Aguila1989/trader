@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Crypto et impôts : un chapitre BASIC en langage clair sur l'obligation ou non
 // de déclarer vos cryptos, ce qui compte comme fait générateur d'impôt, comment
 // tenir vos registres avec l'onglet Journaux de cette application, et ce que MiCA

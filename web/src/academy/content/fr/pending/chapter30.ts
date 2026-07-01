@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // Advanced chapter on On-Chain Data: reading wallet activity, whale moves, and
 // TVL to look under the market's hood and sanity-check the AI's suggestions.
 // Authored to the exact same shape as content/en/pending/chapter22.ts, with the

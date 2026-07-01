@@ -1,4 +1,4 @@
-// PENDING — do not activate until green light.
+// Academy expansion (chapters 22-37 + C12 extension) - integrated live via content.ts / glossary.ts / pending.ts.
 // BASIC chapter on Market Cycles: bull and bear markets, altseasons,
 // corrections vs crashes, why coins move together, and how to stay calm in a
 // downturn. Authored to the exact same shape as content/en/pending/chapter22.ts.
