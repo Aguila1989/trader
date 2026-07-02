@@ -1,7 +1,10 @@
 <script setup lang="ts">
-// Small, non-blocking info popover. Shown on hover (desktop) and on tap
-// (mobile); dismisses on mouse-out or tap-outside. Deliberately NOT the native
-// title= attribute — those can't be styled and don't work well on touch.
+// Small, non-blocking info popover. TAP-FIRST (App/Play Store requirement):
+// a click/tap on the ℹ icon PINS the popover open; it closes on a second tap,
+// a tap anywhere outside, or Escape. Desktop keeps a 300ms-delayed hover
+// PREVIEW as a convenience, but hover-out never closes a pinned popover — so
+// the "Learn more →" link inside is always reachable. Deliberately NOT the
+// native title= attribute — those can't be styled and don't work on touch.
 import { ref, watch, onBeforeUnmount, useId, computed } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -28,39 +31,94 @@ const props = withDefaults(
 const ariaLabel = computed(() => props.label || t("infoTip.moreInformation"));
 
 const open = ref(false);
+// True when the popover was opened by an explicit tap/click: only another
+// explicit action (tap, outside tap, Escape) closes it — never hover-out/blur.
+const pinned = ref(false);
 const root = ref<HTMLElement | null>(null);
 const popId = `infotip-${useId()}`;
 
-function show(): void {
-  open.value = true;
+const HOVER_DELAY_MS = 300;
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+function clearHoverTimer(): void {
+  if (hoverTimer != null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
 }
-function hide(): void {
+
+function onMouseEnter(): void {
+  if (open.value) return;
+  clearHoverTimer();
+  hoverTimer = setTimeout(() => {
+    open.value = true;
+  }, HOVER_DELAY_MS);
+}
+function onMouseLeave(): void {
+  clearHoverTimer();
+  if (!pinned.value) open.value = false;
+}
+
+/** The primary interaction: tap/click toggles the pinned popover. */
+function toggle(): void {
+  clearHoverTimer();
+  if (pinned.value) {
+    close();
+  } else {
+    pinned.value = true;
+    open.value = true;
+  }
+}
+
+function close(): void {
+  clearHoverTimer();
+  pinned.value = false;
   open.value = false;
 }
-function toggle(): void {
-  open.value = !open.value;
+
+// Keyboard focus shows the preview; focus leaving the whole root (icon AND
+// popover) hides an unpinned preview. Focus moving INTO the popover (e.g.
+// tabbing to "Learn more") must not close it — that was the old blur bug.
+function onFocusIn(): void {
+  if (!open.value) open.value = true;
+}
+function onFocusOut(e: FocusEvent): void {
+  if (pinned.value) return;
+  const next = e.relatedTarget as Node | null;
+  if (!next || !root.value?.contains(next)) open.value = false;
 }
 
 function onDocPointer(e: Event): void {
-  if (!root.value?.contains(e.target as Node)) hide();
+  if (!root.value?.contains(e.target as Node)) close();
+}
+function onDocKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") close();
 }
 
-// Only listen for outside taps while open (cheap, and avoids leaks).
+// Only listen for outside taps / Escape while open (cheap, and avoids leaks).
 watch(open, (isOpen) => {
-  if (isOpen) document.addEventListener("pointerdown", onDocPointer, true);
-  else document.removeEventListener("pointerdown", onDocPointer, true);
+  if (isOpen) {
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onDocKey, true);
+  } else {
+    document.removeEventListener("pointerdown", onDocPointer, true);
+    document.removeEventListener("keydown", onDocKey, true);
+  }
 });
-onBeforeUnmount(() =>
-  document.removeEventListener("pointerdown", onDocPointer, true),
-);
+onBeforeUnmount(() => {
+  clearHoverTimer();
+  document.removeEventListener("pointerdown", onDocPointer, true);
+  document.removeEventListener("keydown", onDocKey, true);
+});
 </script>
 
 <template>
   <span
     ref="root"
     class="infotip"
-    @mouseenter="show"
-    @mouseleave="hide"
+    @mouseenter="onMouseEnter"
+    @mouseleave="onMouseLeave"
+    @focusin="onFocusIn"
+    @focusout="onFocusOut"
   >
     <button
       type="button"
@@ -69,8 +127,6 @@ onBeforeUnmount(() =>
       :aria-describedby="open ? popId : undefined"
       :aria-expanded="open"
       @click.stop="toggle"
-      @focus="show"
-      @blur="hide"
     >
       &#9432;
     </button>
@@ -86,7 +142,7 @@ onBeforeUnmount(() =>
         v-if="learnMore"
         :to="learnMore"
         class="infotip-learn"
-        @click="hide"
+        @click="close"
       >
         {{ t("infoTip.learnMore") }}
       </RouterLink>
@@ -104,6 +160,10 @@ onBeforeUnmount(() =>
   color: var(--accent);
   font-weight: 600;
   text-decoration: none;
+  /* Comfortable tap target inside the popover (App Store requirement). */
+  min-height: 32px;
+  display: flex;
+  align-items: center;
 }
 .infotip-learn:hover {
   text-decoration: underline;

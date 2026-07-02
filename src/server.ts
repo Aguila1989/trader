@@ -62,7 +62,7 @@ import {
 } from "./stellar/market";
 import { getPricedPortfolio, type PricedPortfolio } from "./stellar/valuation";
 import { highTierSpecs, describeAsset } from "./stellar/universe";
-import { buildCancelOfferTransaction } from "./stellar/builder";
+import { buildCancelOfferTransaction, buildModifyOfferTransaction } from "./stellar/builder";
 import { signerPublicKey, signAndSubmit } from "./stellar/signer";
 import {
   resolveTradingAccountOrNull,
@@ -243,21 +243,19 @@ app.get("/api/balances", async (_req, res) => {
 });
 
 /**
- * Shared gate for non-trade on-chain account ops (trustlines, payments,
- * claimable-balance claims). Writes go out only with a signing key, the kill
- * switch released, and live trading armed - the same "no on-chain submit unless
- * armed" invariant the trade path enforces. Returns false (and writes the
- * response) when blocked.
+ * Shared gate for USER-INITIATED on-chain account ops (trustlines, payments,
+ * claimable-balance claims, offer cancel/modify).
+ *
+ * TRADING ACCESS MODE SEMANTICS (Bug 4C): the Read-only / Paper / Live mode
+ * gates the AI/BOT only — it never blocks the user's own wallet actions, so
+ * this gate deliberately does NOT require live trading to be armed. What it
+ * does require: the kill switch released (the operator's hard stop halts
+ * EVERYTHING, manual included) and a usable signing wallet for the current
+ * user. Returns false (and writes the response) when blocked.
  */
 async function ensureCanSubmit(res: Response): Promise<boolean> {
   if (store.killSwitch) {
     res.status(400).json({ error: "Kill switch is active - all on-chain actions are halted." });
-    return false;
-  }
-  if (!store.liveTrading) {
-    res.status(400).json({
-      error: "Live trading is OFF - arm it on the dashboard before signing on-chain actions.",
-    });
     return false;
   }
   // Feature 3: the current user must have a usable wallet. The env STELLAR_SECRET
@@ -478,7 +476,37 @@ app.get("/api/offers", async (_req, res) => {
     return;
   }
   try {
-    res.json(await getOpenOffers(pub));
+    const offers = await getOpenOffers(pub);
+    // Bug 4D: enrich each Horizon offer with our own order records where the
+    // offer came from a tracked proposal (original size + placement time) so
+    // the Active Orders UI can show filled % and age. Horizon only reports the
+    // REMAINING amount. Only sell-side proposals compare 1:1 with the offer's
+    // selling amount (manual orders are always sell-framed); for anything else
+    // the extras are simply omitted and the row shows as OPEN.
+    const tracked = new Map(
+      store
+        .snapshot()
+        .proposals.filter((p) => p.offerId)
+        .map((p) => [p.offerId as string, p]),
+    );
+    res.json(
+      offers.map((o) => {
+        const p = tracked.get(o.id);
+        const original = p && p.side === "sell" ? Number(p.amount) : null;
+        const remaining = Number(o.amount);
+        const filledPct =
+          original != null && original > 0 && Number.isFinite(remaining) && remaining <= original
+            ? Math.max(0, Math.min(100, ((original - remaining) / original) * 100))
+            : null;
+        return {
+          ...o,
+          original: original != null ? String(original) : undefined,
+          placedAt: p?.createdAt,
+          filledPct: filledPct != null ? Number(filledPct.toFixed(2)) : undefined,
+          status: filledPct != null && filledPct >= 0.01 ? "PARTIALLY_FILLED" : "OPEN",
+        };
+      }),
+    );
   } catch (err) {
     failGeneric(res, err, 502);
   }
@@ -527,6 +555,82 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
       totalValue: (Number(offer.amount) * Number(offer.price)).toFixed(7),
       initiator: "MANUAL",
       status: "CANCELLED",
+      txHash: hash,
+      orderId: offerId,
+    });
+    res.json({ hash });
+  } catch (err) {
+    failGeneric(res, err, 502);
+  }
+});
+
+// Bug 4D: MODIFY a resting offer in place — the same manageSellOffer with the
+// EXISTING offer id and new amount/price updates it on-chain. User-initiated
+// (behind the auth gate + CSRF like every route); serialized on the execution
+// queue so it can't race a trade onto the same Horizon sequence number.
+app.post("/api/offers/:id/modify", async (req, res) => {
+  if (!(await ensureCanSubmit(res))) return;
+  const offerId = String(req.params.id);
+  const amount = String(req.body?.amount ?? "").trim();
+  const price = String(req.body?.price ?? "").trim();
+  if (!(Number(amount) > 0)) {
+    res.status(400).json({ error: "amount must be a positive number" });
+    return;
+  }
+  if (!(Number(price) > 0)) {
+    res.status(400).json({ error: "price must be a positive number" });
+    return;
+  }
+  const pub = await resolveTradingAccountOrNull();
+  if (!pub) {
+    res.status(400).json({ error: "No signing account configured." });
+    return;
+  }
+  try {
+    const offer = (await getOpenOffers(pub)).find((o) => o.id === offerId);
+    if (!offer) {
+      res.status(404).json({ error: "Offer not found (already filled or cancelled?)." });
+      return;
+    }
+    // Balance pre-check (same rule as the Place Order form): only the INCREASE
+    // over the resting remainder needs free balance — the offer already
+    // reserves its current amount as a selling liability. The network enforces
+    // the exact reserve math on submit; this catches the obvious case early.
+    const delta = Number(amount) - Number(offer.amount);
+    if (delta > 0) {
+      const bal = (await getBalances(pub)).find((b) => b.asset === offer.selling);
+      if (!bal || Number(bal.balance) < delta) {
+        res.status(400).json({
+          error: `Insufficient ${offer.selling.split(":")[0]} balance to raise this order to ${amount}.`,
+        });
+        return;
+      }
+    }
+    const hash = await runExclusive(async () => {
+      const tx = await buildModifyOfferTransaction(
+        offer.selling,
+        offer.buying,
+        offerId,
+        amount,
+        price,
+      );
+      const r = await signAndSubmit(tx);
+      return r.hash;
+    });
+    store.log(
+      "trade",
+      `Modified open offer ${offerId} (${offer.selling.split(":")[0]}/${offer.buying.split(":")[0]}): ` +
+        `amount ${offer.amount} -> ${amount}, price ${offer.price} -> ${price}.`,
+    );
+    store.logTrade({
+      baseAsset: offer.selling,
+      quoteAsset: offer.buying,
+      action: "MODIFY",
+      amount,
+      price,
+      totalValue: (Number(amount) * Number(price)).toFixed(7),
+      initiator: "MANUAL",
+      status: "MODIFIED",
       txHash: hash,
       orderId: offerId,
     });
@@ -1719,17 +1823,32 @@ app.post("/api/settings/reset", (req, res) => {
   }
 });
 
-// Master arm switch: read-only (observe) vs. live trading (can submit on-chain).
-// The store refuses to arm when no STELLAR_SECRET is configured.
+// Master arm switch: read-only (observe) vs. live trading (the AI can submit
+// on-chain). The store refuses to arm when no STELLAR_SECRET is configured.
+//
+// USER-ONLY GUARD (Bug 3): these two endpoints are the ONLY code paths allowed
+// to change the trading access mode (initiator "user"). They sit behind the
+// default-deny auth gate + CSRF check like every /api route, and require an
+// EXPLICIT boolean so a missing/empty body can never coerce into a mode change
+// (same defense as /api/kill). Background jobs never call the store setters:
+// any non-user initiator is logged as a bug by the store.
 app.post("/api/live-trading", (req, res) => {
-  store.setLiveTrading(Boolean(req.body?.enabled));
+  if (typeof req.body?.enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  store.setLiveTrading(req.body.enabled, "user");
   res.json({ liveTrading: store.liveTrading });
 });
 
 // Paper trading: policy-passing proposals fill in SIMULATION against the live
 // book (no keys, no on-chain submit). Mutually exclusive with live trading.
 app.post("/api/paper-trading", (req, res) => {
-  store.setPaperTrading(Boolean(req.body?.enabled));
+  if (typeof req.body?.enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  store.setPaperTrading(req.body.enabled, "user");
   res.json({ paperTrading: store.paperTrading, liveTrading: store.liveTrading });
 });
 
@@ -1980,20 +2099,16 @@ async function start(): Promise<void> {
     // sessions at boot and every 12h. Unref'd so it never holds the process open.
     void purgeExpiredSessions().catch(() => {});
     setInterval(() => void purgeExpiredSessions().catch(() => {}), 12 * 3_600_000).unref();
-    // Opt-in: arm live trading at startup instead of booting read-only. Goes
-    // through setLiveTrading so it still refuses without a signing key or with
-    // the monitor off; logs loudly so an armed boot is never silent.
+    // Bug 3: the trading access mode now PERSISTS and is restored in
+    // hydrateFromDb exactly as the user last set it — the mode never changes
+    // automatically. AUTO_ARM_LIVE_TRADING (which overrode the boot mode) is
+    // therefore deprecated and ignored; warn so a stale .env isn't silently
+    // misleading.
     if (config.autoArmLiveTrading) {
       store.log(
         "warn",
-        "AUTO_ARM_LIVE_TRADING=true: arming live trading at startup (set it false to boot read-only).",
+        "AUTO_ARM_LIVE_TRADING is DEPRECATED and ignored: the trading access mode now persists across restarts exactly as last set on the dashboard. Remove it from your .env.",
       );
-      if (!store.setLiveTrading(true)) {
-        store.log(
-          "error",
-          "Auto-arm failed - staying READ-ONLY. Need a STELLAR_SECRET and POSITION_MONITOR_INTERVAL_SECONDS > 0.",
-        );
-      }
     }
     const mode = store.autoApprove ? "AUTO-TRADE" : "approve every trade";
     const host = config.bindHost === "0.0.0.0" ? "127.0.0.1" : config.bindHost;
@@ -2041,7 +2156,11 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 // so a crash can never leave the bot trading unattended in a corrupt state.
 function panicExit(label: string, err: unknown): never {
   try {
-    store.setLiveTrading(false);
+    // In-memory disarm only, moments before exit(1): the crash guard NEVER
+    // persists a mode change, so the restart restores the user's stored choice
+    // (Bug 3 contract: the mode is user-set only). The store still logs this
+    // non-user change loudly.
+    store.setLiveTrading(false, "crash-guard");
   } catch {
     /* best effort - we're exiting anyway */
   }

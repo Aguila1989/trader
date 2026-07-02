@@ -334,8 +334,23 @@ table.hist td.num, table.hist th.num { text-align: right; }
 .infotip-icon {
   background: none; border: 0; color: var(--muted); cursor: help;
   font-size: 13px; line-height: 1; padding: 0 0 0 4px;
+  position: relative;
 }
 .infotip-icon:hover, .infotip-icon:focus-visible { color: var(--accent); outline: none; }
+/* Touch devices: pad the ℹ hit area to ~44x44px WITHOUT growing the visible
+   glyph or shifting layout (App/Play Store touch-target requirement). Desktop
+   pointers keep the precise small target so nearby text stays clickable. */
+@media (pointer: coarse) {
+  .infotip-icon::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
 .infotip-pop {
   position: absolute; top: calc(100% + 6px); z-index: 60;
   width: max-content; max-width: 240px;

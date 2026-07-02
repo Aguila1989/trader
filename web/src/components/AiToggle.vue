@@ -4,9 +4,14 @@
 //   - Trading access  (Read-only / Paper / Live)   - store.liveTrading/paperTrading
 //   - AI master switch (Enable / Pause)             - Feature 1, store.aiEnabled
 //   - AI trade mode    (Approve every trade / Auto) - store.autoApprove
-// The header keeps only status badges + the always-reachable kill switch. NOTE:
-// Trading access also gates MANUAL orders and wallet sends, so arming now lives
-// on the Bot tab only.
+// The header keeps only status badges + the always-reachable kill switch.
+//
+// TRADING ACCESS MODE SEMANTICS (Bug 4C — gates the AI ONLY, never the user):
+//   Read-only:    AI cannot trade. Manual trades: allowed, submitted directly.
+//   Paper:        AI simulates.    Manual trades: allowed, paper-filled.
+//   Live trading: AI can trade.    Manual trades: allowed, submitted on-chain.
+// The mode only ever changes here (user click); it persists and is restored at
+// boot exactly as last set (Bug 3).
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 

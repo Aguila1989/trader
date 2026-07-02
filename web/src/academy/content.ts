@@ -100,7 +100,7 @@ import { chapter20 as es20 } from "./content/es/chapter20";
 import { chapter21 as es21 } from "./content/es/chapter21";
 
 // Academy content expansion (chapters 22–37 + the Chapter-12 microstructure
-// extension), authored under ./content/<locale>/pending/ and aggregated in
+// extension), authored under ./content/<locale>/ and aggregated in
 // ./pending. New chapters append to the end of each locale list (so they land at
 // the tail of their level group); the C12 extension is spliced onto chapter 12.
 import {

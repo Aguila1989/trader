@@ -187,8 +187,27 @@ export function evaluateDeterioration(
  * ------------------------------------------------------------------ */
 
 export interface TrustlineViews {
+  /** Positive suggestions only: AI-scored AND overall >= the configured minimum. */
   suggestions: TrustlineSuggestion[];
+  /**
+   * Tokens whose AI evaluation was UNAVAILABLE (fallback-scored). Never mixed
+   * into `suggestions` — the UI lists them separately as "unscored, evaluate
+   * manually" with an explicit warning. Scored tokens BELOW the minimum are
+   * hidden entirely (not returned at all).
+   */
+  unscored: TrustlineSuggestion[];
   warnings: TrustlineWarning[];
+  /** The active minimum-overall-score threshold (config.trustlineScan.minScore). */
+  minScore: number;
+}
+
+/**
+ * True when this scan row carries fallbackScores() instead of a real AI
+ * evaluation (see trustlineAnalyst.fallbackScores — it always sets this red
+ * flag). Such a row must never be presented as a positive suggestion.
+ */
+function isAiUnavailable(r: TokenScanResult): boolean {
+  return r.redFlags.some((f) => f.toLowerCase().includes("ai evaluation unavailable"));
 }
 
 /** Read the shared (DEFAULT_USER_ID) scored set: latest scan rows + a per-asset
@@ -220,8 +239,11 @@ async function loadScoredSet(): Promise<{
  * each scan: one is active only if it was made after the latest scan's date.
  */
 export async function computeUserViews(): Promise<TrustlineViews> {
+  const minScore = config.trustlineScan.minScore;
   const { current, prevByAsset, scanDate } = await loadScoredSet();
-  if (!scanDate || current.length === 0) return { suggestions: [], warnings: [] };
+  if (!scanDate || current.length === 0) {
+    return { suggestions: [], unscored: [], warnings: [], minScore };
+  }
 
   const pub = await resolveTradingAccountOrNull().catch(() => null);
   const held: TrustlineInfo[] = pub ? await getTrustlines(pub).catch(() => []) : [];
@@ -237,27 +259,35 @@ export async function computeUserViews(): Promise<TrustlineViews> {
     dismissals.filter((d) => d.kind === "warning").map((d) => canon(d.asset)),
   );
 
-  // Suggestions: scored tokens the user does NOT hold (highest overall first).
-  const suggestions: TrustlineSuggestion[] = current
+  // Candidates: tokens the user does NOT hold and has not dismissed. Split at
+  // the DATA level (the frontend never receives filtered-out rows):
+  //   - suggestions: real AI score AND overall >= minScore (highest first)
+  //   - unscored:    AI evaluation unavailable — listed separately, never suggested
+  //   - hidden:      real AI score BELOW minScore — not returned at all
+  const toCard = (r: TokenScanResult): TrustlineSuggestion => ({
+    asset: r.asset,
+    assetCode: r.assetCode,
+    assetIssuer: r.assetIssuer,
+    scanDate: r.scanDate,
+    scores: {
+      liquidityScore: r.liquidityScore,
+      legitimacyScore: r.legitimacyScore,
+      trendScore: r.trendScore,
+      riskScore: r.riskScore,
+      overallScore: r.overallScore,
+      summary: r.summary,
+      redFlags: r.redFlags,
+    },
+    homeDomain: r.rawData.homeDomain,
+    ...(r.rawData.toml ? { toml: r.rawData.toml } : {}),
+  });
+  const candidates = current
     .filter((r) => !heldByAsset.has(canon(r.asset)) && !dismissedSuggestions.has(canon(r.asset)))
-    .sort((a, b) => b.overallScore - a.overallScore)
-    .map((r) => ({
-      asset: r.asset,
-      assetCode: r.assetCode,
-      assetIssuer: r.assetIssuer,
-      scanDate: r.scanDate,
-      scores: {
-        liquidityScore: r.liquidityScore,
-        legitimacyScore: r.legitimacyScore,
-        trendScore: r.trendScore,
-        riskScore: r.riskScore,
-        overallScore: r.overallScore,
-        summary: r.summary,
-        redFlags: r.redFlags,
-      },
-      homeDomain: r.rawData.homeDomain,
-      ...(r.rawData.toml ? { toml: r.rawData.toml } : {}),
-    }));
+    .sort((a, b) => b.overallScore - a.overallScore);
+  const suggestions: TrustlineSuggestion[] = candidates
+    .filter((r) => !isAiUnavailable(r) && r.overallScore >= minScore)
+    .map(toCard);
+  const unscored: TrustlineSuggestion[] = candidates.filter(isAiUnavailable).map(toCard);
 
   // Warnings: scored tokens the user HOLDS that tripped a deterioration rule.
   const warnings: TrustlineWarning[] = [];
@@ -292,7 +322,7 @@ export async function computeUserViews(): Promise<TrustlineViews> {
     });
   }
 
-  return { suggestions, warnings };
+  return { suggestions, unscored, warnings, minScore };
 }
 
 /* ------------------------------------------------------------------ *

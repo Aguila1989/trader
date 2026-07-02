@@ -729,16 +729,27 @@ export const useTraderStore = defineStore("trader", () => {
     }
   }
 
-  async function cancelOffer(id: string): Promise<boolean> {
-    walletError.value = "";
-    const r = await api.cancelOffer(id);
-    if (r.error) {
-      walletError.value = r.error;
-      return false;
-    }
+  /** Cancel a resting offer. Returns null on success or the error message so
+   *  the Active Orders row can show it inline (Bug 4D). */
+  async function cancelOffer(id: string): Promise<string | null> {
+    const r = await api.cancelOffer(id).catch((e: Error) => ({ error: e.message }));
+    if (r.error) return r.error;
     await loadOffers();
     void loadBalances();
-    return true;
+    return null;
+  }
+
+  /** Modify a resting offer in place (same offer id, new amount/price).
+   *  Returns null on success or the error message for inline display. */
+  async function modifyOffer(
+    id: string,
+    changes: { amount: string; price: string },
+  ): Promise<string | null> {
+    const r = await api.modifyOffer(id, changes).catch((e: Error) => ({ error: e.message }));
+    if (r.error) return r.error;
+    await loadOffers();
+    void loadBalances();
+    return null;
   }
 
   // --- trustlines ---
@@ -801,14 +812,19 @@ export const useTraderStore = defineStore("trader", () => {
   // suggestions/warnings (the scored set diffed against their own trustlines).
   // Fetched on demand — never on the snapshot — so no user data is broadcast.
   const trustlineSuggestions = ref<TrustlineSuggestion[]>([]);
+  // Tokens the AI could NOT evaluate: listed apart, never as suggestions.
+  const trustlineUnscored = ref<TrustlineSuggestion[]>([]);
   const trustlineWarnings = ref<TrustlineWarning[]>([]);
+  const trustlineMinScore = ref(6);
   const trustlineScanError = ref("");
 
   async function loadTrustlineViews(): Promise<void> {
     try {
       const v = await api.trustlineViews();
       trustlineSuggestions.value = v.suggestions ?? [];
+      trustlineUnscored.value = v.unscored ?? [];
       trustlineWarnings.value = v.warnings ?? [];
+      if (typeof v.minScore === "number") trustlineMinScore.value = v.minScore;
     } catch {
       /* leave previous views on a transient error */
     }
@@ -1196,6 +1212,8 @@ export const useTraderStore = defineStore("trader", () => {
     removeTrustline,
     // Feature 4: AI trustline suggestions / warnings (per-user, fetched)
     trustlineSuggestions,
+    trustlineUnscored,
+    trustlineMinScore,
     trustlineWarnings,
     weeklyScanStatus,
     loadTrustlineViews,
@@ -1222,6 +1240,7 @@ export const useTraderStore = defineStore("trader", () => {
     openOffers,
     loadOffers,
     cancelOffer,
+    modifyOffer,
     activeTab,
     setActiveTab,
     liveLog,

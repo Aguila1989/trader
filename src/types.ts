@@ -155,11 +155,12 @@ export interface LogEntry {
  * Distinct from the generic message LogEntry above (which stays for the raw
  * diagnostics feed). These are the source of truth for the Logs tab + live log. */
 
-export type TradeLogAction = "BUY" | "SELL" | "SWAP" | "CANCEL" | "REJECTED";
+export type TradeLogAction = "BUY" | "SELL" | "SWAP" | "CANCEL" | "MODIFY" | "REJECTED";
 export type TradeLogStatus =
   | "FILLED"
   | "PARTIAL"
   | "CANCELLED"
+  | "MODIFIED"
   | "REJECTED"
   | "ABORTED";
 /** Who placed the trade — stored, never derived (mirrors the SetBy pattern). */

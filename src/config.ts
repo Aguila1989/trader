@@ -175,15 +175,12 @@ export const config = {
   autoApproveEnabled: bool("AUTO_APPROVE_ENABLED", false),
 
   /**
-   * Arm LIVE trading automatically at startup instead of booting read-only.
-   * Default false (the safe default: every boot starts read-only and you arm
-   * live deliberately on the dashboard, so a crash/restart never silently
-   * resumes on-chain trading). Set true ONLY for a deliberate, stable, attended
-   * deployment - and NOT under `npm run dev` (tsx watch), which restarts on
-   * every file save and would re-arm live each time. Still requires a signing
-   * key and the position monitor on (the auto-arm goes through setLiveTrading,
-   * which refuses otherwise). Arming live does NOT auto-execute: proposals still
-   * wait for approval unless AUTO_APPROVE_ENABLED is also true.
+   * DEPRECATED (Bug 3 — user-only trading mode). The trading access mode
+   * (read-only / paper / live) now PERSISTS in dbo.Settings and is restored at
+   * boot exactly as the user last set it on the dashboard, so an auto-arm
+   * override is no longer needed — and would violate the "the mode never
+   * changes automatically" contract. The value is still read so an old .env
+   * doesn't error; when set, the boot log warns that it is ignored.
    */
   autoArmLiveTrading: bool("AUTO_ARM_LIVE_TRADING", false),
 
@@ -271,6 +268,14 @@ export const config = {
     minuteOfDay: Math.min(1439, Math.max(0, Math.round(num("TRUSTLINE_SCAN_MINUTE_OF_DAY", 180)))),
     /** How many top tokens (by measured 24h XLM volume) to analyse. Default 10. */
     topN: Math.min(25, Math.max(1, Math.round(num("TRUSTLINE_SCAN_TOP_N", 10)))),
+    /**
+     * Minimum overall score (1–10) a token must reach to appear as a trustline
+     * SUGGESTION. Scored tokens below it are hidden from the suggestion list
+     * entirely; tokens whose AI evaluation was unavailable are never suggested
+     * (they surface in a separate "unscored — evaluate manually" bucket).
+     * 0 shows every scored token. Runtime-editable in the settings panel.
+     */
+    minScore: Math.min(10, Math.max(0, num("TRUSTLINE_SCAN_MIN_SCORE", 6))),
     /** Weeks of per-token scan history to retain (spec: ≥12). Default 16. */
     retentionWeeks: Math.max(12, Math.round(num("TRUSTLINE_SCAN_RETENTION_WEEKS", 16))),
   },

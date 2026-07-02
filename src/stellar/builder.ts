@@ -76,6 +76,41 @@ export async function buildOfferTransaction(
  * offer rests forever until filled or cancelled; this is the cancel half of
  * the position monitor's stale-offer management.
  */
+/**
+ * Build an UNSIGNED transaction that MODIFIES a resting offer in place: the
+ * same manageSellOffer operation with the EXISTING offer id but a new amount
+ * and/or price updates it on-chain (Bug 4D). Every offer Horizon returns for
+ * an account is a sell offer (selling X, buying Y), so manageSellOffer always
+ * lines up with the on-chain offer.
+ */
+export async function buildModifyOfferTransaction(
+  sellingSpec: string,
+  buyingSpec: string,
+  offerId: string,
+  amount: string,
+  price: string,
+): Promise<Transaction> {
+  if (!offerId) {
+    throw new Error("Cannot modify: no offer id.");
+  }
+  const account = await horizon.loadAccount(await requireTradingAccount());
+  return new TransactionBuilder(account, {
+    fee: recommendedFee(),
+    networkPassphrase: config.networkPassphrase,
+  })
+    .addOperation(
+      Operation.manageSellOffer({
+        selling: parseAsset(sellingSpec),
+        buying: parseAsset(buyingSpec),
+        amount,
+        price,
+        offerId,
+      }),
+    )
+    .setTimeout(120)
+    .build();
+}
+
 export async function buildCancelOfferTransaction(
   proposal: TradeProposal,
   offerId: string,

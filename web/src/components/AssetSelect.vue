@@ -28,7 +28,12 @@ const props = withDefaults(
 const placeholderLabel = computed(() => props.placeholder ?? t("assetSelect.selectToken"));
 const ariaLabelText = computed(() => props.ariaLabel ?? t("assetSelect.asset"));
 
-const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
+const emit = defineEmits<{
+  (e: "update:modelValue", value: string): void;
+  /** Fired after a pick closes the panel — lets the parent move focus to the
+   *  next logical input (e.g. the amount field in the Place Order form). */
+  (e: "selected", value: string): void;
+}>();
 
 const open = ref(false);
 const query = ref("");
@@ -86,7 +91,20 @@ function closeAndFocus(): void {
 }
 function pick(o: UniverseToken): void {
   emit("update:modelValue", o.spec);
-  closeAndFocus();
+  // Dismiss the search field's soft keyboard BEFORE closing so the panel is
+  // gone in the same tap (Bug 5: the keyboard collapsing mid-tap used to shift
+  // the layout and swallow the click, leaving the dropdown open).
+  searchEl.value?.blur();
+  close();
+  emit("selected", o.spec);
+  // Restore focus to the trigger for keyboard users — but only if the parent's
+  // @selected handler didn't already move focus to the next logical field.
+  void nextTick(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || root.value?.contains(active)) {
+      triggerEl.value?.focus();
+    }
+  });
 }
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "ArrowDown") {
@@ -171,6 +189,7 @@ onBeforeUnmount(() =>
           role="option"
           :aria-selected="o.spec.toUpperCase() === (modelValue ?? '').toUpperCase()"
           @mouseenter="activeIndex = i"
+          @pointerdown.prevent
           @click="pick(o)"
         >
           <span class="asset-code">{{ o.code }}</span>

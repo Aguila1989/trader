@@ -4,11 +4,11 @@
 // pair, and the list of open (resting) orders. A manual order is always framed
 // as "sell the YOU-SELL asset for the YOU-BUY asset" — base = sell, quote =
 // buy, side = sell — which maps directly onto placeManualOrder.
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
-import type { ManualOrderInput } from "../types";
+import { dateTimeStr, fmtNum } from "../format";
+import type { ManualOrderInput, OpenOffer } from "../types";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
@@ -133,6 +133,13 @@ function fillFromBook(price: string): void {
   limitPrice.value = price;
 }
 
+// Bug 5: after picking a token in the Place Order form, move focus to the next
+// logical input (the amount field) so the keyboard/mobile flow continues.
+const amountEl = ref<HTMLInputElement | null>(null);
+function focusAmount(): void {
+  amountEl.value?.focus();
+}
+
 async function placeOrder(): Promise<void> {
   if (!orderValid.value || store.placingOrder) return;
   const input: ManualOrderInput = {
@@ -154,17 +161,114 @@ async function placeOrder(): Promise<void> {
   void store.loadBalances();
 }
 
-// Open orders (all the account's resting offers).
+// --- Active Orders (Bug 4D): the account's open manual orders on Horizon,
+// with cancel + in-place modify. Auto-refreshes every 30s while mounted.
 function offerLabel(spec: string): string {
   return store.tokenFor(spec).code;
 }
-const cancelling = ref<string | null>(null);
-async function cancel(id: string): Promise<void> {
-  cancelling.value = id;
+
+const REFRESH_MS = 30_000;
+let offersTimer: ReturnType<typeof setInterval> | null = null;
+const refreshingOffers = ref(false);
+async function refreshOffers(): Promise<void> {
+  refreshingOffers.value = true;
   try {
-    await store.cancelOffer(id);
+    await store.loadOffers();
+  } finally {
+    refreshingOffers.value = false;
+  }
+}
+onMounted(() => {
+  void refreshOffers();
+  offersTimer = setInterval(() => void store.loadOffers(), REFRESH_MS);
+});
+onBeforeUnmount(() => {
+  if (offersTimer) clearInterval(offersTimer);
+});
+
+/** Per-row inline error (e.g. "could not cancel — already filled?"). */
+const rowError = ref<Record<string, string>>({});
+
+// Cancel: first tap arms an inline "cancel this order?" confirm; the explicit
+// confirm button submits. Errors surface inline on the row, never silently.
+const confirmingCancel = ref<string | null>(null);
+const cancelling = ref<string | null>(null);
+async function confirmCancel(id: string): Promise<void> {
+  cancelling.value = id;
+  rowError.value = { ...rowError.value, [id]: "" };
+  try {
+    const err = await store.cancelOffer(id);
+    if (err) {
+      rowError.value = { ...rowError.value, [id]: t("manualTrade.activeOrders.cancelFailed") };
+    }
   } finally {
     cancelling.value = null;
+    confirmingCancel.value = null;
+  }
+}
+
+// Modify: opens an inline edit form below the row (pre-filled with the current
+// price + remaining amount), applies the same balance pre-check as the Place
+// Order form, then asks for an explicit confirm with a summary before submit.
+const modifyingId = ref<string | null>(null);
+const modifyPrice = ref("");
+const modifyAmount = ref("");
+const modifyConfirmStep = ref(false);
+const modifySubmitting = ref(false);
+function openModify(o: OpenOffer): void {
+  confirmingCancel.value = null;
+  modifyingId.value = o.id;
+  modifyPrice.value = o.price;
+  modifyAmount.value = o.amount;
+  modifyConfirmStep.value = false;
+  rowError.value = { ...rowError.value, [o.id]: "" };
+}
+function closeModify(): void {
+  modifyingId.value = null;
+  modifyConfirmStep.value = false;
+}
+const modifyTarget = computed<OpenOffer | null>(
+  () => store.openOffers.find((o) => o.id === modifyingId.value) ?? null,
+);
+// Only the INCREASE over the resting remainder needs free balance — the offer
+// already reserves its current amount (same rule the backend re-checks).
+const modifyInsufficient = computed(() => {
+  const o = modifyTarget.value;
+  if (!o) return false;
+  const delta = Number(modifyAmount.value) - Number(o.amount);
+  return delta > 0 && delta > store.heldBalance(o.selling);
+});
+const modifyValid = computed(
+  () =>
+    Number(modifyAmount.value) > 0 &&
+    Number(modifyPrice.value) > 0 &&
+    !modifyInsufficient.value,
+);
+async function submitModify(): Promise<void> {
+  const o = modifyTarget.value;
+  if (!o || !modifyValid.value || modifySubmitting.value) return;
+  if (!modifyConfirmStep.value) {
+    // First click: show the "new price X, new amount Y — confirm?" summary.
+    modifyConfirmStep.value = true;
+    return;
+  }
+  modifySubmitting.value = true;
+  try {
+    const err = await store.modifyOffer(o.id, {
+      amount: modifyAmount.value.trim(),
+      price: modifyPrice.value.trim(),
+    });
+    if (err) {
+      rowError.value = {
+        ...rowError.value,
+        [o.id]: t("manualTrade.activeOrders.modifyFailed", { error: err }),
+      };
+      modifyConfirmStep.value = false;
+    } else {
+      closeModify();
+    }
+  } finally {
+    modifySubmitting.value = false;
   }
 }
 </script>
@@ -231,23 +335,6 @@ async function cancel(id: string): Promise<void> {
         </div>
       </div>
 
-      <h3>{{ t("manualTrade.openOrders") }}</h3>
-      <ul class="levels">
-        <li v-if="store.openOffers.length === 0" class="muted-row">
-          <span class="muted">{{ t("manualTrade.noRestingOrders") }}</span>
-        </li>
-        <li v-for="o in store.openOffers" :key="o.id" class="oo-row">
-          <span class="px">{{ offerLabel(o.selling) }} → {{ offerLabel(o.buying) }}</span>
-          <span class="amt">{{ fmtNum(o.amount) }} @ {{ fmtNum(o.price, 7) }}</span>
-          <button
-            class="btn oo-cancel"
-            :disabled="store.isReadOnly || store.killSwitch || cancelling === o.id"
-            @click="cancel(o.id)"
-          >
-            {{ cancelling === o.id ? "…" : t("manualTrade.actions.cancel") }}
-          </button>
-        </li>
-      </ul>
     </section>
 
     <section class="panel">
@@ -291,6 +378,7 @@ async function cancel(id: string): Promise<void> {
               :options="store.heldTokens"
               :placeholder="t('manualTrade.placeholders.heldToken')"
               :aria-label="t('manualTrade.aria.sellToken')"
+              @selected="focusAmount"
             />
           </label>
           <label class="order-field">
@@ -300,6 +388,7 @@ async function cancel(id: string): Promise<void> {
               :options="store.universe"
               :placeholder="t('manualTrade.placeholders.tokenToReceive')"
               :aria-label="t('manualTrade.aria.buyToken')"
+              @selected="focusAmount"
             />
           </label>
         </div>
@@ -308,6 +397,7 @@ async function cancel(id: string): Promise<void> {
           <label class="order-field">
             <span class="order-label">{{ t("manualTrade.amount") }} ({{ sellCode }})</span>
             <input
+              ref="amountEl"
               v-model="amount"
               class="order-input"
               :class="{ 'input-error': insufficient }"
@@ -392,6 +482,134 @@ async function cancel(id: string): Promise<void> {
         <p class="muted order-hint">
           {{ t("manualTrade.orderHint") }}
         </p>
+      </div>
+
+      <!-- Bug 4D: Active Orders — the account's open manual orders fetched
+           from the Stellar network, directly below the Place Order form.
+           Auto-refreshes every 30s; Cancel and Modify act on-chain. -->
+      <div class="ao-head">
+        <h3>{{ t("manualTrade.activeOrders.title") }}</h3>
+        <button class="btn ao-btn" :disabled="refreshingOffers" @click="refreshOffers">
+          {{ refreshingOffers ? "…" : t("manualTrade.actions.refresh") }}
+        </button>
+      </div>
+      <p class="muted ao-intro">{{ t("manualTrade.activeOrders.intro") }}</p>
+      <p v-if="store.openOffers.length === 0" class="muted">
+        {{ t("manualTrade.activeOrders.empty") }}
+      </p>
+      <div v-for="o in store.openOffers" :key="o.id" class="card ao-row">
+        <div class="row">
+          <span class="headline">
+            {{ offerLabel(o.selling) }} → {{ offerLabel(o.buying) }}
+            <span class="muted ao-type">{{ t("manualTrade.activeOrders.typeLimit") }}</span>
+          </span>
+          <span class="ao-status" :class="o.status === 'PARTIALLY_FILLED' ? 'warn' : 'pos'">
+            {{
+              o.status === "PARTIALLY_FILLED"
+                ? t("manualTrade.activeOrders.statusPartial")
+                : t("manualTrade.activeOrders.statusOpen")
+            }}
+          </span>
+        </div>
+        <div class="ao-details mono">
+          <span>
+            {{ o.original ? fmtNum(o.original) : fmtNum(o.amount) }} {{ offerLabel(o.selling) }}
+            <template v-if="o.original && o.original !== o.amount">
+              · {{ t("manualTrade.activeOrders.remaining", { amount: fmtNum(o.amount) }) }}
+            </template>
+          </span>
+          <span>@ {{ fmtNum(o.price, 7) }} {{ offerLabel(o.buying) }}/{{ offerLabel(o.selling) }}</span>
+          <span v-if="o.filledPct != null">
+            {{ t("manualTrade.activeOrders.filled", { pct: fmtNum(o.filledPct, 1) }) }}
+          </span>
+          <span v-if="o.placedAt" class="muted">
+            {{ t("manualTrade.activeOrders.placed") }}: {{ dateTimeStr(o.placedAt) }}
+          </span>
+        </div>
+
+        <p v-if="rowError[o.id]" class="violations">{{ rowError[o.id] }}</p>
+
+        <!-- Default row actions -->
+        <div v-if="confirmingCancel !== o.id && modifyingId !== o.id" class="ao-actions">
+          <button class="btn ao-btn" @click="openModify(o)">
+            {{ t("manualTrade.activeOrders.modify") }}
+          </button>
+          <button
+            class="btn danger ao-btn"
+            :disabled="store.killSwitch || cancelling === o.id"
+            @click="confirmingCancel = o.id"
+          >
+            {{ t("manualTrade.actions.cancel") }}
+          </button>
+        </div>
+
+        <!-- Inline cancel confirmation -->
+        <div v-else-if="confirmingCancel === o.id" class="ao-confirm">
+          <p class="warn-text">{{ t("manualTrade.activeOrders.cancelConfirm") }}</p>
+          <div class="ao-actions">
+            <button
+              class="btn danger ao-btn"
+              :disabled="cancelling === o.id"
+              @click="confirmCancel(o.id)"
+            >
+              {{ cancelling === o.id ? "…" : t("manualTrade.activeOrders.confirmCancel") }}
+            </button>
+            <button class="btn ao-btn" @click="confirmingCancel = null">
+              {{ t("manualTrade.activeOrders.keep") }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Inline modify form (pre-filled with current price + remaining) -->
+        <div v-else class="ao-modify">
+          <div class="order-fields">
+            <label class="order-field">
+              <span class="order-label">
+                {{ t("manualTrade.activeOrders.newPrice") }} ({{ offerLabel(o.buying) }}/{{ offerLabel(o.selling) }})
+              </span>
+              <input v-model="modifyPrice" class="order-input" type="text" inputmode="decimal" />
+            </label>
+            <label class="order-field">
+              <span class="order-label">
+                {{ t("manualTrade.activeOrders.newAmount") }} ({{ offerLabel(o.selling) }})
+              </span>
+              <input
+                v-model="modifyAmount"
+                class="order-input"
+                :class="{ 'input-error': modifyInsufficient }"
+                type="text"
+                inputmode="decimal"
+              />
+              <span v-if="modifyInsufficient" class="field-error">
+                {{ t("manualTrade.insufficientBalance", { amount: fmtNum(store.heldBalance(o.selling)), code: offerLabel(o.selling) }) }}
+              </span>
+            </label>
+          </div>
+          <p v-if="modifyConfirmStep" class="warn-text">
+            {{ t("manualTrade.activeOrders.modifyConfirm", { price: modifyPrice, amount: modifyAmount }) }}
+          </p>
+          <div class="ao-actions">
+            <button
+              class="btn primary ao-btn"
+              :disabled="!modifyValid || modifySubmitting"
+              @click="submitModify"
+            >
+              {{
+                modifySubmitting
+                  ? "…"
+                  : modifyConfirmStep
+                    ? t("manualTrade.activeOrders.confirmModify")
+                    : t("manualTrade.activeOrders.modify")
+              }}
+            </button>
+            <button
+              class="btn ao-btn"
+              @click="modifyConfirmStep ? (modifyConfirmStep = false) : closeModify()"
+            >
+              {{ modifyConfirmStep ? t("manualTrade.activeOrders.back") : t("manualTrade.actions.cancel") }}
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -496,14 +714,66 @@ async function cancel(id: string): Promise<void> {
 .book-level:hover {
   background: rgba(91, 140, 255, 0.1);
 }
-.oo-row {
+/* --- Active Orders (Bug 4D) -------------------------------------------- */
+.ao-head {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
+  margin-top: 18px;
 }
-.oo-cancel {
-  margin-left: auto;
-  padding: 2px 10px;
-  font-size: 12px;
+.ao-head h3 {
+  margin: 0;
+}
+.ao-intro {
+  font-size: 11px;
+  margin: 2px 0 10px;
+}
+.ao-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ao-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 8px;
+}
+.ao-status {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.ao-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12.5px;
+}
+.ao-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* App/Play Store touch-target floor on ALL pointer types, not just <768px. */
+.ao-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 18px;
+}
+.warn-text {
+  color: var(--warn);
+  font-size: 12.5px;
+  margin: 0;
+}
+.pos {
+  color: var(--pos);
+}
+.warn {
+  color: var(--warn);
 }
 </style>

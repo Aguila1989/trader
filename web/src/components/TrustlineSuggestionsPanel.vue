@@ -16,6 +16,9 @@ const { t } = useI18n();
 const store = useTraderStore();
 
 const suggestions = computed(() => store.trustlineSuggestions);
+// Tokens the AI could not evaluate: shown apart, never mixed into suggestions.
+const unscored = computed(() => store.trustlineUnscored);
+const minScore = computed(() => store.trustlineMinScore);
 const status = computed(() => store.weeklyScanStatus);
 const running = computed(() => status.value?.scanning ?? false);
 const busy = ref(false);
@@ -80,6 +83,12 @@ function dismiss(s: TrustlineSuggestion): void {
     <!-- Mandatory disclaimer, shown prominently above all suggestion cards. -->
     <div class="rs-warn">{{ t("trustlineSuggestions.disclaimer") }}</div>
 
+    <!-- Bug 1: suggestions are threshold-filtered SERVER-SIDE; this only tells
+         the user that the filter exists and where to adjust it. -->
+    <p v-if="minScore > 0" class="muted ts-minscore">
+      {{ t("trustlineSuggestions.minScoreNote", { n: minScore }) }}
+    </p>
+
     <p v-if="suggestions.length === 0" class="muted">{{ t("trustlineSuggestions.empty") }}</p>
 
     <div v-else class="ts-cards">
@@ -138,6 +147,41 @@ function dismiss(s: TrustlineSuggestion): void {
         </div>
       </div>
     </div>
+
+    <!-- Bug 1: tokens the AI could not evaluate. Clearly separated from the
+         suggestions above, with an explicit "not a suggestion" warning. -->
+    <template v-if="unscored.length > 0">
+      <h3 class="ts-unscored-title">{{ t("trustlineSuggestions.unscoredTitle") }}</h3>
+      <div class="rs-warn">{{ t("trustlineSuggestions.unscoredWarning") }}</div>
+      <div class="ts-cards">
+        <div v-for="s in unscored" :key="s.asset" class="card ts-card ts-card-unscored">
+          <div class="row">
+            <div class="headline">
+              <button class="link-token" :title="s.asset" @click="store.openToken(s.asset)">
+                {{ s.assetCode }}
+              </button>
+              <span v-if="s.toml?.projectName" class="muted ts-proj">{{ s.toml.projectName }}</span>
+            </div>
+            <div class="ts-overall warn">
+              {{ t("trustlineSuggestions.unscoredBadge") }}
+            </div>
+          </div>
+          <p class="ts-summary">{{ s.scores.summary }}</p>
+          <p v-if="s.toml?.description" class="muted ts-desc">{{ s.toml.description }}</p>
+          <p class="ts-links">
+            <a v-if="s.toml?.website" :href="s.toml.website" target="_blank" rel="noopener noreferrer">
+              {{ t("trustlineSuggestions.website") }}
+            </a>
+            <span v-else-if="!s.homeDomain" class="muted">{{ t("trustlineSuggestions.noToml") }}</span>
+            <span v-else class="muted mono">{{ s.homeDomain }}</span>
+          </p>
+          <div class="actions">
+            <button class="btn" @click="store.openToken(s.asset)">{{ t("trustlineSuggestions.actions.review") }}</button>
+            <button class="btn" @click="dismiss(s)">{{ t("trustlineSuggestions.actions.dismiss") }}</button>
+          </div>
+        </div>
+      </div>
+    </template>
   </section>
 </template>
 
@@ -162,6 +206,9 @@ function dismiss(s: TrustlineSuggestion): void {
 }
 .ts-cards { display: flex; flex-direction: column; gap: 10px; }
 .ts-card { display: flex; flex-direction: column; gap: 8px; }
+.ts-minscore { font-size: 12px; margin: 0 0 8px; }
+.ts-unscored-title { margin: 16px 0 8px; }
+.ts-card-unscored { border-style: dashed; border-color: #5e4a1f; }
 .link-token {
   background: none; border: 0; color: var(--accent); cursor: pointer;
   font: inherit; font-weight: 600; padding: 0;

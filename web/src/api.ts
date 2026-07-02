@@ -410,6 +410,11 @@ export const api = {
     postJSON<{ hash?: string; error?: string }>(
       `/api/offers/${encodeURIComponent(id)}/cancel`,
     ),
+  modifyOffer: (id: string, body: { amount: string; price: string }) =>
+    postJSON<{ hash?: string; error?: string }>(
+      `/api/offers/${encodeURIComponent(id)}/modify`,
+      body,
+    ),
   setAlert: (body: {
     base: string;
     quote: string;
@@ -442,9 +447,14 @@ export const api = {
   // This user's own suggestion + warning cards (the shared scored set diffed
   // against their trustlines + dismissals). No AI, no user data sent to the server.
   trustlineViews: () =>
-    getJSON<{ suggestions: TrustlineSuggestion[]; warnings: TrustlineWarning[] }>(
-      "/api/trustline-scan/views",
-    ),
+    getJSON<{
+      suggestions: TrustlineSuggestion[];
+      /** AI evaluation unavailable — never suggested, shown separately. */
+      unscored?: TrustlineSuggestion[];
+      warnings: TrustlineWarning[];
+      /** Active minimum-overall-score threshold for suggestions. */
+      minScore?: number;
+    }>("/api/trustline-scan/views"),
   dismissTrustlineSuggestion: (asset: string) =>
     postJSON<{ ok?: boolean; error?: string }>("/api/trustline-suggestions/dismiss", { asset }),
   snoozeTrustlineWarning: (asset: string) =>

@@ -11,6 +11,11 @@ export default {
     disclaimer:
       "⚠ Adding a trustline is always a risk. A trustline reserves 0.5 XLM of your balance and exposes you to the token issuer. Never add a trustline based solely on this suggestion — do your own research.",
     empty: "No suggestions yet. Run a scan or wait for the next weekly scan.",
+    minScoreNote: "Only tokens scoring {n}/10 or higher are suggested. Lower-scored tokens are hidden (threshold adjustable in Settings).",
+    unscoredTitle: "Unscored tokens — evaluate manually",
+    unscoredWarning:
+      "⚠ Automated AI evaluation was unavailable for these tokens. They are NOT suggestions — no quality assessment exists. Do your own research before adding a trustline.",
+    unscoredBadge: "Unscored",
     emptyWarnings: "No deterioration warnings. Your held tokens look healthy.",
     learnTrustlines: "Learn about trustlines →",
     whatDoesThisMean: "What does this mean? →",
@@ -72,6 +77,11 @@ export default {
     disclaimer:
       "⚠ Een trustline toevoegen is altijd een risico. Een trustline reserveert 0.5 XLM van je saldo en stelt je bloot aan de token-uitgever. Voeg nooit een trustline toe louter op basis van deze suggestie — doe je eigen onderzoek.",
     empty: "Nog geen suggesties. Voer een scan uit of wacht op de volgende wekelijkse scan.",
+    minScoreNote: "Alleen tokens met een score van {n}/10 of hoger worden voorgesteld. Lager scorende tokens blijven verborgen (drempel instelbaar bij Instellingen).",
+    unscoredTitle: "Niet-beoordeelde tokens — beoordeel zelf",
+    unscoredWarning:
+      "⚠ Voor deze tokens was geen automatische AI-beoordeling beschikbaar. Dit zijn GEEN suggesties — er bestaat geen kwaliteitsbeoordeling. Doe je eigen onderzoek voordat je een trustline toevoegt.",
+    unscoredBadge: "Niet beoordeeld",
     emptyWarnings: "Geen waarschuwingen. Je aangehouden tokens ogen gezond.",
     learnTrustlines: "Meer over trustlines →",
     whatDoesThisMean: "Wat betekent dit? →",
@@ -133,6 +143,11 @@ export default {
     disclaimer:
       "⚠ Ajouter une ligne de confiance comporte toujours un risque. Une ligne de confiance réserve 0.5 XLM de votre solde et vous expose à l'émetteur du token. N'ajoutez jamais une ligne de confiance sur la seule base de cette suggestion — faites vos propres recherches.",
     empty: "Aucune suggestion pour l'instant. Lancez une analyse ou attendez la prochaine analyse hebdomadaire.",
+    minScoreNote: "Seuls les tokens notés {n}/10 ou plus sont suggérés. Les tokens moins bien notés sont masqués (seuil réglable dans les Paramètres).",
+    unscoredTitle: "Tokens non évalués — à examiner manuellement",
+    unscoredWarning:
+      "⚠ L'évaluation automatique par IA n'était pas disponible pour ces tokens. Ce ne sont PAS des suggestions — aucune évaluation de qualité n'existe. Faites vos propres recherches avant d'ajouter une trustline.",
+    unscoredBadge: "Non évalué",
     emptyWarnings: "Aucune alerte. Vos tokens détenus semblent sains.",
     learnTrustlines: "En savoir plus sur les lignes de confiance →",
     whatDoesThisMean: "Qu'est-ce que cela signifie ? →",
@@ -194,6 +209,11 @@ export default {
     disclaimer:
       "⚠ Añadir una línea de confianza siempre es un riesgo. Una línea de confianza reserva 0.5 XLM de tu saldo y te expone al emisor del token. Nunca añadas una línea de confianza basándote únicamente en esta sugerencia — investiga por tu cuenta.",
     empty: "Aún no hay sugerencias. Ejecuta un análisis o espera al próximo análisis semanal.",
+    minScoreNote: "Solo se sugieren tokens con una puntuación de {n}/10 o superior. Los tokens con puntuación inferior quedan ocultos (umbral ajustable en Ajustes).",
+    unscoredTitle: "Tokens sin evaluar — revísalos manualmente",
+    unscoredWarning:
+      "⚠ La evaluación automática por IA no estuvo disponible para estos tokens. NO son sugerencias — no existe ninguna evaluación de calidad. Investiga por tu cuenta antes de añadir una trustline.",
+    unscoredBadge: "Sin evaluar",
     emptyWarnings: "Sin alertas. Tus tokens mantenidos se ven saludables.",
     learnTrustlines: "Más sobre líneas de confianza →",
     whatDoesThisMean: "¿Qué significa esto? →",

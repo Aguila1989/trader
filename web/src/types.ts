@@ -51,9 +51,17 @@ export interface OpenOffer {
   id: string;
   selling: string;
   buying: string;
+  /** REMAINING amount still resting on the book (Horizon reports remaining). */
   amount: string;
   price: string;
   lastModified?: string;
+  /** Original order size, when the offer came from an order we tracked. */
+  original?: string;
+  /** ISO timestamp the order was placed, when tracked. */
+  placedAt?: string;
+  /** 0–100, only when `original` is known. */
+  filledPct?: number;
+  status?: "OPEN" | "PARTIALLY_FILLED";
 }
 
 /** A manual limit order placed from the dashboard (POST /api/order). The

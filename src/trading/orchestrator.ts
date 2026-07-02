@@ -815,8 +815,11 @@ export interface ManualOrderInput {
  * and the monitor won't auto-manage a stop; pass them to get both.
  *
  * Returns the resulting proposal: "submitted" (filled or resting), "blocked"
- * with policyViolations, "pending_approval" when live trading is OFF, or a
- * paper fill in paper mode.
+ * with policyViolations, or a paper fill in paper mode. A manual order NEVER
+ * enters the approval queue and is NOT gated by the trading access mode (Bug
+ * 4B/4C): the mode gates the AI only — the user may always trade manually,
+ * needing only a usable signing wallet (read-only/live submit on-chain; paper
+ * simulates).
  */
 export async function placeManualOrder(
   input: ManualOrderInput,
@@ -862,6 +865,13 @@ export async function placeManualOrder(
 export async function approve(id: string): Promise<TradeProposal | undefined> {
   const p = store.getProposal(id);
   if (!p) return undefined;
+  // Bug 4A/4B: manual orders never take the approval path — they execute
+  // directly at placement. The Bot-tab queue is for AI proposals only; refuse
+  // here too so a stale pre-fix manual row can never be "approved" later.
+  if (p.initiator === "manual") {
+    store.log("warn", `Cannot approve ${shortId(id)}: manual orders don't use the approval queue.`);
+    return p;
+  }
   if (p.status !== "pending_approval") {
     store.log("warn", `Cannot approve ${shortId(id)} in status "${p.status}".`);
     return p;
@@ -882,6 +892,11 @@ export async function autoApprove(
 ): Promise<TradeProposal | undefined> {
   const p = store.getProposal(id);
   if (!p) return undefined;
+  // Bug 4A/4B: same as approve() — manual orders never sit in a queue.
+  if (p.initiator === "manual") {
+    store.log("warn", `Cannot auto-approve ${shortId(id)}: manual orders don't use the approval queue.`);
+    return p;
+  }
   if (p.status !== "proposed" && p.status !== "pending_approval") {
     store.log(
       "warn",
@@ -988,26 +1003,49 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   const paper = store.paperTrading;
 
   // Live-only gates. Paper trading skips them: it needs no signing key and no
-  // live-arm switch - it never touches the chain.
+  // live-arm switch - it never touches the chain (manual orders included: in
+  // Paper mode a manual order fills as a paper trade).
+  //
+  // TRADING ACCESS MODE SEMANTICS (Bug 4C — mirrored on store.liveTrading):
+  //   Read-only:    AI cannot trade. Manual trades: allowed, submitted directly.
+  //   Paper:        AI simulates.    Manual trades: allowed, paper-filled.
+  //   Live trading: AI can trade.    Manual trades: allowed, submitted on-chain.
+  // The mode gates the AI/bot ONLY. A manual order (initiator "manual") never
+  // enters the approval queue and is never held by the live-arm switch — the
+  // only hard requirement is a usable signing wallet (and, as for every trade,
+  // the policy engine incl. kill switch below).
   if (!paper) {
-    if (isReadOnly) {
-      store.updateProposal(id, {
-        status: "blocked",
-        policyViolations: ["Read-only mode: no signing key configured."],
-      });
-      store.log("error", `Cannot execute ${shortId(id)}: read-only mode (no signing key).`);
-      return;
-    }
-    // A signing key exists, but live trading is switched OFF on the dashboard.
-    // Unlike the no-key case this is recoverable, so hold the proposal for
-    // manual approval (don't kill it): flip to Live, then Approve to submit.
-    if (!store.liveTrading) {
-      store.updateProposal(id, {
-        status: "pending_approval",
-        error: "Live trading is OFF (read-only). Enable it on the dashboard, then approve.",
-      });
-      store.log("warn", `Proposal ${shortId(id)} held: live trading is OFF (read-only).`);
-      return;
+    if (p.initiator === "manual") {
+      if (!(await resolveTradingAccountOrNull().catch(() => null))) {
+        store.updateProposal(id, {
+          status: "blocked",
+          policyViolations: [
+            "No usable signing wallet - set up or import a wallet before placing manual orders.",
+          ],
+        });
+        store.log("error", `Cannot execute ${shortId(id)}: no usable signing wallet.`);
+        return;
+      }
+    } else {
+      if (isReadOnly) {
+        store.updateProposal(id, {
+          status: "blocked",
+          policyViolations: ["Read-only mode: no signing key configured."],
+        });
+        store.log("error", `Cannot execute ${shortId(id)}: read-only mode (no signing key).`);
+        return;
+      }
+      // A signing key exists, but live trading is switched OFF on the dashboard.
+      // Unlike the no-key case this is recoverable, so hold the AI proposal for
+      // manual approval (don't kill it): flip to Live, then Approve to submit.
+      if (!store.liveTrading) {
+        store.updateProposal(id, {
+          status: "pending_approval",
+          error: "Live trading is OFF (read-only). Enable it on the dashboard, then approve.",
+        });
+        store.log("warn", `Proposal ${shortId(id)} held: live trading is OFF (read-only).`);
+        return;
+      }
     }
   }
 

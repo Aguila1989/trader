@@ -297,6 +297,22 @@ const CATALOG: SettingDef[] = [
     },
   },
   {
+    key: "trustlineScanMinScore",
+    group: "automation",
+    label: "Trustline suggestion min score",
+    description:
+      "Minimum overall score (1-10) a scanned token needs to appear as a trustline suggestion. Lower-scored tokens are hidden; tokens the AI could not evaluate are listed separately as unscored and are never suggested. 0 shows every scored token.",
+    type: "number",
+    min: 0,
+    max: 10,
+    step: 1,
+    int: true,
+    get: () => config.trustlineScan.minScore,
+    set: (v) => {
+      config.trustlineScan.minScore = v as number;
+    },
+  },
+  {
     key: "trustlineScanMinuteOfDay",
     group: "automation",
     label: "Trustline scan time",

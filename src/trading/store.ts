@@ -52,6 +52,13 @@ import type {
   WeeklyScanStatus,
 } from "../types";
 
+/**
+ * Who changed the trading access mode. Only "user" persists the new mode; only
+ * "user" and "restore" (boot re-load of the user's persisted choice) are
+ * legitimate — any other initiator trips the [MODE] bug alert in the live log.
+ */
+export type TradingModeInitiator = "user" | "restore" | "system" | "crash-guard";
+
 const MAX_LOGS = 200;
 const MAX_PROPOSALS = 100;
 /** In-memory fallbacks when no DB is configured (history is otherwise DB-only). */
@@ -163,16 +170,30 @@ class Store {
   killSwitch = false;
   autoApprove = config.autoApproveEnabled;
   /**
-   * Runtime arm switch. false = behave read-only (proposals are generated but
-   * NEVER submitted), even when a STELLAR_SECRET is configured. Defaults OFF on
-   * every boot so the operator must deliberately go live from the dashboard.
-   * Cannot be turned on without a signing key (see setLiveTrading).
+   * TRADING ACCESS MODE semantics (liveTrading + paperTrading together encode
+   * Read-only / Paper / Live). The mode gates the AI/BOT only — never the user:
+   *   Read-only:    AI cannot trade. Manual trades: allowed, submitted directly
+   *                 by the user (given a usable signing wallet).
+   *   Paper:        AI simulates trades. Manual trades: allowed, executed as
+   *                 paper trades.
+   *   Live trading: AI can trade. Manual trades: allowed, submitted on-chain.
+   *
+   * The mode ONLY changes on an explicit user action (the dashboard toggle →
+   * /api/live-trading | /api/paper-trading → setLiveTrading/setPaperTrading with
+   * initiator "user"). It is persisted (dbo.Settings "tradingMode", operator
+   * scope) and RESTORED at boot exactly as last set — never reset to a default,
+   * never changed by any background job. Every change is logged with old value,
+   * new value and initiator; a non-user initiator is treated as a bug and
+   * alerted in the live log.
+   *
+   * Live still cannot be armed without a signing key (see setLiveTrading).
    */
   liveTrading = false;
   /**
    * Paper-trading arm switch. true = policy-passing proposals fill in SIMULATION
    * against the live order book (no keys, no on-chain submit), for a zero-risk
-   * forward test. Mutually exclusive with liveTrading. Defaults OFF on boot.
+   * forward test. Mutually exclusive with liveTrading. See the mode-semantics
+   * note on liveTrading above: user-set only, persisted, restored at boot.
    */
   paperTrading = false;
   daily: DailyState = freshDaily();
@@ -284,6 +305,19 @@ class Store {
       // Operational settings overrides (Feature 2) survive restart. Applied into
       // `config` before the loops start so cadences pick up the stored values.
       await this.hydrateSettings();
+      // Trading access mode survives restart: restore EXACTLY what the user
+      // last set (never reset to a default, never auto-change). Runs AFTER
+      // hydrateSettings so a persisted monitor-interval override is already in
+      // config before setLiveTrading's monitor guard evaluates it. If arming
+      // live is refused (key/monitor missing), the guard logs why and the
+      // process stays read-only — the STORED choice is left untouched, so a
+      // later restart with the problem fixed restores live again.
+      const mode = await repo.getSetting("tradingMode");
+      if (mode === "live") {
+        this.setLiveTrading(true, "restore");
+      } else if (mode === "paper") {
+        this.setPaperTrading(true, "restore");
+      }
       // Rejected pending payments (Feature 5) survive restart.
       const rej = await repo.getSetting("rejectedClaimables");
       if (rej) {
@@ -984,12 +1018,61 @@ class Store {
     if (applied > 0) this.log("info", `Applied ${applied} persisted setting override(s).`);
   }
 
+  /** The current tri-state access mode derived from the two arm switches. */
+  tradingMode(): "live" | "paper" | "readonly" {
+    return this.liveTrading ? "live" : this.paperTrading ? "paper" : "readonly";
+  }
+
   /**
-   * Arm/disarm live trading at runtime. Refuses to arm when there is no signing
-   * key (isReadOnly): you cannot trade without a secret, and the toggle must not
-   * pretend otherwise. Returns the resulting state.
+   * Audit-log one access-mode transition. The mode is a USER-ONLY control: any
+   * change whose initiator is not "user" (or "restore" = boot re-load of the
+   * user's own persisted choice) is treated as a BUG and alerted in the live
+   * log, per the mode contract on the liveTrading field above.
    */
-  setLiveTrading(enabled: boolean): boolean {
+  private logModeChange(
+    oldMode: string,
+    newMode: string,
+    initiator: TradingModeInitiator,
+  ): void {
+    if (oldMode === newMode) return;
+    this.log(
+      "warn",
+      `[MODE] Trading access changed: ${oldMode} -> ${newMode} (initiator: ${initiator}).`,
+    );
+    if (initiator !== "user" && initiator !== "restore") {
+      this.log(
+        "error",
+        `[MODE] BUG: trading access was changed by a NON-USER initiator ("${initiator}"). ` +
+          "The access mode must only ever change from the dashboard toggle - please report this.",
+      );
+    }
+  }
+
+  /**
+   * Persist the mode so a restart restores EXACTLY what the user last set.
+   * Stored under the operator scope (DEFAULT_USER_ID) because the arm switch is
+   * global process state, while dbo.Settings rows are per-user — without the
+   * explicit scope a change made inside a logged-in request would be written
+   * under that user's id and never found again by the boot-time restore.
+   * Only USER changes persist: a crash-guard disarm etc. must never overwrite
+   * the user's stored choice.
+   */
+  private persistTradingMode(): void {
+    const mode = this.tradingMode();
+    this.persist(() =>
+      runWithUserId(DEFAULT_USER_ID, () => repo.upsertSetting("tradingMode", mode)),
+    );
+  }
+
+  /**
+   * Arm/disarm live trading. USER-INITIATED ONLY (see liveTrading field docs):
+   * pass initiator "user" from the mode endpoints, "restore" from the boot-time
+   * re-load of the persisted mode. Anything else logs a bug alert. Refuses to
+   * arm when there is no signing key (isReadOnly): you cannot trade without a
+   * secret, and the toggle must not pretend otherwise. Returns the resulting state.
+   */
+  setLiveTrading(enabled: boolean, initiator: TradingModeInitiator = "system"): boolean {
+    const oldMode = this.tradingMode();
     if (enabled && isReadOnly) {
       this.log(
         "error",
@@ -1023,18 +1106,22 @@ class Store {
       "warn",
       enabled
         ? "LIVE TRADING ENABLED - policy-passing trades can now be submitted on-chain."
-        : "Live trading disabled - READ-ONLY (proposals are generated but never submitted).",
+        : "Live trading disabled - READ-ONLY for the AI (manual trading stays available).",
     );
+    this.logModeChange(oldMode, this.tradingMode(), initiator);
+    if (initiator === "user") this.persistTradingMode();
     this.emit("state", this.snapshot());
     return this.liveTrading;
   }
 
   /**
-   * Arm/disarm PAPER trading. Unlike live trading this needs no signing key -
-   * it never touches the chain. Enabling it disarms live trading (mutually
-   * exclusive) so a simulated session can never accidentally submit real orders.
+   * Arm/disarm PAPER trading. USER-INITIATED ONLY (same contract as
+   * setLiveTrading). Unlike live trading this needs no signing key - it never
+   * touches the chain. Enabling it disarms live trading (mutually exclusive) so
+   * a simulated session can never accidentally submit real orders.
    */
-  setPaperTrading(enabled: boolean): boolean {
+  setPaperTrading(enabled: boolean, initiator: TradingModeInitiator = "system"): boolean {
+    const oldMode = this.tradingMode();
     this.paperTrading = enabled;
     if (enabled && this.liveTrading) {
       this.liveTrading = false;
@@ -1046,6 +1133,8 @@ class Store {
         ? "PAPER TRADING ENABLED - policy-passing trades fill in SIMULATION only (no on-chain submit, zero risk)."
         : "Paper trading disabled.",
     );
+    this.logModeChange(oldMode, this.tradingMode(), initiator);
+    if (initiator === "user") this.persistTradingMode();
     this.emit("state", this.snapshot());
     return this.paperTrading;
   }

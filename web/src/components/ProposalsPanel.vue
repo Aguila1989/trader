@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, timeStr, explorerTx } from "../format";
 
 const { t } = useI18n();
 const store = useTraderStore();
+
+// Bug 4A: the Bot-tab proposal feed / approval queue is for AI (and system)
+// proposals ONLY. Manual orders execute directly at placement and show up in
+// the Manual tab (result line + Active Orders) and the trade history — never
+// here for approval or rejection.
+const proposals = computed(() => store.proposals.filter((p) => p.initiator !== "manual"));
 
 function statusText(s: string): string {
   return s.replace(/_/g, " ");
@@ -42,9 +49,9 @@ function statusText(s: string): string {
   <section class="panel">
     <h2>{{ t("proposals.title") }}</h2>
     <div class="proposals">
-      <p v-if="store.proposals.length === 0" class="muted">{{ t("proposals.empty") }}</p>
+      <p v-if="proposals.length === 0" class="muted">{{ t("proposals.empty") }}</p>
 
-      <div v-for="p in store.proposals" :key="p.id" class="card">
+      <div v-for="p in proposals" :key="p.id" class="card">
         <div class="row">
           <span class="headline">
             <span :class="p.side === 'buy' ? 'side-buy' : 'side-sell'">

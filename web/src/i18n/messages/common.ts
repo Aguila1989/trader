@@ -28,7 +28,7 @@ export default {
         "Auto-trade submits policy-passing AI proposals without a click (still requires Live armed). Approve every trade queues them for your approval. Manual orders are unaffected.",
       access: "Trading access",
       accessHint:
-        "Read-only observes; Paper simulates fills; Live can submit on-chain. This also gates your manual orders and wallet sends.",
+        "Gates the AI only: Read-only = the AI observes; Paper = the AI simulates fills; Live = the AI can submit on-chain. Your manual orders and wallet actions are always allowed (in Paper they execute as paper trades).",
     },
   },
   nl: {
@@ -57,7 +57,7 @@ export default {
         "Auto-trade verstuurt AI-voorstellen die de regels doorstaan zonder klik (vereist nog steeds dat Live actief is). Elke trade goedkeuren zet ze klaar voor jouw goedkeuring. Handmatige orders blijven ongemoeid.",
       access: "Handelstoegang",
       accessHint:
-        "Alleen-lezen observeert; Paper simuleert fills; Live kan on-chain versturen. Dit geldt ook voor je handmatige orders en wallet-verzendingen.",
+        "Geldt alleen voor de AI: Alleen-lezen = de AI observeert; Paper = de AI simuleert fills; Live = de AI kan on-chain versturen. Je handmatige orders en wallet-acties zijn altijd toegestaan (in Paper worden ze als papieren trades uitgevoerd).",
     },
   },
   fr: {
@@ -86,7 +86,7 @@ export default {
         "Auto-trade envoie les propositions de l'IA conformes à la politique sans clic (nécessite quand même que le mode Live soit activé). Approuver chaque transaction les met en attente de votre validation. Les ordres manuels ne sont pas affectés.",
       access: "Accès au trading",
       accessHint:
-        "Lecture seule observe ; Paper simule les exécutions ; Live peut soumettre on-chain. Cela conditionne aussi vos ordres manuels et les envois depuis le portefeuille.",
+        "Ne s'applique qu'à l'IA : Lecture seule = l'IA observe ; Paper = l'IA simule les exécutions ; Live = l'IA peut soumettre on-chain. Vos ordres manuels et actions de portefeuille sont toujours autorisés (en Paper ils s'exécutent en trades simulés).",
     },
   },
   es: {
@@ -115,7 +115,7 @@ export default {
         "Auto-trade envía las propuestas de la IA que pasan la política sin un clic (sigue requiriendo el modo Live activado). Aprobar cada operación las deja en espera de tu aprobación. Las órdenes manuales no se ven afectadas.",
       access: "Acceso al trading",
       accessHint:
-        "Solo lectura observa; Paper simula ejecuciones; Live puede enviar on-chain. Esto también condiciona tus órdenes manuales y los envíos desde la billetera.",
+        "Solo afecta a la IA: Solo lectura = la IA observa; Paper = la IA simula ejecuciones; Live = la IA puede enviar on-chain. Tus órdenes manuales y acciones de billetera siempre están permitidas (en Paper se ejecutan como operaciones simuladas).",
     },
   },
 };
