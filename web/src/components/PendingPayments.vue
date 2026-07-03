@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // Features 3/4/5 — pending payments (claimable balances): claim, one-click swap
 // to XLM (with a value-loss pre-check), swap all, and reject (local hide).
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { acquireScrollLock, releaseScrollLock } from "../ui/uiState";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, assetCode as code } from "../format";
 import type {
@@ -111,6 +112,40 @@ async function confirmSwapAll(): Promise<void> {
   swapAll.value.busy = false;
   if (r) swapAll.value.result = r; // keep modal open to show the summary
 }
+
+// AUDIT-022: the three dialogs above dismiss on backdrop click but (unlike
+// SettingsModal) had no Escape handler and no body scroll-lock. Shared here for
+// whichever of them is open.
+const anyModalOpen = computed(
+  () => swap.value.open || reject.value.open || swapAll.value.open,
+);
+function closeTopModal(): void {
+  if (swap.value.open) closeSwap();
+  else if (reject.value.open) closeReject();
+  else if (swapAll.value.open) closeSwapAll();
+}
+function onModalKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") closeTopModal();
+}
+let holdingScrollLock = false;
+watch(anyModalOpen, (open) => {
+  if (open && !holdingScrollLock) {
+    document.addEventListener("keydown", onModalKey);
+    acquireScrollLock(); // ref-counted: coexists with SettingsModal
+    holdingScrollLock = true;
+  } else if (!open && holdingScrollLock) {
+    document.removeEventListener("keydown", onModalKey);
+    releaseScrollLock();
+    holdingScrollLock = false;
+  }
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onModalKey);
+  if (holdingScrollLock) {
+    releaseScrollLock();
+    holdingScrollLock = false;
+  }
+});
 
 function toggleRejected(ev: Event): void {
   void store.setShowRejectedClaimables((ev.target as HTMLInputElement).checked);
@@ -261,8 +296,11 @@ function toggleRejected(ev: Event): void {
           </div>
         </template>
 
-        <!-- pre-swap summary table -->
+        <!-- pre-swap summary table. AUDIT-043: wrapped like every other data
+             table so it scrolls horizontally on narrow phones instead of
+             overflowing the modal. -->
         <template v-else>
+          <div class="table-wrap">
           <table class="pp-table">
             <thead>
               <tr>
@@ -293,6 +331,7 @@ function toggleRejected(ev: Event): void {
               </tr>
             </tfoot>
           </table>
+          </div>
 
           <label class="pp-include">
             <input type="checkbox" v-model="swapAll.includeLosing" />

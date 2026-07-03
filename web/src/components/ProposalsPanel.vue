@@ -13,8 +13,12 @@ const store = useTraderStore();
 // here for approval or rejection.
 const proposals = computed(() => store.proposals.filter((p) => p.initiator !== "manual"));
 
+// AUDIT-041: reuse the history.status.* translations (same pattern as
+// HistoryTable); fall back to the underscore-stripped raw code.
 function statusText(s: string): string {
-  return s.replace(/_/g, " ");
+  const key = `history.status.${s}`;
+  const label = t(key);
+  return label === key ? s.replace(/_/g, " ") : label;
 }
 </script>
 

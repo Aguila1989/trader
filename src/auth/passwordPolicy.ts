@@ -12,6 +12,15 @@
 /** Minimum length required by the spec. */
 export const PASSWORD_MIN_LENGTH = 12;
 
+/**
+ * AUDIT-044: bcrypt silently truncates its input at 72 BYTES — characters
+ * beyond that are ignored for both hashing and verification, so an unbounded
+ * policy would accept a "128-char" password of which only the first 72 bytes
+ * actually count. Cap explicitly so the enforced policy matches what bcrypt
+ * verifies. (Bytes, not chars: multi-byte UTF-8 counts against the limit.)
+ */
+export const PASSWORD_MAX_BYTES = 72;
+
 /** A single rule the password must satisfy, with a human-readable label. */
 export interface PasswordRule {
   id: "length" | "upper" | "lower" | "number" | "special";
@@ -58,6 +67,10 @@ export function checkPassword(pw: string): PasswordCheck {
  * without echoing the password itself.
  */
 export function validatePasswordOrError(pw: string): string | null {
+  // AUDIT-044: reject what bcrypt would silently truncate.
+  if (typeof pw === "string" && Buffer.byteLength(pw, "utf8") > PASSWORD_MAX_BYTES) {
+    return `Password is too long: at most ${PASSWORD_MAX_BYTES} bytes (~${PASSWORD_MAX_BYTES} characters) — anything longer is silently ignored by the hash.`;
+  }
   const { valid, failed } = checkPassword(pw);
   if (valid) return null;
   const labels = PASSWORD_RULES.filter((r) => failed.includes(r.id)).map((r) => r.label.toLowerCase());

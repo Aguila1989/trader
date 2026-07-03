@@ -9,7 +9,7 @@ import {
   type MarketSnapshot,
 } from "../stellar/market";
 import { signerPublicKey } from "../stellar/signer";
-import { canonicalAsset } from "../stellar/assets";
+import { assetCode, canonicalAsset, pairLabel } from "../stellar/assets";
 import { effectiveCapForPair } from "../policy/engine";
 import { store } from "../trading/store";
 import { effectiveLimits, riskProfileSummary } from "../policy/riskProfile";
@@ -236,7 +236,7 @@ export async function analyze(
   if (proposals.length === 0 && !reasoning.trim()) {
     messages.push({
       role: "user",
-      content: `You did not propose a trade on ${baseAsset}/${quoteAsset}. In ONE or TWO sentences, state plainly WHY you are not trading it right now - reference the concrete data: the regime, RSI/rangePos, the spread, your ${baseAsset.split(":")[0]} vs ${quoteAsset.split(":")[0]} balances, or risk. Answer in plain text; do not call any tool.`,
+      content: `You did not propose a trade on ${baseAsset}/${quoteAsset}. In ONE or TWO sentences, state plainly WHY you are not trading it right now - reference the concrete data: the regime, RSI/rangePos, the spread, your ${assetCode(baseAsset)} vs ${assetCode(quoteAsset)} balances, or risk. Answer in plain text; do not call any tool.`,
     });
     const turn = await provider.run({
       system: SYSTEM,
@@ -484,7 +484,7 @@ async function runTool(
       };
       const base = String(o.base_asset ?? "");
       const quote = String(o.quote_asset ?? "");
-      const pairLabel = `${base.split(":")[0]}/${quote.split(":")[0]}`;
+      const pairText = pairLabel(base, quote);
       const notes = o.notes != null ? String(o.notes) : undefined;
 
       if (name === TOOL_CANCEL_STOP) {
@@ -496,7 +496,7 @@ async function runTool(
         }
         return {
           content: JSON.stringify({ ok: true, cancelled: mine.length }),
-          trace: `cancel_stop_loss ${pairLabel} -> ${mine.length}`,
+          trace: `cancel_stop_loss ${pairText} -> ${mine.length}`,
         };
       }
 
@@ -511,7 +511,7 @@ async function runTool(
               ok: false,
               error: "No active AI stop on this pair to update; use set_stop_loss first.",
             }),
-            trace: `update_stop_loss ${pairLabel} -> none`,
+            trace: `update_stop_loss ${pairText} -> none`,
           };
         }
         const updated = await stopLossService.updateStopLoss(mine[0]!.id, {
@@ -521,7 +521,7 @@ async function runTool(
         });
         return {
           content: JSON.stringify({ ok: true, stop: updated }),
-          trace: `update_stop_loss ${pairLabel} -> ${updated.triggerPrice}`,
+          trace: `update_stop_loss ${pairText} -> ${updated.triggerPrice}`,
         };
       }
 
@@ -538,7 +538,7 @@ async function runTool(
       });
       return {
         content: JSON.stringify({ ok: true, stop: created }),
-        trace: `set_stop_loss ${pairLabel} -> ${created.triggerPrice}`,
+        trace: `set_stop_loss ${pairText} -> ${created.triggerPrice}`,
       };
     }
     return { content: `Unknown tool: ${name}` };

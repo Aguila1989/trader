@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, dateTimeStr } from "../format";
@@ -186,11 +186,21 @@ function toggleAudit(): void {
   }
 }
 
-// Auto-refresh the order book every 30s while mounted only.
+// Auto-refresh the order book while mounted. AUDIT-040: governed by the same
+// user-configurable refresh cadence as the portfolio poll (walletRefreshSeconds,
+// floored at 5s server-side) instead of a hardcoded interval.
 let timer: ReturnType<typeof setInterval> | null = null;
+function armBookRefresh(seconds: number): void {
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => void store.loadTokenBook(), Math.max(5, seconds) * 1000);
+}
 onMounted(() => {
-  timer = setInterval(() => void store.loadTokenBook(), 30_000);
+  armBookRefresh(store.walletRefreshSeconds);
 });
+watch(
+  () => store.walletRefreshSeconds,
+  (s) => armBookRefresh(s),
+);
 onUnmounted(() => {
   if (timer) clearInterval(timer);
 });

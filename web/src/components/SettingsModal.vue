@@ -6,25 +6,45 @@
 // full-screen on mobile. Body scroll is locked while open.
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { closeSettings } from "../ui/uiState";
+import { useRouter } from "vue-router";
+import { acquireScrollLock, closeSettings, releaseScrollLock } from "../ui/uiState";
 import SettingsPanel from "./SettingsPanel.vue";
 import RiskSettingsPanel from "./RiskSettingsPanel.vue";
 import AccountSection from "./AccountSection.vue";
 
 const { t } = useI18n();
+const router = useRouter();
 const tab = ref<"bot" | "risk" | "account">("bot");
 
 function onKey(e: KeyboardEvent): void {
   if (e.key === "Escape") closeSettings();
 }
 
+// AUDIT-024: the modal is plain reactive state (not a route), so the mobile
+// back button used to navigate the page UNDER the modal (or exit the app)
+// instead of closing it. A global navigation guard (registered only while the
+// modal is open) closes the modal and CANCELS the navigation — vue-router
+// restores the history position itself on a cancelled popstate, so the back
+// button becomes "close the modal, stay on the page". Deliberately NOT a raw
+// history.pushState sentinel: that would clobber vue-router's own history
+// state (position/current) and corrupt its navigation bookkeeping.
+let removeGuard: (() => void) | null = null;
+
 onMounted(() => {
   document.addEventListener("keydown", onKey);
-  document.documentElement.style.overflow = "hidden"; // scroll lock
+  acquireScrollLock();
+  removeGuard = router.beforeEach(() => {
+    closeSettings();
+    return false; // swallow this navigation; the modal closing IS the action
+  });
 });
 onBeforeUnmount(() => {
   document.removeEventListener("keydown", onKey);
-  document.documentElement.style.overflow = "";
+  releaseScrollLock();
+  if (removeGuard) {
+    removeGuard();
+    removeGuard = null;
+  }
 });
 </script>
 
@@ -118,6 +138,13 @@ onBeforeUnmount(() => {
 }
 .sm-tabs .seg {
   min-height: 40px;
+}
+/* AUDIT-019: restate the 44px mobile floor (a scoped rule outranks the
+   global one, leaving these tabs stuck at 40px on phones). */
+@media (max-width: 767px) {
+  .sm-tabs .seg {
+    min-height: 44px;
+  }
 }
 .sm-body {
   padding: 16px 18px 22px;

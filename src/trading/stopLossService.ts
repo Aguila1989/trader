@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canonicalAsset } from "../stellar/assets";
+import { canonicalAsset, pairLabel } from "../stellar/assets";
 import { getOrderbook } from "../stellar/market";
 import { store } from "./store";
 import { config } from "../config";
@@ -233,7 +233,7 @@ export class StopLossService implements IStopLossService {
     });
     this.deps.store.log(
       "trade",
-      `Stop-loss set (${input.setBy}) on ${baseAsset.split(":")[0]}/${quoteAsset.split(":")[0]} @ ${stop.triggerPrice}` +
+      `Stop-loss set (${input.setBy}) on ${pairLabel(baseAsset, quoteAsset)} @ ${stop.triggerPrice}` +
         `${sellAll ? " (sell all)" : ` (${stop.quantityToSell})`}.`,
     );
     if (input.setBy === "ai") {
@@ -338,7 +338,7 @@ export class StopLossService implements IStopLossService {
     });
     this.deps.store.log(
       "trade",
-      `Trailing stop set (${input.setBy}) on ${baseAsset.split(":")[0]}/${quoteAsset.split(":")[0]}: ` +
+      `Trailing stop set (${input.setBy}) on ${pairLabel(baseAsset, quoteAsset)}: ` +
         `trail ${trailDesc}, initial @ ${stop.currentTrailPrice} (mark ${mid})` +
         `${sellAll ? " (sell all)" : ` (${stop.quantityToSell})`}.`,
     );
@@ -402,7 +402,7 @@ export class StopLossService implements IStopLossService {
     this.deps.store.saveStopLoss(stop);
     this.deps.store.log(
       "trade",
-      `Stop-loss cancelled (${initiator}) on ${stop.baseAsset.split(":")[0]}/${stop.quoteAsset.split(":")[0]}${reason ? ` - ${reason}` : ""}.`,
+      `Stop-loss cancelled (${initiator}) on ${pairLabel(stop.baseAsset, stop.quoteAsset)}${reason ? ` - ${reason}` : ""}.`,
     );
     if (stop.setBy === "ai" || initiator === "ai") {
       this.aiLog(stop, "stop_loss", `AI stop cancelled${reason ? ` — ${reason}` : ""}.`);
@@ -543,7 +543,7 @@ export class StopLossService implements IStopLossService {
     });
     this.deps.store.log(
       "trade",
-      `Stop-loss TRIGGERED on ${stop.baseAsset.split(":")[0]}/${stop.quoteAsset.split(":")[0]} @ ${stop.triggerPrice}.`,
+      `Stop-loss TRIGGERED on ${pairLabel(stop.baseAsset, stop.quoteAsset)} @ ${stop.triggerPrice}.`,
     );
     this.deps.store.saveStopLoss(stop);
   }
@@ -576,7 +576,7 @@ export class StopLossService implements IStopLossService {
       });
       this.deps.store.log(
         "error",
-        `Stop-loss on ${stop.baseAsset.split(":")[0]}/${stop.quoteAsset.split(":")[0]} has FAILED to execute ${stop.attemptCount}x (last: ${error}). It stays active and keeps retrying - intervene if needed.`,
+        `Stop-loss on ${pairLabel(stop.baseAsset, stop.quoteAsset)} has FAILED to execute ${stop.attemptCount}x (last: ${error}). It stays active and keeps retrying - intervene if needed.`,
       );
     }
     this.deps.store.saveStopLoss(stop);

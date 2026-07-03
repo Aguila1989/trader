@@ -23,3 +23,19 @@ export function assetToString(asset: Asset): string {
 export function canonicalAsset(spec: string): string {
   return assetToString(parseAsset(spec));
 }
+
+/**
+ * AUDIT-031: shared display helpers. The `${x.split(":")[0]}/${y.split(":")[0]}`
+ * pattern was duplicated ~25× across the orchestrator, stop-loss/price-alert
+ * services and server.ts — one canonical place now.
+ */
+
+/** Bare asset code for display: "yUSDC:GDGT..." → "yUSDC"; "XLM" → "XLM". */
+export function assetCode(spec: string): string {
+  return spec.split(":")[0] || spec;
+}
+
+/** Compact display label for a pair: "yUSDC/XLM". */
+export function pairLabel(base: string, quote: string): string {
+  return `${assetCode(base)}/${assetCode(quote)}`;
+}

@@ -68,7 +68,5 @@ export function currentDrawdownPct(nowMs: number): number {
   return Math.max(0, ((peak - current) / peak) * 100);
 }
 
-/** Number of samples currently retained (diagnostics / tests). */
-export function drawdownSampleCount(): number {
-  return samples.length;
-}
+// AUDIT-034: drawdownSampleCount() was removed — the "diagnostics / tests"
+// usage it was written for never materialized (zero callers incl. tests).

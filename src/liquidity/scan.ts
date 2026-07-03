@@ -1,4 +1,5 @@
 import { config } from "../config";
+import { withHorizonRetry } from "../stellar/client";
 import { getOrderbook, getTradeAggregations, listAssets } from "../stellar/market";
 import type { LiquiditySnapshotRow } from "../types";
 
@@ -60,7 +61,11 @@ interface Measured {
  *  null when the pair has no XLM trading (not "liquid" by this metric). */
 async function measure(asset: string): Promise<Measured | null> {
   try {
-    const candles = await getTradeAggregations(asset, QUOTE, 3_600_000, 24);
+    // AUDIT-028: retry transient Horizon failures instead of dropping the
+    // candidate from the whole scan round.
+    const candles = await withHorizonRetry(() =>
+      getTradeAggregations(asset, QUOTE, 3_600_000, 24),
+    );
     const baseVolume24h = candles.reduce((s, c) => s + (c.baseVolume || 0), 0);
     const numTrades24h = candles.reduce((s, c) => s + (c.tradeCount || 0), 0);
     if (!(baseVolume24h > 0)) return null;

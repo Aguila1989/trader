@@ -57,8 +57,22 @@ const sendHeld = computed(() => store.heldBalance(sendAsset.value));
 const sendInsufficient = computed(
   () => Number(sendAmount.value) > 0 && Number(sendAmount.value) > sendHeld.value,
 );
+// AUDIT-023: validate the destination shape CLIENT-SIDE before allowing a live
+// on-chain payment: a Stellar public key (G + 55 base32 chars) or a federation
+// address (user*domain.tld, resolved server-side). A typo'd address should be
+// an inline field error, not a submitted transaction.
+const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
+const FEDERATION_RE = /^[^*\s]+\*[^*\s]+\.[^*\s]+$/;
+const sendToInvalid = computed(() => {
+  const to = sendTo.value.trim();
+  return to.length > 0 && !STELLAR_ADDRESS_RE.test(to) && !FEDERATION_RE.test(to);
+});
 const sendValid = computed(
-  () => !!sendTo.value.trim() && Number(sendAmount.value) > 0 && !sendInsufficient.value,
+  () =>
+    !!sendTo.value.trim() &&
+    !sendToInvalid.value &&
+    Number(sendAmount.value) > 0 &&
+    !sendInsufficient.value,
 );
 async function send(): Promise<void> {
   if (sending.value || !sendValid.value) return;
@@ -168,10 +182,18 @@ async function doSwap(): Promise<void> {
         />
         <input v-model="sendAmount" class="w-input" inputmode="decimal" :placeholder="t('wallet.amountPlaceholder')" />
         <input v-model="sendMemo" class="w-input" :placeholder="t('wallet.memoPlaceholder')" />
-        <button class="btn primary" :disabled="sending || store.isReadOnly || !sendValid" @click="send">
+        <!-- Bug 4C: Read-only never blocks a manual send (the mode gates the AI
+             only). PAPER is the one exception: sends move REAL funds and have
+             no simulation, so they are disabled while simulating (the backend
+             refuses too). Wallet + kill switch stay enforced server-side. -->
+        <button class="btn primary" :disabled="sending || store.isPaper || !sendValid" @click="send">
           {{ sending ? t("wallet.sending") : t("wallet.send") }}
         </button>
       </div>
+      <p v-if="store.isPaper" class="muted w-note">{{ t("wallet.paperNote") }}</p>
+      <p v-if="sendToInvalid" class="violations">
+        {{ t("wallet.invalidDestination") }}
+      </p>
       <p v-if="sendInsufficient" class="violations">
         {{ t("wallet.insufficient", { code: store.tokenFor(sendAsset).code, held: fmtNum(sendHeld) }) }}
       </p>
@@ -197,10 +219,11 @@ async function doSwap(): Promise<void> {
         <button class="btn" :disabled="quoting || !swapValid" @click="getQuote">
           {{ quoting ? t("wallet.quoting") : t("wallet.quote") }}
         </button>
-        <button class="btn primary" :disabled="swapping || store.isReadOnly || !quote" @click="doSwap">
+        <button class="btn primary" :disabled="swapping || store.isPaper || !quote" @click="doSwap">
           {{ swapping ? t("wallet.swapping") : t("wallet.swap") }}
         </button>
       </div>
+      <p v-if="store.isPaper" class="muted w-note">{{ t("wallet.paperNote") }}</p>
       <p v-if="swapInsufficient" class="violations">
         {{ t("wallet.insufficient", { code: store.tokenFor(swapFrom).code, held: fmtNum(swapHeld) }) }}
       </p>
@@ -253,6 +276,13 @@ async function doSwap(): Promise<void> {
 .rcv-copy {
   align-self: flex-start;
   min-height: 40px;
+}
+/* AUDIT-020: restate the 44px mobile floor (scoped specificity beats the
+   global .btn rule, which left this button at 40px on phones). */
+@media (max-width: 767px) {
+  .rcv-copy {
+    min-height: 44px;
+  }
 }
 .w-note {
   font-size: 12px;

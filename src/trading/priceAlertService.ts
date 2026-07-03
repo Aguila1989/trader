@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canonicalAsset } from "../stellar/assets";
+import { canonicalAsset, pairLabel } from "../stellar/assets";
 import { store } from "./store";
 import type { AlertDirection, PriceAlert } from "../types";
 
@@ -101,7 +101,7 @@ export class PriceAlertService {
     alert.triggeredAt = this.nowIso();
     alert.triggerPrice = String(Number(mid.toFixed(7)));
     this.deps.store.savePriceAlert(alert);
-    const pair = `${alert.baseAsset.split(":")[0]}/${alert.quoteAsset.split(":")[0]}`;
+    const pair = `${pairLabel(alert.baseAsset, alert.quoteAsset)}`;
     this.deps.store.log(
       "info",
       `Price alert: ${pair} crossed ${alert.direction} ${alert.price} (mid ${alert.triggerPrice}).`,

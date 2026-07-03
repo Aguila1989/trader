@@ -2,17 +2,14 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
-import { fmtNum } from "../format";
+// AUDIT-032: assetCode comes from the shared format helpers (a local duplicate
+// of the exact same function used to live here).
+import { assetCode, fmtNum } from "../format";
 
 const { t } = useI18n();
 const store = useTraderStore();
 
 const positions = computed(() => store.positions);
-
-/** Issued assets are "CODE:ISSUER"; show just the code (full form on hover). */
-function assetCode(spec: string): string {
-  return spec.split(":")[0] ?? spec;
-}
 </script>
 
 <template>

@@ -23,14 +23,16 @@ import {
 const store = useTraderStore();
 const { t } = useI18n();
 
-const FACTORS: { key: keyof RiskProfile; label: string; tip: string }[] = [
+// AUDIT-018: computed (not a module-time const) so the labels/tips re-render
+// when the user switches language live via LangSwitcher.
+const FACTORS = computed<{ key: keyof RiskProfile; label: string; tip: string }[]>(() => [
   { key: "positionSize", label: t("riskSettings.factors.positionSize.label"), tip: t("riskSettings.factors.positionSize.tip") },
   { key: "stopLossDistance", label: t("riskSettings.factors.stopLossDistance.label"), tip: t("riskSettings.factors.stopLossDistance.tip") },
   { key: "tradeFrequency", label: t("riskSettings.factors.tradeFrequency.label"), tip: t("riskSettings.factors.tradeFrequency.tip") },
   { key: "volatilityTolerance", label: t("riskSettings.factors.volatilityTolerance.label"), tip: t("riskSettings.factors.volatilityTolerance.tip") },
   { key: "drawdownTolerance", label: t("riskSettings.factors.drawdownTolerance.label"), tip: t("riskSettings.factors.drawdownTolerance.tip") },
   { key: "slippageTolerance", label: t("riskSettings.factors.slippageTolerance.label"), tip: t("riskSettings.factors.slippageTolerance.tip") },
-];
+]);
 const LEVELS: RiskLevel[] = ["low", "medium", "high"];
 const PRESETS: RiskPreset[] = ["conservative", "balanced", "aggressive"];
 

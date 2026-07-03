@@ -6,7 +6,7 @@ import {
   getOpenOffers,
   type MarketSnapshot,
 } from "../stellar/market";
-import { horizon } from "../stellar/client";
+import { horizon, withHorizonRetry } from "../stellar/client";
 import {
   signerPublicKey,
   signAndSubmit,
@@ -146,7 +146,9 @@ class SnapCache {
     const key = `${base}/${quote}`;
     let p = this.cache.get(key);
     if (!p) {
-      p = getMarketSnapshot(base, quote, 5).catch(() => null);
+      // AUDIT-028: one transient Horizon failure used to null this pair's mark
+      // for the whole tick; a couple of jittered retries ride out the blip.
+      p = withHorizonRetry(() => getMarketSnapshot(base, quote, 5)).catch(() => null);
       this.cache.set(key, p);
     }
     return p;
@@ -249,7 +251,7 @@ async function reconcileOffers(): Promise<void> {
   const pub = signerPublicKey();
   if (!pub || tracked.length === 0) return;
 
-  const offers = await getOpenOffers(pub);
+  const offers = await withHorizonRetry(() => getOpenOffers(pub));
   const byId = new Map(offers.map((o) => [o.id, o]));
   const trackedIds = new Set(tracked.map((p) => p.offerId as string));
   const maxAgeMs = config.limits.maxOfferAgeMinutes * 60_000;
@@ -346,6 +348,13 @@ async function reconcileOffers(): Promise<void> {
       "warn",
       `Untracked open offer ${o.id} on the account (${o.amount} ${o.selling} -> ${o.buying}). The monitor won't touch it - review it manually.`,
     );
+  }
+  // AUDIT-029: drop warned-once ids whose offers have left the book, so the
+  // set tracks only CURRENTLY-open untracked offers instead of growing for
+  // the lifetime of the process (mirrors the lastMark prune in markPositions).
+  const live = new Set(offers.map((o) => o.id));
+  for (const id of warnedOffers) {
+    if (!live.has(id)) warnedOffers.delete(id);
   }
 }
 

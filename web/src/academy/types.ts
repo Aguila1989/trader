@@ -6,13 +6,9 @@
 /** Supported content languages. English is the source + fallback. */
 export type Locale = "en" | "nl" | "fr" | "es";
 
-/** Locales with their native display labels (drives the language switcher). */
-export const LOCALES: { code: Locale; label: string }[] = [
-  { code: "en", label: "English" },
-  { code: "nl", label: "Nederlands" },
-  { code: "fr", label: "Français" },
-  { code: "es", label: "Español" },
-];
+// AUDIT-036: the LOCALES label list was removed — the Academy reuses the
+// app-wide LangSwitcher, driven by SUPPORTED_LOCALES/LOCALE_LABELS in
+// ../i18n/index.ts, so this duplicate list had zero references.
 
 /** Difficulty band. Drives grouping, level badges, and unlock gating. */
 export type Level = "BASIC" | "ADVANCED" | "EXPERT";

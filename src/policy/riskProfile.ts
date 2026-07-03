@@ -180,15 +180,8 @@ export function effectiveLimits(p: RiskProfile, availableBalanceXlm?: number): L
   };
 }
 
-/** Overall label for the UI summary line (basic mode). Iterates only the six
- *  label factors — NOT Object.values, which would include expertMode/expert. */
-export function overallRiskLevel(p: RiskProfile): "LOW" | "MEDIUM" | "HIGH" | "MIXED" {
-  const vals = RISK_FACTORS.map((k) => p[k]);
-  if (vals.every((v) => v === "low")) return "LOW";
-  if (vals.every((v) => v === "high")) return "HIGH";
-  if (vals.every((v) => v === "medium")) return "MEDIUM";
-  return "MIXED";
-}
+// AUDIT-030: overallRiskLevel() was removed — zero callers; the UI summary
+// line computes its own label in RiskSettingsPanel.vue.
 
 /** One-line risk-profile description for the AI prompt + proposal log snapshot.
  *  Expert mode emits the exact numbers; basic mode emits the labels. */

@@ -89,7 +89,5 @@ export function setLocale(locale: Locale): void {
   }
 }
 
-/** The current active locale (non-reactive read). */
-export function currentLocale(): Locale {
-  return i18nGlobal.locale.value as Locale;
-}
+// AUDIT-037: currentLocale() was removed — every call site reads
+// i18nGlobal.locale.value directly (or uses the useI18n() composable).

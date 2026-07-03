@@ -37,3 +37,20 @@ export function toggleSidebar(): void {
     /* private mode — fine for the session */
   }
 }
+
+/**
+ * Reference-counted body scroll lock, shared by every modal (SettingsModal,
+ * PendingPayments dialogs, ...). Two modals used to fight over the single
+ * document style: closing one unconditionally released the lock even when the
+ * other was still open. Acquire on open, release on close — the style is only
+ * cleared when the LAST holder releases.
+ */
+let scrollLocks = 0;
+export function acquireScrollLock(): void {
+  scrollLocks++;
+  document.documentElement.style.overflow = "hidden";
+}
+export function releaseScrollLock(): void {
+  scrollLocks = Math.max(0, scrollLocks - 1);
+  if (scrollLocks === 0) document.documentElement.style.overflow = "";
+}

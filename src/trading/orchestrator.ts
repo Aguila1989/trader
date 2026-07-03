@@ -20,7 +20,7 @@ import {
   type MarketSnapshot,
 } from "../stellar/market";
 import { walkBook } from "../stellar/indicators";
-import { canonicalAsset } from "../stellar/assets";
+import { assetCode, canonicalAsset, pairLabel } from "../stellar/assets";
 import { buildOfferTransaction } from "../stellar/builder";
 import { preflightCheck } from "../stellar/preflight";
 import {
@@ -58,7 +58,7 @@ function tradingMemory(): TradingMemory {
     .slice(0, MEMORY_OUTCOMES)
     .reverse() // newest-first store order -> oldest-first for the prompt
     .map((p) => ({
-      pair: `${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]}`,
+      pair: `${pairLabel(p.baseAsset, p.quoteAsset)}`,
       side: p.side,
       amount: p.filledAmount ?? p.amount,
       price: p.filledPrice ?? p.limitPrice,
@@ -142,8 +142,8 @@ function logWalletFit(
   quote: string,
   held: (spec: string) => boolean,
 ): void {
-  const baseCode = base.split(":")[0];
-  const quoteCode = quote.split(":")[0];
+  const baseCode = assetCode(base);
+  const quoteCode = assetCode(quote);
   if (held(base) && !held(quote)) {
     store.log(
       "warn",
@@ -224,8 +224,8 @@ const noEntryGates = {
 /** Short "BASE/QUOTE" label from a snapshot (codes only, issuers dropped). */
 function snapLabel(snap: MarketSnapshot): string {
   return snap.base === "XLM"
-    ? `XLM/${snap.quote.split(":")[0]}`
-    : `${snap.base.split(":")[0]}/${snap.quote.split(":")[0]}`;
+    ? `XLM/${assetCode(snap.quote)}`
+    : `${pairLabel(snap.base, snap.quote)}`;
 }
 
 /** Mid from the touch, used as the rulebook's lastClose when lastPrice is null. */
@@ -352,8 +352,8 @@ export async function runChainScan(): Promise<ScanOutcome> {
     }
     const label =
       m.base === "XLM"
-        ? m.quote.split(":")[0]
-        : `${m.base.split(":")[0]}/${m.quote.split(":")[0]}`;
+        ? assetCode(m.quote)
+        : `${pairLabel(m.base, m.quote)}`;
     if (reasons.length > 0) gatedLabels.push(`${label} (${reasons.join(", ")})`);
     else tradeable.push(m);
   }
@@ -535,7 +535,7 @@ async function intake(
     store.log(
       "warn",
       `AI proposal suppressed (insufficient-balance cooldown): ${p.side} ` +
-        `${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} — ${secs}s remaining.`,
+        `${pairLabel(p.baseAsset, p.quoteAsset)} — ${secs}s remaining.`,
       {
         reason: "insufficient_balance_cooldown",
         base: p.baseAsset,
@@ -853,7 +853,7 @@ export async function placeManualOrder(
   store.log(
     "trade",
     `Manual order ${shortId(proposal.id)}: ${input.side} ${input.amount} ` +
-      `${input.baseAsset.split(":")[0]} @ ${input.limitPrice} ${input.quoteAsset.split(":")[0]}` +
+      `${assetCode(input.baseAsset)} @ ${input.limitPrice} ${assetCode(input.quoteAsset)}` +
       `${store.paperTrading ? " (paper)" : ""}.`,
   );
   // Attended (auto=false): the human placed it, so it runs the same gates an
@@ -1205,7 +1205,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
       insufficientBalanceCooldownUntil.set(key, Date.now() + INSUFFICIENT_BALANCE_COOLDOWN_MS);
       store.log(
         "warn",
-        `${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} ${p.side} on ` +
+        `${pairLabel(p.baseAsset, p.quoteAsset)} ${p.side} on ` +
           `insufficient-balance cooldown for ${INSUFFICIENT_BALANCE_COOLDOWN_MS / 60_000} min.`,
         { reason: "insufficient_balance_cooldown_set", base: p.baseAsset, quote: p.quoteAsset, side: p.side },
       );
@@ -1213,7 +1213,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
         eventType: "cooldown",
         baseAsset: p.baseAsset,
         quoteAsset: p.quoteAsset,
-        reasoning: `Insufficient-balance cooldown armed for ${p.side} ${p.baseAsset.split(":")[0]}/${p.quoteAsset.split(":")[0]} (${INSUFFICIENT_BALANCE_COOLDOWN_MS / 60_000} min).`,
+        reasoning: `Insufficient-balance cooldown armed for ${p.side} ${pairLabel(p.baseAsset, p.quoteAsset)} (${INSUFFICIENT_BALANCE_COOLDOWN_MS / 60_000} min).`,
       });
     }
     return;

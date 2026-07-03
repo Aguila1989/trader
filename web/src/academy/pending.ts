@@ -9,7 +9,7 @@
 // Chapter files export `chapterNN: Chapter & { whoFor: string }` — the extra
 // per-chapter `whoFor` one-liner is assignable to Chapter and simply carried at
 // runtime until ChapterOverview renders it (see checklist step for whoFor).
-import type { Chapter, Lesson, Locale, QuizQuestion } from "./types";
+import type { Chapter, Lesson, QuizQuestion } from "./types";
 
 // --- English ----------------------------------------------------------------
 import { chapter22 as en22 } from "./content/en/chapter22";
@@ -93,13 +93,8 @@ export const PENDING_NL: Chapter[] = [nl22, nl23, nl24, nl25, nl26, nl27, nl28, 
 export const PENDING_FR: Chapter[] = [fr22, fr23, fr24, fr25, fr26, fr27, fr28, fr29, fr30, fr31, fr32, fr33, fr34, fr35, fr36, fr37];
 export const PENDING_ES: Chapter[] = [es22, es23, es24, es25, es26, es27, es28, es29, es30, es31, es32, es33, es34, es35, es36, es37];
 
-/** New chapters keyed by locale — append each to the matching array in content.ts. */
-export const PENDING_BY_LOCALE: Partial<Record<Locale, Chapter[]>> = {
-  en: PENDING_EN,
-  nl: PENDING_NL,
-  fr: PENDING_FR,
-  es: PENDING_ES,
-};
+// AUDIT-035: the PENDING_BY_LOCALE aggregate was removed — content.ts imports
+// the four per-locale constants directly and nothing else referenced it.
 
 /** Chapter-12 extension: append these to chapter12.lessons[] (after c12-l5), per locale. */
 export const C12_EXT_LESSONS: Record<"en" | "nl" | "fr" | "es", Lesson[]> = {

@@ -15,6 +15,8 @@
 // order book. Re-verify before adding a new token - a wrong issuer can point
 // at a scam clone of a well-known ticker.
 
+import { assetCode } from "./assets";
+
 export type CuratedTier = "high" | "low";
 
 export interface CuratedAsset {
@@ -213,7 +215,7 @@ const DEFAULT_SCAN_PAIRS = "USDC/EURC,yUSDC/USDC";
 
 /** Curated spec lookup by bare code ("USDC" -> "USDC:GA5Z..."). */
 const SPEC_BY_CODE = new Map<string, string>(
-  CURATED_SCAN_ASSETS.map((a) => [a.spec.split(":")[0]!.toUpperCase(), a.spec]),
+  CURATED_SCAN_ASSETS.map((a) => [assetCode(a.spec).toUpperCase(), a.spec]),
 );
 
 /**

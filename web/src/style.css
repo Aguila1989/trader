@@ -488,6 +488,11 @@ table.hist td.num, table.hist th.num { text-align: right; }
   .tabbar .tab { padding: 12px 16px; min-height: 44px; }
   .sub-tabbar .tab { padding: 10px 14px; min-height: 44px; }
 
+  /* AUDIT-005: tap-to-fill order-book rows (the bids list). */
+  .book-level { min-height: 44px; align-items: center; }
+  /* AUDIT-021: portfolio rows navigate to the token detail page on tap. */
+  .pf-row-click td { padding-top: 13px; padding-bottom: 13px; }
+
   /* Stats reflow further on phones. */
   .stats { grid-template-columns: 1fr 1fr; }
 }
