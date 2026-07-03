@@ -336,6 +336,13 @@ export const config = {
     /** Email-verification link lifetime (hours). */
     verifyTokenHours: num("AUTH_VERIFY_TOKEN_HOURS", 24),
     /**
+     * AUDIT-10: opt-in to printing raw password-reset links to stdout when
+     * SMTP is off. Always on for testnet (dev convenience); on MAINNET the raw
+     * link is a full account-takeover credential and is only printed when this
+     * is explicitly true.
+     */
+    devResetLinks: bool("AUTH_DEV_RESET_LINKS", false),
+    /**
      * Set the Secure flag on the auth cookies. Auto (default): ON for a
      * non-loopback bind (TLS is mandatory there, enforced by the boot guard),
      * OFF on the loopback http default so the cookie is actually sent over plain
@@ -558,6 +565,13 @@ export const config = {
     // MITM can't impersonate the DB. Local dev against the self-signed docker
     // container sets SQLSERVER_TRUST_CERT=true explicitly (see .env.example).
     trustServerCertificate: bool("SQLSERVER_TRUST_CERT", false),
+    // AUDIT-039: pool sizing/timeouts, env-tunable like every other
+    // operational parameter. Discrete-config path only (a full connection
+    // string keeps the driver defaults).
+    poolMax: Math.max(1, Math.round(num("SQLSERVER_POOL_MAX", 5))),
+    poolIdleMs: Math.max(1_000, Math.round(num("SQLSERVER_POOL_IDLE_MS", 30_000))),
+    connectTimeoutMs: Math.max(1_000, Math.round(num("SQLSERVER_CONNECT_TIMEOUT_MS", 15_000))),
+    requestTimeoutMs: Math.max(1_000, Math.round(num("SQLSERVER_REQUEST_TIMEOUT_MS", 30_000))),
   },
 };
 

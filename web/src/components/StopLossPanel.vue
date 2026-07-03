@@ -27,6 +27,14 @@ const stops = computed(() =>
 function code(spec: string): string {
   return store.tokenFor(spec).code;
 }
+
+// AUDIT-006: cancelling a stop-loss removes downside PROTECTION — arm an
+// inline confirm first, consistent with the other destructive actions.
+const confirmingCancel = ref<string | null>(null);
+function cancelStop(id: string): void {
+  void store.cancelStopLoss(id);
+  confirmingCancel.value = null;
+}
 function liveTrigger(s: { isTrailing?: boolean; currentTrailPrice?: string; triggerPrice: string }): string {
   return s.isTrailing && s.currentTrailPrice != null ? s.currentTrailPrice : s.triggerPrice;
 }
@@ -219,9 +227,18 @@ async function submit(): Promise<void> {
           <td v-if="mode === 'ai'" class="muted sl-notes">{{ s.notes || "—" }}</td>
           <td class="muted">{{ dateTimeStr(s.createdAt) }}</td>
           <td>
-            <button class="btn sl-cancel" :disabled="store.isReadOnly" @click="store.cancelStopLoss(s.id)">
+            <button
+              v-if="confirmingCancel !== s.id"
+              class="btn sl-cancel"
+              @click="confirmingCancel = s.id"
+            >
               {{ t("stopLoss.cancel") }}
             </button>
+            <span v-else class="sl-confirm">
+              <span class="sl-confirm-q">{{ t("stopLoss.confirmCancel") }}</span>
+              <button class="btn danger" @click="cancelStop(s.id)">{{ t("stopLoss.confirmYes") }}</button>
+              <button class="btn" @click="confirmingCancel = null">{{ t("stopLoss.keep") }}</button>
+            </span>
           </td>
         </tr>
       </tbody>
@@ -317,5 +334,16 @@ async function submit(): Promise<void> {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-left: 6px;
+}
+/* AUDIT-006: inline cancel confirmation. */
+.sl-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sl-confirm-q {
+  color: var(--warn);
+  font-size: 12px;
 }
 </style>

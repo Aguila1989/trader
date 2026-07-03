@@ -52,6 +52,9 @@ export default {
     passwordLabel: "Confirm your password",
     passwordPlaceholder: "Your account password",
     replaceBtn: "Replace wallet",
+    replaceConfirmLabel: "Confirm: last 4 characters of the NEW secret key",
+    replaceConfirmPlaceholder: "e.g. 7QXK",
+    replaceConfirmMismatch: "Those 4 characters don't match the new secret key. Replacement not submitted.",
     replaced: "Wallet replaced. {offers} open order(s) and {stops} stop loss(es) were cancelled.",
 
     chipNoWallet: "No wallet",
@@ -112,6 +115,9 @@ export default {
     passwordLabel: "Bevestig je wachtwoord",
     passwordPlaceholder: "Je accountwachtwoord",
     replaceBtn: "Wallet vervangen",
+    replaceConfirmLabel: "Bevestig: laatste 4 tekens van de NIEUWE geheime sleutel",
+    replaceConfirmPlaceholder: "bv. 7QXK",
+    replaceConfirmMismatch: "Die 4 tekens komen niet overeen met de nieuwe geheime sleutel. Vervanging niet uitgevoerd.",
     replaced: "Wallet vervangen. {offers} openstaande order(s) en {stops} stop loss(es) geannuleerd.",
 
     chipNoWallet: "Geen wallet",
@@ -173,6 +179,9 @@ export default {
     passwordLabel: "Confirmez votre mot de passe",
     passwordPlaceholder: "Mot de passe de votre compte",
     replaceBtn: "Remplacer le wallet",
+    replaceConfirmLabel: "Confirmez : les 4 derniers caractères de la NOUVELLE clé secrète",
+    replaceConfirmPlaceholder: "ex. 7QXK",
+    replaceConfirmMismatch: "Ces 4 caractères ne correspondent pas à la nouvelle clé secrète. Remplacement non envoyé.",
     replaced: "Wallet remplacé. {offers} ordre(s) ouvert(s) et {stops} stop loss annulé(s).",
 
     chipNoWallet: "Aucun wallet",
@@ -234,6 +243,9 @@ export default {
     passwordLabel: "Confirma tu contraseña",
     passwordPlaceholder: "La contraseña de tu cuenta",
     replaceBtn: "Reemplazar wallet",
+    replaceConfirmLabel: "Confirma: últimos 4 caracteres de la NUEVA clave secreta",
+    replaceConfirmPlaceholder: "p. ej. 7QXK",
+    replaceConfirmMismatch: "Esos 4 caracteres no coinciden con la nueva clave secreta. Reemplazo no enviado.",
     replaced: "Wallet reemplazado. Se cancelaron {offers} orden(es) abierta(s) y {stops} stop loss.",
 
     chipNoWallet: "Sin wallet",

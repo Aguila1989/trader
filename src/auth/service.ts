@@ -228,13 +228,24 @@ export async function forgotPassword(input: { email: unknown }): Promise<{ messa
           text: `Reset your password with this link (valid ${config.auth.resetTokenMinutes} minutes):\n\n${link}\n\nIf you did not request this, you can ignore this email.`,
           html: `<p>Reset your password with this link (valid ${config.auth.resetTokenMinutes} minutes):</p><p><a href="${link}">Reset my password</a></p><p>If you did not request this, you can ignore this email.</p>`,
         });
-      } else {
-        // No SMTP: surface the link on the SERVER CONSOLE only (stdout), so a
-        // single-operator dev setup can still complete a reset. Deliberately NOT
-        // via store.log - that persists to dbo.Logs, which is readable by any
-        // authenticated user through /api/logs (a token-disclosure / account-
-        // takeover risk now that the app is multi-user).
+      } else if (config.network !== "public" || config.auth.devResetLinks) {
+        // No SMTP, non-production (testnet) or explicit opt-in: surface the
+        // link on the SERVER CONSOLE only (stdout), so a single-operator dev
+        // setup can still complete a reset. Deliberately NOT via store.log -
+        // that persists to dbo.Logs, which is readable by any authenticated
+        // user through /api/logs (a token-disclosure / account-takeover risk
+        // now that the app is multi-user).
         console.warn(`[auth] Password-reset link for ${email} (SMTP disabled, dev only): ${link}`);
+      } else {
+        // AUDIT-010: on MAINNET the raw reset link is a full account-takeover
+        // credential - never write it to stdout (process managers and log
+        // shippers persist stdout). Without SMTP the reset simply cannot be
+        // delivered; say so operator-side without leaking anything usable.
+        console.warn(
+          `[auth] Password reset requested for ${email}, but SMTP is not configured - ` +
+            "no reset link can be delivered on mainnet. Configure SMTP_HOST (or set " +
+            "AUTH_DEV_RESET_LINKS=true to print reset links to stdout AT YOUR OWN RISK).",
+        );
       }
     }
   }

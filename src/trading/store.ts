@@ -3,6 +3,7 @@ import { config, isReadOnly } from "../config";
 import { dayKey, dayStartUtc } from "../time";
 import { aiReady, aiModel, aiProviderId, availableProviders, setActiveProvider } from "../ai";
 import { signerPublicKey } from "../stellar/signer";
+import { assetCode } from "../stellar/assets";
 import { dbReady } from "../db/pool";
 import { runWithUserId, DEFAULT_USER_ID, currentUserId } from "../users/context";
 import * as repo from "../db/repo";
@@ -74,6 +75,8 @@ const LIVE_LOG_N = 20;
 const SNAPSHOT_THROTTLE_MS = 5 * 60 * 1000;
 /** In-memory snapshot ring per user when no DB is configured. */
 const MAX_SNAPSHOTS_MEM = 5000;
+/** AUDIT-011: max age of a memoized per-user evolution series. */
+const EVOLUTION_CACHE_TTL_MS = 10 * 60_000;
 
 function freshDaily(): DailyState {
   return {
@@ -264,11 +267,39 @@ class Store {
    */
   private persistingLog = false;
 
-  private persist(op: () => Promise<void>): void {
+  /**
+   * Queue a durable write on the serialized chain. AUDIT-015: pass `retries`
+   * for writes that must not be silently dropped on a TRANSIENT DB error (a
+   * SUBMITTED trade's row) — the op is retried with a short backoff before
+   * giving up, and the give-up is logged loudly. Retries stop early when
+   * dbReady() flips false (the health check has declared the DB down; the
+   * write cannot succeed and would only stall the chain).
+   */
+  private persist(op: () => Promise<void>, opts?: { retries?: number }): void {
     if (!dbReady()) return;
-    this.writeChain = this.writeChain.then(op).catch((err) => {
-      this.log("error", `SQL Server write failed: ${(err as Error).message}`);
-    });
+    const maxAttempts = 1 + Math.max(0, opts?.retries ?? 0);
+    this.writeChain = this.writeChain
+      .then(async () => {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await op();
+            return;
+          } catch (err) {
+            if (attempt >= maxAttempts || !dbReady()) {
+              this.log(
+                "error",
+                `SQL Server write failed${maxAttempts > 1 ? ` after ${attempt} attempt(s)` : ""}: ${(err as Error).message}`,
+              );
+              return;
+            }
+            // 2s / 4s / 8s — bounded so the write chain never stalls for long.
+            await new Promise((r) => setTimeout(r, 2_000 * 2 ** (attempt - 1)));
+          }
+        }
+      })
+      .catch((err) => {
+        this.log("error", `SQL Server write failed: ${(err as Error).message}`);
+      });
   }
 
   /** Load persisted proposals + today's counters from SQL Server on boot. */
@@ -551,11 +582,19 @@ class Store {
     if (!p) return undefined;
     Object.assign(p, patch, { updatedAt: new Date().toISOString() });
     this.emit("proposal", p);
-    if (!p.paper) this.persist(() => repo.updateProposal(p));
+    // AUDIT-015: a SUBMITTED row is the durable record of a REAL on-chain fill
+    // — retry its write on a transient DB error instead of dropping it.
+    if (!p.paper) {
+      this.persist(() => repo.updateProposal(p), {
+        retries: p.status === "submitted" ? 3 : 0,
+      });
+    }
     return p;
   }
 
   recordSubmittedTrade(p: TradeProposal): void {
+    // AUDIT-011: a new fill changes the evolution series - drop the memo.
+    this.evolutionCache.clear();
     this.rolloverDay();
     this.daily.tradeCount += 1;
     // Use the reconciled fill (actual filled base + avg price when known) so
@@ -886,9 +925,24 @@ class Store {
     };
   }
 
+  /**
+   * AUDIT-011: the evolution series refetches EVERY submitted fill from SQL
+   * Server and recomputes cumulative sums — per request. Memoized per user;
+   * invalidated whenever a new fill is booked (recordSubmittedTrade) and by a
+   * TTL as a belt-and-braces bound.
+   */
+  private evolutionCache = new Map<string, { at: number; points: EvolutionPoint[] }>();
+
   /** Cumulative volume/trades/PnL series. SQL Server when connected, else memory. */
   async getEvolution(): Promise<EvolutionPoint[]> {
-    if (dbReady()) return repo.getEvolution();
+    if (dbReady()) {
+      const uid = currentUserId();
+      const hit = this.evolutionCache.get(uid);
+      if (hit && Date.now() - hit.at < EVOLUTION_CACHE_TTL_MS) return hit.points;
+      const points = await repo.getEvolution();
+      this.evolutionCache.set(uid, { at: Date.now(), points });
+      return points;
+    }
     const fills: Fill[] = this.proposals
       .filter((p) => p.status === "submitted")
       .slice()
@@ -951,7 +1005,7 @@ class Store {
     this.persistRejectedClaimables();
     this.log(
       "trade",
-      `Pending payment rejected: ${info.amount} ${info.asset.split(":")[0]} ` +
+      `Pending payment rejected: ${info.amount} ${assetCode(info.asset)} ` +
         `(${id.slice(0, 12)}) - ${reason}. It stays unclaimed.`,
     );
     this.emit("state", this.snapshot());
@@ -1002,18 +1056,20 @@ class Store {
    */
   private async hydrateSettings(): Promise<void> {
     let applied = 0;
-    for (const key of settingKeys()) {
-      try {
-        const stored = await repo.getSetting(settingStorageKey(key));
-        if (stored == null) continue;
-        const r = coerceSetting(key, stored);
+    try {
+      // AUDIT-026: one batched IN(...) read instead of a round trip per key.
+      const stored = await repo.getSettings(settingKeys().map(settingStorageKey));
+      for (const key of settingKeys()) {
+        const raw = stored.get(settingStorageKey(key));
+        if (raw == null) continue;
+        const r = coerceSetting(key, raw);
         if (r.ok) {
           applySettingToConfig(key, r.value);
           applied++;
         }
-      } catch {
-        /* skip a malformed/unreadable row; keep the boot default */
       }
+    } catch {
+      /* unreadable settings: keep every boot default */
     }
     if (applied > 0) this.log("info", `Applied ${applied} persisted setting override(s).`);
   }

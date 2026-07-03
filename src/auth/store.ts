@@ -418,6 +418,42 @@ export async function purgeExpiredSessions(): Promise<number> {
 }
 
 /**
+ * AUDIT-014: retention for the remaining append-only auth artifacts, which the
+ * in-memory fallback bounds but SQL Server never did:
+ *  - dbo.LoginAttempts grows on EVERY attempt (incl. unauthenticated ones from
+ *    any IP) — keep `retentionDays` of audit trail, drop the rest;
+ *  - dbo.AuthTokens rows stay after expiry/use — the hash is worthless then.
+ * Returns the total rows removed. Scheduled next to purgeExpiredSessions.
+ */
+export async function purgeAuthArtifacts(retentionDays = 90): Promise<number> {
+  const cutoffMs = Date.now() - retentionDays * 86_400_000;
+  if (!dbReady()) {
+    const before = mem.attempts.length;
+    mem.attempts = mem.attempts.filter((a) => a.ts >= cutoffMs);
+    let removed = before - mem.attempts.length;
+    const now = Date.now();
+    for (const [id, t] of mem.tokens) {
+      if (t.expiresAt < now || t.usedAt != null) {
+        mem.tokens.delete(id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+  const res = await getPool()
+    .request()
+    .input("cutoff", sql.DateTime2, new Date(cutoffMs))
+    .query<{ n: number }>(
+      `DECLARE @a INT;
+       DELETE FROM dbo.LoginAttempts WHERE ts < @cutoff;
+       SET @a = @@ROWCOUNT;
+       DELETE FROM dbo.AuthTokens WHERE expiresAt < SYSUTCDATETIME() OR usedAt IS NOT NULL;
+       SELECT @a + @@ROWCOUNT AS n;`,
+    );
+  return Number(res.recordset[0]?.n ?? 0);
+}
+
+/**
  * Revoke every active session for a user. When `keepJti` is supplied, the
  * session with that id is left untouched so the caller's current session stays
  * valid (self-service password change keeps the active browser logged in while

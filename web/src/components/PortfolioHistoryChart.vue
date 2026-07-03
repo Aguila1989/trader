@@ -173,6 +173,13 @@ const options = computed<ChartOptions<"line">>(() => ({
   font-size: 12px;
   min-height: 32px;
 }
+/* AUDIT-003: a scoped min-height outranks the global 44px mobile floor
+   (scoped selectors compile with an attribute selector), so restate it. */
+@media (max-width: 767px) {
+  .pfh-tabs .seg {
+    min-height: 44px;
+  }
+}
 .pfh-empty {
   font-size: 13px;
   padding: 8px 0;

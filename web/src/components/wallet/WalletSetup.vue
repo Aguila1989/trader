@@ -29,6 +29,9 @@ const last4 = ref("");
 const importSecret = ref("");
 const replaceSecret = ref("");
 const replacePassword = ref("");
+// AUDIT-007: distinct confirmation for the destructive replace (last 4 of the
+// NEW secret, mirroring the create flow's write-it-down check).
+const replaceConfirm4 = ref("");
 const replacedMsg = ref("");
 
 const SECRET_RE = /^S[A-Z2-7]{55}$/;
@@ -119,6 +122,14 @@ async function doReplace(): Promise<void> {
     error.value = t("walletSetup.importInvalid");
     return;
   }
+  // AUDIT-007: replacing the wallet cancels every open offer + stop loss and
+  // permanently swaps the signing key — require a DISTINCT confirmation step
+  // (retyping the new secret's last 4, the same rigor wallet creation uses),
+  // not just a warning banner above a submit button.
+  if (replaceConfirm4.value.trim() !== s.slice(-4)) {
+    error.value = t("walletSetup.replaceConfirmMismatch");
+    return;
+  }
   loading.value = true;
   const r = await walletApi.replace(s, replacePassword.value);
   loading.value = false;
@@ -129,6 +140,7 @@ async function doReplace(): Promise<void> {
     });
     replaceSecret.value = "";
     replacePassword.value = "";
+    replaceConfirm4.value = "";
     await loadWalletStatus(true);
   } else {
     error.value = r.data.error || t("walletSetup.genericError");
@@ -307,6 +319,18 @@ async function doReplace(): Promise<void> {
               type="password"
               autocomplete="current-password"
               :placeholder="t('walletSetup.passwordPlaceholder')"
+            />
+          </label>
+          <!-- AUDIT-007: distinct confirmation step for a destructive action. -->
+          <label class="auth-field">
+            <span>{{ t("walletSetup.replaceConfirmLabel") }}</span>
+            <input
+              v-model="replaceConfirm4"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="4"
+              :placeholder="t('walletSetup.replaceConfirmPlaceholder')"
             />
           </label>
           <button class="btn danger auth-submit" type="submit" :disabled="loading">

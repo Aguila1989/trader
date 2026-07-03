@@ -1,6 +1,6 @@
-import { config } from "../config";
 import { horizon } from "./client";
 import { canonicalAsset } from "./assets";
+import { resolveTradingAccountOrNull } from "./keyProvider";
 import type { TradeProposal } from "../types";
 
 /**
@@ -83,15 +83,24 @@ function hasTrustline(acct: LoadedAccountLike, key: string): boolean {
 export async function preflightCheck(
   p: TradeProposal,
 ): Promise<PreflightResult> {
-  if (!config.stellarPublic) {
-    return { ok: false, code: "no_public", reason: "STELLAR_PUBLIC is not configured." };
+  // AUDIT-001: check the account that will ACTUALLY SIGN this trade — the
+  // current user's wallet (env STELLAR_PUBLIC only as the DEFAULT account's
+  // fallback, exactly like builder.ts/signer.ts via keyProvider). Checking
+  // config.stellarPublic here blocked every per-user-wallet trade outright in
+  // a multi-user deployment and, worse, preflighted a logged-in user's trade
+  // against the OPERATOR's balances/trustlines.
+  const pub = await resolveTradingAccountOrNull().catch(() => null);
+  if (!pub) {
+    return {
+      ok: false,
+      code: "no_public",
+      reason: "No usable signing wallet for this account (set up or import a wallet).",
+    };
   }
 
   let acct: LoadedAccountLike;
   try {
-    acct = (await horizon.loadAccount(
-      config.stellarPublic,
-    )) as unknown as LoadedAccountLike;
+    acct = (await horizon.loadAccount(pub)) as unknown as LoadedAccountLike;
   } catch (err) {
     return {
       ok: false,

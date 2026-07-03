@@ -22,8 +22,15 @@ import {
   setWalletStatus,
 } from "../db/repo";
 import { currentUserId } from "../users/context";
-import { findUserById, findCredentialByEmail } from "../auth/store";
+import {
+  findUserById,
+  findCredentialByEmail,
+  registerFailedLogin,
+  recordLoginAttempt,
+  recordSuccessfulLogin,
+} from "../auth/store";
 import { verifyPassword } from "../users/password";
+import { dbReady } from "../db/pool";
 import { getOpenOffers } from "../stellar/market";
 import { buildCancelOfferTransaction } from "../stellar/builder";
 import { signAndSubmit } from "../stellar/signer";
@@ -35,6 +42,22 @@ import { WalletError } from "./errors";
 
 /** A Stellar ed25519 secret seed in strkey form. */
 const SECRET_RE = /^S[A-Z2-7]{55}$/;
+
+/**
+ * AUDIT-012: wallet rows live ONLY in SQL Server (there is deliberately no
+ * in-memory fallback for key material), but repo.insertWallet silently no-ops
+ * without a DB — so create/import/replace would return success while storing
+ * NOTHING, and the "saved" wallet would vanish on the next request. Fail
+ * loudly instead.
+ */
+function ensureWalletStorage(): void {
+  if (!dbReady()) {
+    throw new WalletError(
+      503,
+      "Wallet storage is unavailable (no database connection). A configured SQL Server is required to store encrypted wallets.",
+    );
+  }
+}
 
 export interface WalletStatusView {
   configured: boolean;
@@ -67,6 +90,7 @@ async function probeAccount(publicKey: string): Promise<{ funded: boolean; xlmBa
  * the user already has an active wallet (replacement goes through replaceWallet).
  */
 export async function createWallet(): Promise<{ publicKey: string; secret: string }> {
+  ensureWalletStorage();
   if (await getActiveWallet()) {
     throw new WalletError(409, "You already have an active wallet. Replace it via import instead.");
   }
@@ -146,6 +170,7 @@ function keypairFromSecret(secret: unknown): Keypair {
 export async function importWallet(
   secret: unknown,
 ): Promise<{ publicKey: string; funded: boolean; xlmBalance: string | null }> {
+  ensureWalletStorage();
   if (await getActiveWallet()) {
     throw new WalletError(409, "You already have an active wallet. Replace it instead.");
   }
@@ -184,16 +209,53 @@ export async function getWalletStatus(): Promise<WalletStatusView> {
   };
 }
 
-/** Verify the current user's password (for the replace re-auth gate). */
+/**
+ * Verify the current user's password (for the replace re-auth gate).
+ *
+ * AUDIT-009: shares the LOGIN lockout + attempt audit trail. Without this,
+ * /api/wallet/replace (outside /api/auth/*, so not covered by authRateLimiter)
+ * was an unmetered password oracle: unlimited guesses, no lockout, no logging.
+ * Now a locked account is rejected outright, every wrong guess increments the
+ * same failure counter the login flow uses (locking at the same threshold),
+ * and each attempt lands in dbo.LoginAttempts with a wallet-replace reason.
+ */
 async function verifyCurrentPassword(password: unknown): Promise<void> {
   const pw = String(password ?? "");
   if (!pw) throw new WalletError(400, "Your password is required to replace your wallet.");
   const user = await findUserById(currentUserId());
   if (!user) throw new WalletError(401, "Not authenticated.");
   const cred = await findCredentialByEmail(user.email);
-  if (!cred || !(await verifyPassword(pw, cred.passwordHash))) {
+  if (!cred) throw new WalletError(401, "Incorrect password.");
+  if (cred.lockedUntil != null && cred.lockedUntil > Date.now()) {
+    await recordLoginAttempt({
+      email: user.email,
+      userId: user.id,
+      ip: null,
+      success: false,
+      reason: "wallet-replace-while-locked",
+    });
+    throw new WalletError(
+      403,
+      `Account temporarily locked due to repeated failed password attempts. Try again in about ${config.auth.lockoutMinutes} minutes.`,
+    );
+  }
+  if (!(await verifyPassword(pw, cred.passwordHash))) {
+    const r = await registerFailedLogin(
+      user.id,
+      config.auth.maxFailedLogins,
+      config.auth.lockoutMinutes * 60_000,
+    );
+    await recordLoginAttempt({
+      email: user.email,
+      userId: user.id,
+      ip: null,
+      success: false,
+      reason: r.locked ? "wallet-replace-bad-password-locked" : "wallet-replace-bad-password",
+    });
     throw new WalletError(401, "Incorrect password.");
   }
+  // Correct password: clear the shared failure counter (same as a login).
+  await recordSuccessfulLogin(user.id);
 }
 
 /**
@@ -206,6 +268,7 @@ export async function replaceWallet(
   secret: unknown,
   password: unknown,
 ): Promise<{ publicKey: string; cancelledOffers: number; cancelledStops: number }> {
+  ensureWalletStorage();
   await verifyCurrentPassword(password);
   const old = await getActiveWallet();
   if (!old) {

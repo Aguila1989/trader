@@ -391,6 +391,34 @@ export async function insertPortfolioSnapshot(e: PortfolioSnapshot): Promise<voi
 }
 
 /**
+ * AUDIT-013: retention for dbo.PortfolioSnapshots, which otherwise grows
+ * without bound (~105k rows per user per year at the 5-min throttle). Rows
+ * older than `cutoffIso` are THINNED to the last snapshot per user/network/day
+ * — the chart's widest bucket is daily, so every UI range keeps its exact
+ * shape while old data stops accumulating. GLOBAL by design (a retention job
+ * covers every user, unlike the per-user read/write helpers). Returns the
+ * number of rows deleted.
+ */
+export async function thinPortfolioSnapshots(cutoffIso: string): Promise<number> {
+  if (!dbReady()) return 0;
+  const res = await getPool()
+    .request()
+    .input("cutoff", sql.DateTime2, new Date(cutoffIso))
+    .query<{ n: number }>(
+      `WITH old AS (
+         SELECT id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY userId, network, CAST(ts AS DATE)
+                  ORDER BY ts DESC) AS rn
+           FROM dbo.PortfolioSnapshots
+          WHERE ts < @cutoff)
+       DELETE FROM old WHERE rn > 1;
+       SELECT @@ROWCOUNT AS n;`,
+    );
+  return Number(res.recordset[0]?.n ?? 0);
+}
+
+/**
  * Portfolio-value snapshots for the current user, oldest-first. `sinceIso` bounds
  * the window (null = all history). When `bucketMinutes` is set, the rows are
  * downsampled to the LAST snapshot in each fixed-size time bucket, so a long
@@ -544,6 +572,10 @@ export async function listLogs(opts: {
 
   const conditions = ["network = @net", "userId = @userId"];
   if (level) conditions.push("level = @level");
+  // AUDIT-027 (accepted): the leading-wildcard LIKE can't use a B-tree index,
+  // so the match scans the user's (already index-narrowed) rows. Correct and
+  // parameterized; if log search ever gets slow at scale, add a SQL Server
+  // full-text index on dbo.Logs.message or bound the default time window.
   if (opts.q) conditions.push("message LIKE @q");
   if (opts.since) conditions.push("ts >= @since");
   const where = `WHERE ${conditions.join(" AND ")}`;
@@ -935,6 +967,27 @@ export async function getSetting(key: string): Promise<string | null> {
         WHERE network = @net AND userId = @userId AND keyName = @k;`,
     );
   return res.recordset[0]?.value ?? null;
+}
+
+/**
+ * AUDIT-026: batch read of many settings in ONE round trip. Boot hydration
+ * used to issue a sequential query per catalog key (~30 round trips).
+ */
+export async function getSettings(keys: string[]): Promise<Map<string, string>> {
+  if (!dbReady() || keys.length === 0) return new Map();
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId());
+  const params = keys.map((k, i) => {
+    req.input(`k${i}`, sql.NVarChar(64), k);
+    return `@k${i}`;
+  });
+  const res = await req.query<{ keyName: string; value: string }>(
+    `SELECT keyName, value FROM dbo.Settings
+      WHERE network = @net AND userId = @userId AND keyName IN (${params.join(", ")});`,
+  );
+  return new Map(res.recordset.map((r) => [r.keyName, r.value]));
 }
 
 /** Upsert a setting (in-place; the only non-append-only store). No-op without a DB. */
@@ -1614,16 +1667,7 @@ export async function listActiveTrustlineDismissals(): Promise<TrustlineDismissa
   }));
 }
 
-/** Delete dismissals of a kind (e.g. clear 'suggestion' rows at scan start). */
-export async function clearTrustlineDismissals(kind: "suggestion" | "warning"): Promise<void> {
-  if (!dbReady()) return;
-  await getPool()
-    .request()
-    .input("net", sql.NVarChar(16), config.network)
-    .input("userId", sql.NVarChar(64), currentUserId())
-    .input("kind", sql.NVarChar(16), kind)
-    .query(
-      `DELETE FROM dbo.TrustlineDismissals
-        WHERE network = @net AND userId = @userId AND kind = @kind;`,
-    );
-}
+// AUDIT-033: clearTrustlineDismissals() was removed - suggestion dismissals
+// already auto-reset per scan by DATE FILTERING (computeUserViews only honours
+// dismissals created after the latest scan's date), so the delete-at-scan-start
+// helper it was written for never got wired and had zero callers.

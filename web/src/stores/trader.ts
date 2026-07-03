@@ -149,6 +149,22 @@ export const useTraderStore = defineStore("trader", () => {
   const pageLimit = ref(25);
   const pageOffset = ref(0);
   const statusFilter = ref("");
+  // AUDIT-002: the Manual and Bot tabs each mount their own HistoryTable but
+  // share this one pagination/filter state. Track which source last owned the
+  // view so a table for a DIFFERENT source starts fresh instead of inheriting
+  // the other tab's page offset + status filter.
+  const tradesViewSource = ref<string | null>(null);
+  function claimTradesView(source: string): void {
+    if (tradesViewSource.value === source) return;
+    const firstClaim = tradesViewSource.value === null;
+    tradesViewSource.value = source;
+    // First mount of the app: state is already fresh and init() issues the
+    // boot loadTrades() with the same params — skip the duplicate fetch.
+    if (firstClaim) return;
+    pageOffset.value = 0;
+    statusFilter.value = "";
+    void loadTrades();
+  }
 
   // --- token detail view (Feature 2) ---
   // Kept in SEPARATE refs (NOT inside `snapshot`, which is clobbered wholesale
@@ -1263,6 +1279,7 @@ export const useTraderStore = defineStore("trader", () => {
     loadBalances,
     loadEvolution,
     loadTrades,
+    claimTradesView,
     setStatusFilter,
     nextPage,
     prevPage,

@@ -34,3 +34,15 @@ export function explorerTx(hash: string, network: string): string {
   const net = network === "public" ? "public" : "testnet";
   return `https://stellar.expert/explorer/${net}/tx/${hash}`;
 }
+
+/**
+ * AUDIT-017/042: i18n label for an AI-log eventType ("risk_constraint" →
+ * t("aiLog.events.riskConstraint")). Falls back to the underscore-stripped raw
+ * value for event types without a translation. Pass vue-i18n's `t`.
+ */
+export function aiEventLabel(t: (key: string) => string, eventType: string): string {
+  const suffix = eventType.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  const key = `aiLog.events.${suffix}`;
+  const label = t(key);
+  return label === key ? eventType.replace(/_/g, " ") : label;
+}

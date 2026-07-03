@@ -104,17 +104,27 @@ async function add(): Promise<void> {
   }
 }
 
+// AUDIT-006: removing a trustline is an irreversible ON-CHAIN action — arm an
+// inline confirm first (consistent with the pending-payment + active-order
+// confirmations) instead of acting on a single tap.
+const confirmingRemove = ref<string | null>(null);
 async function remove(asset: string): Promise<void> {
-  await store.removeTrustline({ asset });
+  try {
+    await store.removeTrustline({ asset });
+  } finally {
+    confirmingRemove.value = null;
+  }
 }
 </script>
 
 <template>
   <section ref="panelEl" class="panel">
     <h2>{{ t("trustlines.title") }}</h2>
+    <!-- Bug 4C: trustline add/remove are MANUAL wallet actions — the trading
+         access mode gates the AI only, so no arm-to-modify note or read-only
+         disable here anymore (the backend still enforces wallet + kill switch). -->
     <p class="muted tl-note">
       {{ t("trustlines.intro") }}
-      <span v-if="store.isReadOnly">{{ t("trustlines.armToModify") }}</span>
     </p>
     <ul class="levels">
       <li v-if="store.trustlines.length === 0" class="muted-row">
@@ -124,13 +134,19 @@ async function remove(asset: string): Promise<void> {
         <span class="px" :title="tl.asset">{{ tl.code }}</span>
         <span class="amt">{{ fmtNum(tl.balance) }}</span>
         <button
+          v-if="confirmingRemove !== tl.asset"
           class="btn tl-remove"
-          :disabled="store.isReadOnly || Number(tl.balance) > 0"
+          :disabled="Number(tl.balance) > 0"
           :title="Number(tl.balance) > 0 ? t('trustlines.sellToZeroFirst') : t('trustlines.actions.remove')"
-          @click="remove(tl.asset)"
+          @click="confirmingRemove = tl.asset"
         >
           {{ t("trustlines.actions.remove") }}
         </button>
+        <span v-else class="tl-confirm">
+          <span class="tl-confirm-q">{{ t("trustlines.confirmRemove", { code: tl.code }) }}</span>
+          <button class="btn danger" @click="remove(tl.asset)">{{ t("trustlines.confirmYes") }}</button>
+          <button class="btn" @click="confirmingRemove = null">{{ t("trustlines.keep") }}</button>
+        </span>
       </li>
     </ul>
     <div class="tl-form">
@@ -143,7 +159,7 @@ async function remove(asset: string): Promise<void> {
         />
         <button
           class="btn primary"
-          :disabled="busy || store.isReadOnly || !selected"
+          :disabled="busy || !selected"
           @click="add"
         >
           {{ busy ? t("trustlines.actions.adding") : t("trustlines.actions.add") }}
@@ -155,7 +171,7 @@ async function remove(asset: string): Promise<void> {
         <input v-model="mIssuer" class="tl-input wide" :placeholder="t('trustlines.issuerPlaceholder')" />
         <button
           class="btn primary"
-          :disabled="busy || store.isReadOnly || !manualValid"
+          :disabled="busy || !manualValid"
           @click="add"
         >
           {{ busy ? t("trustlines.actions.adding") : t("trustlines.actions.add") }}
@@ -185,6 +201,19 @@ async function remove(asset: string): Promise<void> {
 .tl-remove {
   margin-left: auto;
   padding: 2px 10px;
+  font-size: 12px;
+}
+/* AUDIT-006: inline remove confirmation. */
+.tl-confirm {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.tl-confirm-q {
+  color: var(--warn);
   font-size: 12px;
 }
 .tl-form {

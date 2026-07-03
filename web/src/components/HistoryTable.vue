@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { downloadFile } from "../api";
@@ -16,6 +16,10 @@ const props = withDefaults(defineProps<{ source?: "manual" | "bot" | "all" }>(),
 });
 
 const store = useTraderStore();
+
+// AUDIT-002: pagination/filter state is shared store state; claim it for this
+// source so switching Manual <-> Bot never shows the other tab's page/filter.
+onMounted(() => store.claimTradesView(props.source));
 
 // A trade counts as manual when explicitly initiated by the user, else it's a
 // bot (AI/system) trade. Persisted rows lack `initiator` but keep `provider`.

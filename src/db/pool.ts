@@ -21,6 +21,48 @@ export function dbReady(): boolean {
   return ready;
 }
 
+/**
+ * AUDIT-016: `ready` used to flip false only on initial-connect failure or
+ * explicit shutdown - if SQL Server died MID-SESSION, dbReady() stayed true
+ * forever and every write failed one-by-one while the UI kept reporting
+ * "SQL Server (persisting)". A lightweight periodic probe (SELECT 1) now trips
+ * `ready` after a few consecutive failures (so dbReady()-gated code reacts and
+ * the operator gets ONE loud message instead of an error per write) and
+ * re-enables persistence automatically when the connection recovers.
+ */
+const HEALTH_INTERVAL_MS = 60_000;
+const HEALTH_FAILS_TO_TRIP = 3;
+let healthTimer: ReturnType<typeof setInterval> | null = null;
+let healthFails = 0;
+
+async function probeHealth(): Promise<void> {
+  if (!pool) return;
+  try {
+    await pool.request().query("SELECT 1 AS ok");
+    if (!ready) {
+      ready = true;
+      console.warn("[db] SQL Server connection RESTORED - persistence re-enabled.");
+    }
+    healthFails = 0;
+  } catch (err) {
+    healthFails += 1;
+    if (ready && healthFails >= HEALTH_FAILS_TO_TRIP) {
+      ready = false;
+      console.error(
+        `[db] SQL Server unreachable for ${healthFails} consecutive health checks ` +
+          `(${(err as Error).message}) - persistence DISABLED (in-memory only) until the connection recovers.`,
+      );
+    }
+  }
+}
+
+function startHealthCheck(): void {
+  if (healthTimer) clearInterval(healthTimer);
+  healthTimer = setInterval(() => void probeHealth(), HEALTH_INTERVAL_MS);
+  // Never hold the process open for the probe.
+  healthTimer.unref?.();
+}
+
 export function getPool(): sql.ConnectionPool {
   if (!pool || !ready) {
     throw new Error("SQL Server pool is not connected.");
@@ -39,9 +81,17 @@ function baseConfig(database: string): sql.config {
       encrypt: config.db.encrypt,
       trustServerCertificate: config.db.trustServerCertificate,
     },
-    pool: { max: 5, min: 0, idleTimeoutMillis: 30_000 },
-    connectionTimeout: 15_000,
-    requestTimeout: 30_000,
+    // AUDIT-039: pool sizing/timeouts are env-tunable like every other
+    // operational parameter (a hardcoded max of 5 was a hidden concurrency
+    // ceiling for a multi-user deployment). Connection-string deployments keep
+    // the driver defaults - tune via the discrete settings when it matters.
+    pool: {
+      max: config.db.poolMax,
+      min: 0,
+      idleTimeoutMillis: config.db.poolIdleMs,
+    },
+    connectionTimeout: config.db.connectTimeoutMs,
+    requestTimeout: config.db.requestTimeoutMs,
   };
 }
 
@@ -432,6 +482,28 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       EXEC('CREATE UNIQUE INDEX UX_Wallets_active
               ON dbo.Wallets (userId, network) WHERE status = ''active''');
   `);
+
+  // AUDIT-025: the Logs tab filters TradeLog by action/token and AiLog by
+  // eventType, but only (userId, network, ts) was indexed - every filtered
+  // query scanned the user's whole partition. Additive + idempotent like all
+  // other migrations; guarded on userId existing (ensureUserScoping ran above).
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.TradeLog', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.TradeLog', 'userId') IS NOT NULL
+    BEGIN
+      IF INDEXPROPERTY(OBJECT_ID('dbo.TradeLog'), 'IX_TradeLog_user_action', 'IndexID') IS NULL
+        EXEC('CREATE INDEX IX_TradeLog_user_action
+                ON dbo.TradeLog (userId, network, action, ts DESC)');
+      IF INDEXPROPERTY(OBJECT_ID('dbo.TradeLog'), 'IX_TradeLog_user_base', 'IndexID') IS NULL
+        EXEC('CREATE INDEX IX_TradeLog_user_base
+                ON dbo.TradeLog (userId, network, baseAsset, ts DESC)');
+    END
+    IF OBJECT_ID('dbo.AiLog', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.AiLog', 'userId') IS NOT NULL
+       AND INDEXPROPERTY(OBJECT_ID('dbo.AiLog'), 'IX_AiLog_user_event', 'IndexID') IS NULL
+      EXEC('CREATE INDEX IX_AiLog_user_event
+              ON dbo.AiLog (userId, network, eventType, ts DESC)');
+  `);
 }
 
 /**
@@ -628,6 +700,13 @@ export async function initDb(): Promise<boolean> {
     await pool.connect();
     await ensureSchema(pool);
     ready = true;
+    // AUDIT-016: watch the connection from here on. A pool-level error also
+    // triggers an immediate probe so a hard drop trips fast, not in 3 minutes.
+    pool.on("error", (err: Error) => {
+      console.error(`[db] SQL Server pool error: ${err.message}`);
+      void probeHealth();
+    });
+    startHealthCheck();
     return true;
   } catch (err) {
     ready = false;
@@ -645,6 +724,10 @@ export async function initDb(): Promise<boolean> {
 
 export async function closeDb(): Promise<void> {
   ready = false;
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
   if (pool) {
     try {
       await pool.close();

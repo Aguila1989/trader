@@ -17,6 +17,9 @@ export default {
     codePlaceholder: "Asset code (e.g. USDC)",
     domainPlaceholder: "Home domain (e.g. centre.io)",
     issuerPlaceholder: "Issuer (G…) — optional if a domain is given",
+    confirmRemove: "Remove the {code} trustline? This is an on-chain action.",
+    confirmYes: "Yes, remove",
+    keep: "Keep",
     actions: {
       remove: "Remove",
       add: "Add trustline",
@@ -39,6 +42,9 @@ export default {
     codePlaceholder: "Asset-code (bv. USDC)",
     domainPlaceholder: "Home-domein (bv. centre.io)",
     issuerPlaceholder: "Uitgever (G…) — optioneel als er een domein is",
+    confirmRemove: "Trustline {code} verwijderen? Dit is een on-chain actie.",
+    confirmYes: "Ja, verwijderen",
+    keep: "Behouden",
     actions: {
       remove: "Verwijderen",
       add: "Trustline toevoegen",
@@ -61,6 +67,9 @@ export default {
     codePlaceholder: "Code de l'actif (ex. USDC)",
     domainPlaceholder: "Domaine d'accueil (ex. centre.io)",
     issuerPlaceholder: "Émetteur (G…) — facultatif si un domaine est fourni",
+    confirmRemove: "Supprimer la trustline {code} ? Cette action est on-chain.",
+    confirmYes: "Oui, supprimer",
+    keep: "Conserver",
     actions: {
       remove: "Retirer",
       add: "Ajouter une ligne de confiance",
@@ -83,6 +92,9 @@ export default {
     codePlaceholder: "Código del activo (p. ej. USDC)",
     domainPlaceholder: "Dominio de origen (p. ej. centre.io)",
     issuerPlaceholder: "Emisor (G…) — opcional si se indica un dominio",
+    confirmRemove: "¿Eliminar la trustline {code}? Es una acción on-chain.",
+    confirmYes: "Sí, eliminar",
+    keep: "Mantener",
     actions: {
       remove: "Quitar",
       add: "Añadir línea de confianza",

@@ -4,7 +4,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { useTraderStore } from "../stores/trader";
-import { dateTimeStr } from "../format";
+import { aiEventLabel, dateTimeStr } from "../format";
 import type { AiLogEntry, RiskProfile } from "../types";
 
 const { t } = useI18n();
@@ -145,7 +145,9 @@ function riskSummary(rp?: RiskProfile): string {
               @click="toggle(r.id)"
             >
               <td class="mono">{{ dateTimeStr(r.ts) }}</td>
-              <td><span class="evt-badge">{{ r.eventType.replace(/_/g, " ") }}</span></td>
+              <!-- AUDIT-017: use the same aiLog.events.* translations the
+                   filter dropdown already uses, not the raw enum. -->
+              <td><span class="evt-badge">{{ aiEventLabel(t, r.eventType) }}</span></td>
               <td :title="r.baseAsset">{{ code(r.baseAsset) }}{{ r.quoteAsset ? "/" + code(r.quoteAsset) : "" }}</td>
               <td class="ai-reason" :class="{ clamp: !expanded.has(r.id) }">{{ r.reasoning }}</td>
               <td class="mono ai-rp">{{ riskSummary(r.riskProfile) }}</td>

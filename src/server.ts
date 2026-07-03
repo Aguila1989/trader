@@ -9,7 +9,7 @@ import { checkOrigin, isLoopbackBind } from "./csrf";
 import { createAuthRouter } from "./auth/routes";
 import { requireAuth, authRateLimiter } from "./auth/middleware";
 import { createWalletRouter } from "./wallet/routes";
-import { purgeExpiredSessions } from "./auth/store";
+import { purgeExpiredSessions, purgeAuthArtifacts } from "./auth/store";
 import { aiReady, aiModel, aiProviderId } from "./ai";
 import { store } from "./trading/store";
 import {
@@ -30,7 +30,7 @@ import {
 } from "./stellar/trustlineOps";
 import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
 import { listClaimableBalances, claimBalance } from "./stellar/claimable";
-import { canonicalAsset } from "./stellar/assets";
+import { assetCode, canonicalAsset, pairLabel } from "./stellar/assets";
 import { checkEgress } from "./policy/engine";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
@@ -51,6 +51,7 @@ import { runWithUserId, DEFAULT_USER_ID } from "./users/context";
 import {
   insertTrustlineDismissal,
   listTrustlineScansForAsset,
+  thinPortfolioSnapshots,
 } from "./db/repo";
 import {
   getBalances,
@@ -252,10 +253,28 @@ app.get("/api/balances", async (_req, res) => {
  * does require: the kill switch released (the operator's hard stop halts
  * EVERYTHING, manual included) and a usable signing wallet for the current
  * user. Returns false (and writes the response) when blocked.
+ *
+ * PAPER-MODE EXCEPTION: manual DEX orders paper-fill in Paper mode, but the
+ * wallet endpoints have no simulation — a "swap" or "send" clicked while the
+ * user believes they are simulating would move REAL funds. Value-TRANSFERRING
+ * actions (pay / swap / claimable-swap) are therefore refused in Paper mode
+ * with a clear message; pass `allowInPaper` for actions that manage EXISTING
+ * real state instead of transferring value (offer cancel/modify, claims,
+ * trustlines).
  */
-async function ensureCanSubmit(res: Response): Promise<boolean> {
+async function ensureCanSubmit(
+  res: Response,
+  opts: { allowInPaper?: boolean } = {},
+): Promise<boolean> {
   if (store.killSwitch) {
     res.status(400).json({ error: "Kill switch is active - all on-chain actions are halted." });
+    return false;
+  }
+  if (store.paperTrading && !opts.allowInPaper) {
+    res.status(400).json({
+      error:
+        "Paper mode simulates trading, but this action would move REAL funds on-chain. Switch to Read-only or Live trading first.",
+    });
     return false;
   }
   // Feature 3: the current user must have a usable wallet. The env STELLAR_SECRET
@@ -404,7 +423,7 @@ app.get("/api/trustlines", async (_req, res) => {
 
 // Add a trustline by {asset:"CODE:ISSUER"} or {code, issuer} or {code, homeDomain}.
 app.post("/api/trustlines", async (req, res) => {
-  if (!(await ensureCanSubmit(res))) return;
+  if (!(await ensureCanSubmit(res, { allowInPaper: true }))) return;
   const b = req.body ?? {};
   const assetSpec = String(b.asset ?? "").trim();
   const code = String(b.code ?? "").trim();
@@ -437,7 +456,7 @@ app.post("/api/trustlines", async (req, res) => {
 
 // Remove (zero-limit) a trustline; refuses when a balance is still held.
 app.post("/api/trustlines/remove", async (req, res) => {
-  if (!(await ensureCanSubmit(res))) return;
+  if (!(await ensureCanSubmit(res, { allowInPaper: true }))) return;
   const b = req.body ?? {};
   const assetSpec = String(b.asset ?? "").trim();
   const code = String(b.code ?? "").trim();
@@ -515,7 +534,7 @@ app.get("/api/offers", async (_req, res) => {
 // Cancel a resting offer by id (manage*Offer amount 0). Live-gated + serialized
 // on the same execution queue as trades so it can't race a Horizon sequence.
 app.post("/api/offers/:id/cancel", async (req, res) => {
-  if (!(await ensureCanSubmit(res))) return;
+  if (!(await ensureCanSubmit(res, { allowInPaper: true }))) return;
   const offerId = String(req.params.id);
   const pub = await resolveTradingAccountOrNull();
   if (!pub) {
@@ -544,7 +563,7 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
     });
     store.log(
       "trade",
-      `Cancelled open offer ${offerId} (${offer.selling.split(":")[0]}/${offer.buying.split(":")[0]}).`,
+      `Cancelled open offer ${offerId} (${pairLabel(offer.selling, offer.buying)}).`,
     );
     store.logTrade({
       baseAsset: offer.selling,
@@ -569,7 +588,7 @@ app.post("/api/offers/:id/cancel", async (req, res) => {
 // (behind the auth gate + CSRF like every route); serialized on the execution
 // queue so it can't race a trade onto the same Horizon sequence number.
 app.post("/api/offers/:id/modify", async (req, res) => {
-  if (!(await ensureCanSubmit(res))) return;
+  if (!(await ensureCanSubmit(res, { allowInPaper: true }))) return;
   const offerId = String(req.params.id);
   const amount = String(req.body?.amount ?? "").trim();
   const price = String(req.body?.price ?? "").trim();
@@ -601,7 +620,7 @@ app.post("/api/offers/:id/modify", async (req, res) => {
       const bal = (await getBalances(pub)).find((b) => b.asset === offer.selling);
       if (!bal || Number(bal.balance) < delta) {
         res.status(400).json({
-          error: `Insufficient ${offer.selling.split(":")[0]} balance to raise this order to ${amount}.`,
+          error: `Insufficient ${assetCode(offer.selling)} balance to raise this order to ${amount}.`,
         });
         return;
       }
@@ -619,7 +638,7 @@ app.post("/api/offers/:id/modify", async (req, res) => {
     });
     store.log(
       "trade",
-      `Modified open offer ${offerId} (${offer.selling.split(":")[0]}/${offer.buying.split(":")[0]}): ` +
+      `Modified open offer ${offerId} (${pairLabel(offer.selling, offer.buying)}): ` +
         `amount ${offer.amount} -> ${amount}, price ${offer.price} -> ${price}.`,
     );
     store.logTrade({
@@ -681,7 +700,7 @@ app.post("/api/pay", async (req, res) => {
     );
     store.log(
       "trade",
-      `Payment sent: ${amount} ${asset.split(":")[0]} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
+      `Payment sent: ${amount} ${assetCode(asset)} -> ${destination.slice(0, 10)} (tx ${result.hash}).`,
     );
     res.json(result);
   } catch (err) {
@@ -765,7 +784,7 @@ app.post("/api/swap", async (req, res) => {
     });
     store.log(
       "trade",
-      `Swap: ${sendAmount} ${sendAsset.split(":")[0]} -> ${destAsset.split(":")[0]} (min ${result.destMin}, tx ${result.hash}).`,
+      `Swap: ${sendAmount} ${assetCode(sendAsset)} -> ${assetCode(destAsset)} (min ${result.destMin}, tx ${result.hash}).`,
     );
     res.json(result);
   } catch (err) {
@@ -902,7 +921,7 @@ app.post("/api/claimable/:id/swap", async (req, res) => {
     store.log(
       "trade",
       result.swapped
-        ? `Pending payment swapped to XLM: ${result.amount} ${result.asset.split(":")[0]} -> ~${result.estXlm} XLM (tx ${result.hash}).`
+        ? `Pending payment swapped to XLM: ${result.amount} ${assetCode(result.asset)} -> ~${result.estXlm} XLM (tx ${result.hash}).`
         : `Pending payment claimed: ${result.amount} XLM (tx ${result.hash}).`,
     );
     res.json(result);
@@ -1053,7 +1072,7 @@ app.post("/api/claimable/:id/unreject", (req, res) => {
 });
 
 app.post("/api/claimable/:id/claim", async (req, res) => {
-  if (!(await ensureCanSubmit(res))) return;
+  if (!(await ensureCanSubmit(res, { allowInPaper: true }))) return;
   const id = req.params.id;
   try {
     // Pre-check so a claim of a token we don't trust doesn't burn a fee failing.
@@ -1070,7 +1089,7 @@ app.post("/api/claimable/:id/claim", async (req, res) => {
         const trusted = (await getTrustlines(pub)).some((t) => t.asset === cb.asset);
         if (!trusted) {
           res.status(400).json({
-            error: `Establish a ${cb.asset.split(":")[0]} trustline before claiming this balance.`,
+            error: `Establish a ${assetCode(cb.asset)} trustline before claiming this balance.`,
           });
           return;
         }
@@ -2095,10 +2114,23 @@ async function start(): Promise<void> {
     startMonitor();
     startLiquidityScanner();
     startTrustlineScanner();
-    // Feature 2: keep dbo.AuthSessions from growing unbounded. Purge expired
-    // sessions at boot and every 12h. Unref'd so it never holds the process open.
-    void purgeExpiredSessions().catch(() => {});
-    setInterval(() => void purgeExpiredSessions().catch(() => {}), 12 * 3_600_000).unref();
+    // Retention maintenance, at boot and every 12h (unref'd so it never holds
+    // the process open):
+    //  - Feature 2: purge expired dbo.AuthSessions;
+    //  - AUDIT-014: purge old dbo.LoginAttempts + spent dbo.AuthTokens;
+    //  - AUDIT-013: thin dbo.PortfolioSnapshots older than 90 days to one row
+    //    per user/day (the chart's widest bucket), bounding unbounded growth.
+    const runRetentionMaintenance = (): void => {
+      void purgeExpiredSessions().catch(() => {});
+      void purgeAuthArtifacts().catch(() => {});
+      void thinPortfolioSnapshots(new Date(Date.now() - 90 * 86_400_000).toISOString())
+        .then((n) => {
+          if (n > 0) store.log("info", `Retention: thinned ${n} old portfolio snapshot row(s) to daily resolution.`);
+        })
+        .catch(() => {});
+    };
+    runRetentionMaintenance();
+    setInterval(runRetentionMaintenance, 12 * 3_600_000).unref();
     // Bug 3: the trading access mode now PERSISTS and is restored in
     // hydrateFromDb exactly as the user last set it — the mode never changes
     // automatically. AUTO_ARM_LIVE_TRADING (which overrode the boot mode) is

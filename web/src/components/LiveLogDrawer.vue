@@ -6,6 +6,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import { aiEventLabel } from "../format";
 import { useTraderStore } from "../stores/trader";
 import type { LiveLogItem } from "../stores/trader";
 
@@ -66,7 +67,9 @@ function desc(i: LiveLogItem): string {
   if (i.stream === "ai") {
     const e = i.entry;
     const tok = e.baseAsset ? ` ${store.tokenFor(e.baseAsset).code}` : "";
-    return `${e.eventType.replace(/_/g, " ")}${tok}: ${e.reasoning}`;
+    // AUDIT-042: translate the event type via the same aiLog.events.* keys the
+    // AI Log table uses instead of showing the raw backend enum.
+    return `${aiEventLabel(t, e.eventType)}${tok}: ${e.reasoning}`;
   }
   return i.entry.message;
 }
@@ -211,9 +214,18 @@ function itemKey(i: LiveLogItem): string {
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  /* AUDIT-004: these rows navigate to the Logs page on tap — give them a real
+     tap-target height (44px floor on phones via the media rule below; the rule
+     lives HERE because a scoped selector outranks the global mobile floor). */
+  min-height: 32px;
 }
 .livelog-row:last-child {
   border-bottom: 0;
+}
+@media (max-width: 767px) {
+  .livelog-row {
+    min-height: 44px;
+  }
 }
 .livelog-row:hover {
   background: rgba(91, 140, 255, 0.08);

@@ -55,7 +55,10 @@ export function checkOrigin(
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
     return "allow"; // read-only verbs can't change state
   }
-  if (!req.path.startsWith("/api")) return "allow";
+  // AUDIT-008: Express routes paths case-INsensitively but req.path preserves
+  // the request's casing — without the toLowerCase a cross-site POST to
+  // /API/pay would skip this guard yet still reach the /api/pay handler.
+  if (!req.path.toLowerCase().startsWith("/api")) return "allow";
   if (!req.origin) return "allow"; // no browser Origin = not a CSRF vector
 
   let originHost: string;

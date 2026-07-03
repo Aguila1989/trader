@@ -38,6 +38,9 @@ export default {
     trailingTag: "trailing",
     allQty: "all",
     cancel: "Cancel",
+    confirmCancel: "Cancel this stop loss? It stops protecting this position.",
+    confirmYes: "Yes, cancel",
+    keep: "Keep",
   },
   nl: {
     titleManual: "Handmatige stop losses",
@@ -75,6 +78,9 @@ export default {
     trailingTag: "trailing",
     allQty: "alles",
     cancel: "Annuleren",
+    confirmCancel: "Deze stop loss annuleren? De positie is dan niet meer beschermd.",
+    confirmYes: "Ja, annuleren",
+    keep: "Behouden",
   },
   fr: {
     titleManual: "Stop loss manuels",
@@ -112,6 +118,9 @@ export default {
     trailingTag: "trailing",
     allQty: "tout",
     cancel: "Annuler",
+    confirmCancel: "Annuler ce stop loss ? La position ne sera plus protégée.",
+    confirmYes: "Oui, annuler",
+    keep: "Conserver",
   },
   es: {
     titleManual: "Stop loss manuales",
@@ -149,5 +158,8 @@ export default {
     trailingTag: "trailing",
     allQty: "todo",
     cancel: "Cancelar",
+    confirmCancel: "¿Cancelar este stop loss? La posición dejará de estar protegida.",
+    confirmYes: "Sí, cancelar",
+    keep: "Mantener",
   },
 };
