@@ -12,16 +12,25 @@
 //   Live trading: AI can trade.    Manual trades: allowed, submitted on-chain.
 // The mode only ever changes here (user click); it persists and is restored at
 // boot exactly as last set (Bug 3).
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
+import { billingState } from "../billing/premium";
 
 const { t } = useI18n();
 const store = useTraderStore();
 
+// Feature 2: ENABLING the AI (and auto-trade) is premium-only; pausing and the
+// trading-access mode stay free. The server re-checks on every call - these
+// disables are the UX layer of the same gate, never the enforcement.
+const premiumLocked = computed(() => billingState.loaded && !billingState.isPremium);
+
 function set(on: boolean): void {
+  if (on && premiumLocked.value) return;
   if (store.aiEnabled !== on) void store.setAiEnabled(on);
 }
 function setMode(auto: boolean): void {
+  if (auto && premiumLocked.value) return;
   if (store.isAutoTrade !== auto) void store.setAutoApprove(auto);
 }
 // Read-only / Paper / Live are mutually exclusive access modes; the backend
@@ -84,14 +93,25 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
         <span class="muted at-hint">{{ t("common.ai.toggleHint") }}</span>
       </div>
       <div class="segmented at-seg" role="group" :aria-label="t('common.ai.toggleLabel')">
-        <button class="seg" :class="{ active: store.aiEnabled }" :aria-pressed="store.aiEnabled" @click="set(true)">
-          {{ t("common.ai.enable") }}
+        <button
+          class="seg"
+          :class="{ active: store.aiEnabled }"
+          :aria-pressed="store.aiEnabled"
+          :disabled="premiumLocked && !store.aiEnabled"
+          :title="premiumLocked ? t('billing.gate.lockedControl') : undefined"
+          @click="set(true)"
+        >
+          {{ premiumLocked && !store.aiEnabled ? "🔒 " : "" }}{{ t("common.ai.enable") }}
         </button>
         <button class="seg pause" :class="{ active: !store.aiEnabled }" :aria-pressed="!store.aiEnabled" @click="set(false)">
           {{ t("common.ai.pause") }}
         </button>
       </div>
     </div>
+    <p v-if="premiumLocked" class="at-lockhint">
+      {{ t("billing.gate.title") }} —
+      <RouterLink to="/pricing">{{ t("billing.gate.cta") }}</RouterLink>
+    </p>
 
     <!-- AI trade mode: approve each trade vs. fully automated. -->
     <div class="at-row at-row-sep">
@@ -108,8 +128,15 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
         <button class="seg" :class="{ active: !store.isAutoTrade }" :aria-pressed="!store.isAutoTrade" @click="setMode(false)">
           {{ t("topBar.approveEveryTrade") }}
         </button>
-        <button class="seg auto" :class="{ active: store.isAutoTrade }" :aria-pressed="store.isAutoTrade" @click="setMode(true)">
-          {{ t("topBar.autoTrade") }}
+        <button
+          class="seg auto"
+          :class="{ active: store.isAutoTrade }"
+          :aria-pressed="store.isAutoTrade"
+          :disabled="premiumLocked && !store.isAutoTrade"
+          :title="premiumLocked ? t('billing.gate.lockedControl') : undefined"
+          @click="setMode(true)"
+        >
+          {{ premiumLocked && !store.isAutoTrade ? "🔒 " : "" }}{{ t("topBar.autoTrade") }}
         </button>
       </div>
     </div>
@@ -129,4 +156,6 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
 .at-seg { flex-shrink: 0; }
 .at-seg .seg { padding: 6px 16px; font-weight: 600; }
 .at-seg .seg.pause.active { background: var(--neg); color: #2a0e12; }
+.at-lockhint { margin: 0; font-size: 12px; color: var(--muted); }
+.at-lockhint a { color: var(--accent); }
 </style>

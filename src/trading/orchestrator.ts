@@ -29,6 +29,7 @@ import {
   type OfferResultLike,
 } from "../stellar/signer";
 import { resolveTradingAccountOrNull } from "../stellar/keyProvider";
+import { accrueFillFee } from "../fees/collector";
 import { setXlmRate } from "./positions";
 import {
   explainNoEntry,
@@ -515,6 +516,20 @@ export function logTradeFill(p: TradeProposal, txHash?: string): void {
     status: partial ? "PARTIAL" : "FILLED",
     ...(txHash ? { txHash } : {}),
     orderId: p.id,
+  });
+  // Feature 2: accrue the platform fee for this proposal's FIRST fill (later
+  // resting-offer tranches accrue their deltas in the monitor). Deterministic
+  // id => the late-landing recovery path can't double-charge. Fire-and-forget:
+  // fee accounting never blocks or fails a fill booking.
+  void accrueFillFee({
+    idKey: `${p.id}-first`,
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    amountBase: Number(amount) || 0,
+    price: Number(price) || 0,
+    tradeType: initiatorTag(p),
+    tradeTxHash: txHash,
+    paper: p.paper === true || txHash === "paper",
   });
 }
 

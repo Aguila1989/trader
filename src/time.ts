@@ -69,6 +69,41 @@ export function nextWeeklyOccurrenceUtc(
   return new Date(from.getTime() + 7 * 86_400_000);
 }
 
+/**
+ * The next UTC instant at which the LOCAL clock in config.timezone reads
+ * `minuteOfDay` minutes after midnight, strictly AFTER `from`. The daily
+ * sibling of nextWeeklyOccurrenceUtc (Feature 2's volume-tier recalc job).
+ */
+export function nextDailyOccurrenceUtc(minuteOfDay: number, from: Date = new Date()): Date {
+  const mod = Math.min(1439, Math.max(0, Math.round(minuteOfDay)));
+  const hour = Math.floor(mod / 60);
+  const minute = mod % 60;
+  for (let addDays = 0; addDays <= 2; addDays++) {
+    const probe = new Date(from.getTime() + addDays * 86_400_000);
+    const utc = localWallClockToUtc(dayKey(probe), hour, minute);
+    if (utc.getTime() > from.getTime()) return utc;
+  }
+  return new Date(from.getTime() + 86_400_000);
+}
+
+/**
+ * [startUtc, endUtc) of the PREVIOUS calendar month in config.timezone, for the
+ * instant `from`. The tier job's aggregation window ("previous calendar month
+ * volume", per the business plan).
+ */
+export function previousCalendarMonthUtc(from: Date = new Date()): { start: Date; end: Date } {
+  const ymd = dayKey(from); // local YYYY-MM-DD
+  const [y, m] = ymd.split("-").map(Number) as [number, number, ...number[]];
+  const firstOfThis = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-01`;
+  const prevY = m === 1 ? y - 1 : y;
+  const prevM = m === 1 ? 12 : m - 1;
+  const firstOfPrev = `${String(prevY).padStart(4, "0")}-${String(prevM).padStart(2, "0")}-01`;
+  return {
+    start: localWallClockToUtc(firstOfPrev, 0, 0),
+    end: localWallClockToUtc(firstOfThis, 0, 0),
+  };
+}
+
 /** UTC instant when local time in config.timezone is `ymd` at hour:minute. */
 function localWallClockToUtc(ymd: string, hour: number, minute: number): Date {
   const hh = String(hour).padStart(2, "0");

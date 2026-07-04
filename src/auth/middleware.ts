@@ -35,6 +35,9 @@ export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
   "/api/auth/forgot-password",
   "/api/auth/reset-password",
   "/api/auth/verify-email",
+  // Feature 2: Stripe calls this without any session cookie; authenticity is
+  // the HMAC signature over the raw body, verified in the handler itself.
+  "/api/billing/webhook",
 ]);
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);

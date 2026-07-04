@@ -33,6 +33,21 @@ export interface User {
    * flips this via POST /api/auth/onboarding. "Restart Tutorial" resets it.
    */
   onboardingCompleted: boolean;
+  /**
+   * Premium subscription state (Feature 2). Mirrors Stripe via the webhook -
+   * never set directly by user input. Free users: isPremium=false, status null.
+   * Stripe customer/subscription IDs are deliberately NOT part of this shape;
+   * the webhook layer reads them via dedicated auth-store functions.
+   */
+  isPremium: boolean;
+  subscriptionStatus: string | null;
+  /** ISO end of the current paid period (next billing date), or null. */
+  subscriptionEnd: string | null;
+  /**
+   * Volume tier (Bronze|Silver|Gold|Platinum), recalculated daily from the
+   * previous calendar month's platform volume. New users start Bronze.
+   */
+  volumeTier: string;
 }
 
 /** Fields required to create a new account. */

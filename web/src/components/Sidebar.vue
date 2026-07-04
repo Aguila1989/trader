@@ -17,12 +17,16 @@ import { useI18n } from "vue-i18n";
 import { session, logout } from "../auth/session";
 import { useAcademyStore } from "../academy/progress";
 import { uiState, toggleSidebar, openSettings } from "../ui/uiState";
+import { billingState } from "../billing/premium";
 
 const { t } = useI18n();
 const route = useRoute();
 const academy = useAcademyStore();
 
 const loggedIn = computed(() => !!session.user);
+// Feature 2: the Upgrade entry shows for FREE users only (spec: "show for free
+// users"); premium users manage their plan from Settings > Account instead.
+const showUpgrade = computed(() => loggedIn.value && billingState.loaded && !billingState.isPremium);
 // Show the "New" badge until the visitor has opened any lesson (same localStorage
 // progress the Academy itself uses; works logged-out too).
 const showNew = computed(() => !academy.hasStartedAnyLesson);
@@ -137,6 +141,21 @@ async function doLogout(): Promise<void> {
             <svg v-else viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </span>
           <span class="sb-label">{{ t(l.labelKey) }}</span>
+        </RouterLink>
+
+        <!-- Feature 2: pricing/upgrade page (free users only). -->
+        <RouterLink
+          v-if="showUpgrade"
+          to="/pricing"
+          class="sb-link sb-upgrade"
+          :class="{ active: isActive('pricing') }"
+          :title="t('billing.upgradeNav')"
+        >
+          <span class="sb-icon upgrade-accent" aria-hidden="true">
+            <!-- upgrade: spark/bolt -->
+            <svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /></svg>
+          </span>
+          <span class="sb-label">{{ t("billing.upgradeNav") }}</span>
         </RouterLink>
 
         <!-- 1. divider sets the learning area apart from the doing area -->
@@ -313,6 +332,16 @@ async function doLogout(): Promise<void> {
   border: 0;
   border-top: 1px solid var(--line);
   margin: 10px 6px;
+}
+
+/* Feature 2: the Upgrade entry gets a warm accent so it reads as an offer,
+   not another workspace page. */
+.upgrade-accent {
+  color: #e8b04b;
+}
+.sb-upgrade:hover .upgrade-accent,
+.sb-upgrade.active .upgrade-accent {
+  color: #f4c56a;
 }
 
 /* Academy: secondary accent (purple) not used by the other links. */

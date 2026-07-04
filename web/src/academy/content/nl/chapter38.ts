@@ -26,6 +26,19 @@ export const chapter38: Chapter & { whoFor: string } = {
       example:
         "Stel je je eerste vijf minuten in de app voor: je werpt een blik op de header en ziet je totale walletwaarde; op je telefoon tik je op ☰ om de zijbalk te bekijken en zie je de link naar de Academy; je opent het tabblad Bot van de Trading-pagina en merkt dat de toegangsmodus op Alleen-lezen staat, dus je gaat naar het tabblad Handmatig en plaatst zelf een kleine handmatige trade, die meteen wordt uitgevoerd; later, wanneer je een opfrisser wilt, open je Instellingen → Account → Tutorial herstarten en bekijk je de rondleiding opnieuw vanaf het begin.",
     },
+    {
+      id: "c38-l2",
+      title: "Wat is het verschil tussen Gratis en Premium?",
+      paragraphs: [
+        "Met Gratis krijg je eigenlijk al bijna alles wat de app kan. Handmatig handelen is volledig toegankelijk, zonder beperkingen — je kunt orders plaatsen, annuleren en aanpassen, en een stop loss of trailing stop instellen om een positie te beschermen terwijl je even niet oplet. Ook de liquiditeitsscanner is gratis, zodat je kunt nagaan hoe vlot een token verhandelbaar is voordat je erin stapt, en auto-swap naar XLM staat gratis klaar om losse tokens automatisch terug om te zetten naar je basisvaluta. De volledige Academy, elk hoofdstuk en elke quiz, is op elk niveau gratis. Het enige wat Gratis niet omvat, is AI-handel.",
+        "Premium ontgrendelt twee dingen. Ten eerste AI-handel zelf: eenmaal geabonneerd kun je de AI aanzetten en aansturen met instellingen per risicofactor, zodat hij handelt binnen grenzen die jij kiest in plaats van als een alles-of-niets-schakelaar. Ten tweede verlaagt Premium je handelskosten in elke volumeschijf, los van wat AI-handel zelf nog aan resultaat kan opleveren. Premium kost €10 per maand, of €96 per jaar — een besparing van ongeveer 20% ten opzichte van maandelijks betalen. Om de AI daadwerkelijk te laten handelen heb je bovendien je eigen API-sleutel nodig van een AI-provider zoals Anthropic of OpenAI, wat in een later hoofdstuk aan bod komt; die AI-provider rekent apart af voor wat de AI zelf verbruikt, bovenop je Atrium-abonnement.",
+        "Elke trade op het platform, handmatig of via AI, betaalt een klein percentage aan kosten, en dat percentage hangt af van je volumeschijf. Je schijf wordt dagelijks opnieuw berekend op basis van je handelsvolume op het platform in de vorige kalendermaand, en kan dus stijgen of dalen naarmate je activiteit verandert: Brons is onder 5.000 XLM maandvolume, Zilver is 5.000–20.000, Goud is 20.000–50.000, en Platina is boven 50.000. Binnen elke schijf betaalt Gratis het hoogste percentage, Premium handmatig minder, en Premium AI-handel het minst van allemaal. Elk nieuw account start op Brons. Er is geen minimumbedrag aan kosten, maar trades kleiner dan 1 XLM tellen niet mee om je schijf op te bouwen, ook al betaal je er wel gewoon de kosten van die schijf voor.",
+        "Je kunt het vergelijken met een sportschoolabonnement: hoe meer je het gebruikt, hoe goedkoper elk bezoek wordt. Een veelhandelaar wordt behandeld als een fanatieke sporter en betaalt een lager percentage per trade, gewoon omdat hij vaker langskomt, en een Premium-abonnement is daarbovenop het ledentarief — een extra korting op elke schijf.",
+        "Als vuistregel: handel je meer dan zo'n €500 per maand, dan levert alleen al de lagere Premium-kost doorgaans meer op dan de €10 per maand die het kost, nog voordat je meerekent wat AI-handel zelf kan toevoegen.",
+      ],
+      example:
+        "Stel dat je in een maand voor 8.000 XLM aan volume verhandelt — dat plaatst je in de Zilver-schijf. Als Gratis-gebruiker kosten je trades die maand elk 0,23%. Stap je over naar Premium en handel je handmatig met hetzelfde volume, dan zakt de kost naar 0,16% per trade; laat je de AI voor je handelen op Zilver, dan zakt het verder naar 0,12%. De schijf wordt dagelijks herberekend op basis van het volume van vorige maand, dus handel je volgende maand voor 25.000 XLM, dan schuif je door naar Goud en dalen de percentages opnieuw — ongeacht of je Gratis of Premium bent.",
+    },
   ],
   quiz: [
     {
@@ -93,6 +106,50 @@ export const chapter38: Chapter & { whoFor: string } = {
         },
       ],
       correctIndex: 0,
+    },
+    {
+      id: "c38-q4",
+      prompt: "Welke van deze functies is alleen beschikbaar voor Premium-abonnees?",
+      options: [
+        {
+          text: "AI-handel, met instellingen per risicofactor.",
+          explanation:
+            "Juist. AI-handel is de enige functie die achter Premium zit. Handmatig handelen, stop losses en trailing stops, de liquiditeitsscanner, auto-swap naar XLM, en de volledige Academy zijn allemaal gratis.",
+        },
+        {
+          text: "Handmatig handelen en stop losses.",
+          explanation:
+            "Nee. Handmatig handelen, inclusief stop losses en trailing stops, is volledig beschikbaar met Gratis — daar zit niets Premium-only aan.",
+        },
+        {
+          text: "De Academy.",
+          explanation:
+            "Nee. De Academy is gratis voor iedereen, op elk niveau, of je nu wel of niet op Premium zit.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c38-q5",
+      prompt: "Wat bepaalt in welke kostenschijf (Brons, Zilver, Goud, Platina) je zit?",
+      options: [
+        {
+          text: "Hoe lang geleden je je account hebt aangemaakt.",
+          explanation:
+            "Nee. De leeftijd van je account speelt geen enkele rol — een gloednieuw account en een account van jaren oud worden op dezelfde manier beoordeeld, puur op volume.",
+        },
+        {
+          text: "Je handelsvolume op het platform in de vorige kalendermaand, dagelijks herberekend.",
+          explanation:
+            "Juist. Je schijf is puur gebaseerd op hoeveel je vorige kalendermaand op het platform hebt verhandeld, en wordt elke dag herberekend, zodat hij kan stijgen of dalen naarmate je volume verandert.",
+        },
+        {
+          text: "Of je een eenmalige betaling hebt gedaan om een hogere schijf te ontgrendelen.",
+          explanation:
+            "Nee. Je kunt een schijf niet rechtstreeks kopen — schijven komen alleen voort uit echt handelsvolume, en een Premium-abonnement verandert het percentage dat je binnen een schijf betaalt, niet in welke schijf je zit.",
+        },
+      ],
+      correctIndex: 1,
     },
   ],
 };

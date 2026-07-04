@@ -4,6 +4,7 @@
 // settings + risk settings moved behind the header gear icon (SettingsModal).
 import AiToggle from "./AiToggle.vue";
 import BotAnalysisPanel from "./BotAnalysisPanel.vue";
+import PremiumGate from "./PremiumGate.vue";
 import ProposalsPanel from "./ProposalsPanel.vue";
 import StopLossPanel from "./StopLossPanel.vue";
 import LiquidityPanel from "./LiquidityPanel.vue";
@@ -15,7 +16,12 @@ import HistoryTable from "./HistoryTable.vue";
 
 <template>
   <AiToggle />
-  <BotAnalysisPanel />
+  <!-- Feature 2: the AI analysis panel is the LLM-driven core - locked (visible,
+       never hidden) for free users. Proposals/stop-losses stay free: system
+       stop-loss exits flow through the proposals panel for everyone. -->
+  <PremiumGate>
+    <BotAnalysisPanel />
+  </PremiumGate>
   <ProposalsPanel />
   <StopLossPanel mode="ai" />
   <!-- Feature 4: deterioration warnings first (held tokens), then add-suggestions. -->

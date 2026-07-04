@@ -460,6 +460,62 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_TrustlineDismissals_net_kind
         ON dbo.TrustlineDismissals (network, kind, asset);
     END
+
+    -- Premium/fees (2026-07 Feature 2): the platform fee ledger. One row per
+    -- fee charge. TAX-CRITICAL fields (amounts + the XLM/EUR rate captured at
+    -- receipt time) are written once and never recomputed; only the collection
+    -- lifecycle transitions (pending -> collected|failed, attempts, the receipt
+    -- fields set AT collection). userId is added by ensureUserScoping.
+    IF OBJECT_ID('dbo.FeeLedger', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.FeeLedger (
+        id              NVARCHAR(64)   NOT NULL CONSTRAINT PK_FeeLedger PRIMARY KEY,
+        ts              DATETIME2(3)   NOT NULL,  -- fee accrual moment (fill/swap, UTC)
+        network         NVARCHAR(16)   NOT NULL,
+        tradeType       NVARCHAR(8)    NOT NULL,  -- 'MANUAL' | 'AI'
+        tier            NVARCHAR(12)   NOT NULL,  -- volume tier at trade time
+        isPremium       BIT            NOT NULL,
+        feeRate         DECIMAL(10,7)  NOT NULL,  -- applied rate, e.g. 0.0028000
+        tradeVolumeXlm  DECIMAL(38,7)  NOT NULL,
+        feeXlm          DECIMAL(38,7)  NOT NULL,
+        status          NVARCHAR(12)   NOT NULL,  -- 'pending' | 'collected' | 'failed'
+        attempts        INT            NOT NULL CONSTRAINT DF_FeeLedger_attempts DEFAULT 0,
+        tradeTxHash     NVARCHAR(80)   NULL,      -- the trade that incurred the fee
+        collectedTxHash NVARCHAR(80)   NULL,      -- the payment that PAID the fee
+        collectedAt     DATETIME2(3)   NULL,      -- receipt moment (the tax timestamp, UTC)
+        xlmEurRate      DECIMAL(38,10) NULL,      -- XLM/EUR at receipt; stored once, forever
+        feeEur          DECIMAL(38,2)  NULL,
+        rateSource      NVARCHAR(24)   NULL       -- 'kraken' | 'coingecko' | 'kraken-hist'
+      );
+      CREATE INDEX IX_FeeLedger_net_status ON dbo.FeeLedger (network, status, ts);
+      CREATE INDEX IX_FeeLedger_net_ts ON dbo.FeeLedger (network, ts DESC);
+    END
+
+    -- Feature 2: processed Stripe webhook event ids (idempotent delivery).
+    -- Insert-only; a replayed event id short-circuits before any state change.
+    IF OBJECT_ID('dbo.StripeEvents', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.StripeEvents (
+        id         NVARCHAR(64) NOT NULL CONSTRAINT PK_StripeEvents PRIMARY KEY,
+        type       NVARCHAR(64) NOT NULL,
+        receivedAt DATETIME2(3) NOT NULL
+      );
+    END
+
+    -- Feature 2: PLATFORM-scoped settings (fee wallet address, premium prices,
+    -- ...). Distinct from the per-user dbo.Settings: keyed (network, keyName)
+    -- only, edited by boot seeding + the admin backoffice (Feature 4), never by
+    -- end users.
+    IF OBJECT_ID('dbo.PlatformSettings', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.PlatformSettings (
+        network   NVARCHAR(16)  NOT NULL,
+        keyName   NVARCHAR(64)  NOT NULL,
+        value     NVARCHAR(MAX) NOT NULL,
+        updatedAt DATETIME2(3)  NOT NULL,
+        CONSTRAINT PK_PlatformSettings PRIMARY KEY (network, keyName)
+      );
+    END
   `);
 
   // User accounts + per-user scoping. Runs after the data tables exist so the
@@ -473,6 +529,10 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // User profile flags (2026-07 Feature 1: onboarding tutorial). Additive and
   // idempotent like every other migration here.
   await ensureProfileSchema(p);
+
+  // Premium subscription + volume tiers (2026-07 Feature 2): billing columns
+  // on dbo.Users. Runs after ensureUserScoping so dbo.Users exists.
+  await ensureBillingSchema(p);
 
   // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
   // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
@@ -600,6 +660,44 @@ async function ensureProfileSchema(p: sql.ConnectionPool): Promise<void> {
   `);
 }
 
+/**
+ * Premium subscription + volume-tier columns on dbo.Users (2026-07 Feature 2).
+ * isPremium/subscription* mirror Stripe state (webhook-driven); volumeTier is
+ * recalculated daily from the previous calendar month's platform volume (new
+ * users start Bronze); tierOverride marks an admin-pinned tier the daily job
+ * must not touch; flaggedForReview / disabledByAdmin are the Feature 4 user-
+ * management switches (added here so one migration covers both features).
+ */
+async function ensureBillingSchema(p: sql.ConnectionPool): Promise<void> {
+  await p.request().batch(`
+    IF COL_LENGTH('dbo.Users', 'isPremium') IS NULL
+      ALTER TABLE dbo.Users ADD isPremium BIT NOT NULL
+        CONSTRAINT DF_Users_isPremium DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'stripeCustomerId') IS NULL
+      ALTER TABLE dbo.Users ADD stripeCustomerId NVARCHAR(64) NULL;
+    IF COL_LENGTH('dbo.Users', 'stripeSubscriptionId') IS NULL
+      ALTER TABLE dbo.Users ADD stripeSubscriptionId NVARCHAR(64) NULL;
+    IF COL_LENGTH('dbo.Users', 'subscriptionStatus') IS NULL
+      ALTER TABLE dbo.Users ADD subscriptionStatus NVARCHAR(24) NULL;
+    IF COL_LENGTH('dbo.Users', 'subscriptionStart') IS NULL
+      ALTER TABLE dbo.Users ADD subscriptionStart DATETIME2(3) NULL;
+    IF COL_LENGTH('dbo.Users', 'subscriptionEnd') IS NULL
+      ALTER TABLE dbo.Users ADD subscriptionEnd DATETIME2(3) NULL;
+    IF COL_LENGTH('dbo.Users', 'volumeTier') IS NULL
+      ALTER TABLE dbo.Users ADD volumeTier NVARCHAR(12) NOT NULL
+        CONSTRAINT DF_Users_volumeTier DEFAULT 'Bronze';
+    IF COL_LENGTH('dbo.Users', 'tierOverride') IS NULL
+      ALTER TABLE dbo.Users ADD tierOverride BIT NOT NULL
+        CONSTRAINT DF_Users_tierOverride DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'flaggedForReview') IS NULL
+      ALTER TABLE dbo.Users ADD flaggedForReview BIT NOT NULL
+        CONSTRAINT DF_Users_flaggedForReview DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'disabledByAdmin') IS NULL
+      ALTER TABLE dbo.Users ADD disabledByAdmin BIT NOT NULL
+        CONSTRAINT DF_Users_disabledByAdmin DEFAULT 0;
+  `);
+}
+
 /** The tables whose rows belong to a single user, with the column the dominant
  *  read query orders by (used to build a userId-leading covering index). The
  *  per-user Settings table has a composite primary key and is handled apart. */
@@ -616,6 +714,7 @@ const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
   { table: "Wallets", orderCol: "createdAt" },
   { table: "TrustlineScans", orderCol: "scanDate" },
   { table: "TrustlineDismissals", orderCol: "createdAt" },
+  { table: "FeeLedger", orderCol: "ts" },
 ];
 
 /** SQL-safe single-quote escaping for our own (non-user-supplied) constants. */

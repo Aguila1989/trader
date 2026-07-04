@@ -172,6 +172,28 @@ export const authApi = {
     authRequest<{ onboardingCompleted?: boolean }>("/api/auth/onboarding", { completed }),
 };
 
+// --- Billing API (Feature 2) -------------------------------------------------
+
+export interface BillingStatus {
+  billingConfigured: boolean;
+  feesEnabled: boolean;
+  isPremium: boolean;
+  tier: "Bronze" | "Silver" | "Gold" | "Platinum";
+  subscriptionStatus: string | null;
+  subscriptionEnd: string | null;
+  currentRates: { manual: number; ai: number | null };
+  rateTable: Record<string, { freeManual: number; premiumManual: number; premiumAi: number }>;
+  prices: { monthlyEur: number; annualEur: number };
+}
+
+export const billingApi = {
+  status: () => getJSON<BillingStatus>("/api/billing/status"),
+  // Returns the Stripe Checkout URL to redirect to. `ack` is the mandatory AI
+  // cost acknowledgement - the server refuses without it.
+  checkout: (plan: "monthly" | "annual", ack: boolean) =>
+    authRequest<{ url?: string }>("/api/billing/checkout-session", { plan, ack }),
+};
+
 // --- Wallet API (Feature 3) -------------------------------------------------
 // Status is a plain GET (used by the header chip + the setup gate). The mutating
 // flows go through authRequest so the screens can show the server's (safe,

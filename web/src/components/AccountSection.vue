@@ -13,6 +13,7 @@ import { checkPassword } from "../auth/passwordPolicy";
 import { dateTimeStr } from "../format";
 import { closeSettings } from "../ui/uiState";
 import { startTour } from "../onboarding/tour";
+import { billingState, loadBillingStatus } from "../billing/premium";
 import PasswordStrengthMeter from "./auth/PasswordStrengthMeter.vue";
 
 const { t } = useI18n();
@@ -22,12 +23,20 @@ const router = useRouter();
 const email = ref(session.user?.email ?? "");
 const createdAt = ref<string | null>(null);
 onMounted(async () => {
+  void loadBillingStatus(true); // Feature 2: fresh subscription status
   const r = await authApi.account();
   if (r.ok && r.data.user) {
     email.value = r.data.user.email;
     createdAt.value = r.data.user.createdAt;
   }
 });
+
+// Feature 2: pricing lives on its own page; the settings modal swallows
+// navigation while open, so close it before routing there.
+function goPricing(): void {
+  closeSettings();
+  void router.push("/pricing").catch(() => {});
+}
 
 // --- restart the onboarding tutorial (Feature 1) ---
 const restartError = ref("");
@@ -111,6 +120,32 @@ async function submit(): Promise<void> {
         <dd>{{ dateTimeStr(createdAt) }}</dd>
       </div>
     </dl>
+
+    <h3 class="acct-sub">{{ t("billing.account.title") }}</h3>
+    <dl class="acct-meta">
+      <div class="acct-row">
+        <dt>{{ t("billing.account.status") }}</dt>
+        <dd>
+          <strong :class="billingState.isPremium ? 'pos' : ''">
+            {{ billingState.isPremium ? t("billing.account.premium") : t("billing.account.free") }}
+          </strong>
+          <span v-if="billingState.subscriptionStatus" class="muted"> · {{ billingState.subscriptionStatus }}</span>
+        </dd>
+      </div>
+      <div v-if="billingState.isPremium && billingState.subscriptionEnd" class="acct-row">
+        <dt>{{ t("billing.account.nextBilling") }}</dt>
+        <dd>{{ dateTimeStr(billingState.subscriptionEnd) }}</dd>
+      </div>
+    </dl>
+    <p v-if="billingState.subscriptionStatus === 'past_due'" class="violations" role="alert">
+      {{ t("billing.account.pastDue") }}
+    </p>
+    <p v-else-if="billingState.subscriptionStatus === 'canceled'" class="acct-hint">
+      {{ t("billing.account.canceled") }}
+    </p>
+    <button v-if="!billingState.isPremium" class="btn acct-restart" type="button" @click="goPricing">
+      {{ t("billing.account.upgrade") }}
+    </button>
 
     <h3 class="acct-sub">{{ t("onboarding.account.title") }}</h3>
     <p class="acct-hint">{{ t("onboarding.account.hint") }}</p>

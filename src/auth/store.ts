@@ -59,6 +59,13 @@ interface MemUser {
   failedLoginAttempts: number;
   lockedUntil: number | null;
   onboardingCompleted: boolean;
+  isPremium: boolean;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionStatus: string | null;
+  subscriptionStart: number | null;
+  subscriptionEnd: number | null;
+  volumeTier: string;
 }
 interface MemSession {
   id: string;
@@ -90,6 +97,10 @@ function memUserToUser(u: MemUser): User {
     lastLoginAt: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : null,
     isActive: u.isActive,
     onboardingCompleted: u.onboardingCompleted,
+    isPremium: u.isPremium,
+    subscriptionStatus: u.subscriptionStatus,
+    subscriptionEnd: u.subscriptionEnd ? new Date(u.subscriptionEnd).toISOString() : null,
+    volumeTier: u.volumeTier,
     ...(u.displayName ? { displayName: u.displayName } : {}),
   };
 }
@@ -114,6 +125,10 @@ interface CredentialRow {
   failedLoginAttempts: number;
   lockedUntil: Date | string | null;
   onboardingCompleted: boolean;
+  isPremium: boolean;
+  subscriptionStatus: string | null;
+  subscriptionEnd: Date | string | null;
+  volumeTier: string | null;
 }
 
 function rowToCredential(r: CredentialRow): Credential {
@@ -124,6 +139,10 @@ function rowToCredential(r: CredentialRow): Credential {
     lastLoginAt: r.lastLoginAt ? toIso(r.lastLoginAt) : null,
     isActive: Boolean(r.isActive),
     onboardingCompleted: Boolean(r.onboardingCompleted),
+    isPremium: Boolean(r.isPremium),
+    subscriptionStatus: r.subscriptionStatus ?? null,
+    subscriptionEnd: r.subscriptionEnd ? toIso(r.subscriptionEnd) : null,
+    volumeTier: r.volumeTier || "Bronze",
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
   return {
@@ -136,7 +155,7 @@ function rowToCredential(r: CredentialRow): Credential {
   };
 }
 
-const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, onboardingCompleted`;
+const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
 
 // --- accounts ---------------------------------------------------------------
 
@@ -161,6 +180,13 @@ export async function createAccount(a: NewAccount): Promise<User | null> {
       failedLoginAttempts: 0,
       lockedUntil: null,
       onboardingCompleted: false,
+      isPremium: false,
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      subscriptionStatus: null,
+      subscriptionStart: null,
+      subscriptionEnd: null,
+      volumeTier: "Bronze",
     };
     mem.users.set(u.id, u);
     return memUserToUser(u);
@@ -316,6 +342,99 @@ export async function setOnboardingCompleted(userId: string, completed: boolean)
     .input("id", sql.NVarChar(64), userId)
     .input("completed", sql.Bit, completed)
     .query(`UPDATE dbo.Users SET onboardingCompleted = @completed WHERE id = @id;`);
+}
+
+// --- premium subscription state (Feature 2, 2026-07) ------------------------
+// Written ONLY by the Stripe webhook / checkout layer (src/billing/*). The
+// webhook is the source of truth: user input never touches these fields.
+
+export interface SubscriptionState {
+  isPremium: boolean;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  subscriptionStatus?: string | null;
+  /** Epoch ms of the current period bounds, or null. */
+  subscriptionStart?: number | null;
+  subscriptionEnd?: number | null;
+}
+
+export async function setSubscriptionState(userId: string, s: SubscriptionState): Promise<void> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (!u) return;
+    u.isPremium = s.isPremium;
+    if (s.stripeCustomerId !== undefined) u.stripeCustomerId = s.stripeCustomerId;
+    if (s.stripeSubscriptionId !== undefined) u.stripeSubscriptionId = s.stripeSubscriptionId;
+    if (s.subscriptionStatus !== undefined) u.subscriptionStatus = s.subscriptionStatus;
+    if (s.subscriptionStart !== undefined) u.subscriptionStart = s.subscriptionStart;
+    if (s.subscriptionEnd !== undefined) u.subscriptionEnd = s.subscriptionEnd;
+    return;
+  }
+  const req = getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("isPremium", sql.Bit, s.isPremium);
+  const sets = ["isPremium = @isPremium"];
+  if (s.stripeCustomerId !== undefined) {
+    req.input("cust", sql.NVarChar(64), s.stripeCustomerId);
+    sets.push("stripeCustomerId = @cust");
+  }
+  if (s.stripeSubscriptionId !== undefined) {
+    req.input("sub", sql.NVarChar(64), s.stripeSubscriptionId);
+    sets.push("stripeSubscriptionId = @sub");
+  }
+  if (s.subscriptionStatus !== undefined) {
+    req.input("status", sql.NVarChar(24), s.subscriptionStatus);
+    sets.push("subscriptionStatus = @status");
+  }
+  if (s.subscriptionStart !== undefined) {
+    req.input("start", sql.DateTime2, s.subscriptionStart == null ? null : new Date(s.subscriptionStart));
+    sets.push("subscriptionStart = @start");
+  }
+  if (s.subscriptionEnd !== undefined) {
+    req.input("end", sql.DateTime2, s.subscriptionEnd == null ? null : new Date(s.subscriptionEnd));
+    sets.push("subscriptionEnd = @end");
+  }
+  await req.query(`UPDATE dbo.Users SET ${sets.join(", ")} WHERE id = @id;`);
+}
+
+/** The userId owning a Stripe customer, or null. Webhook events carry the
+ *  customer id, not our user id (except checkout's client_reference_id). */
+export async function findUserIdByStripeCustomer(customerId: string): Promise<string | null> {
+  if (!customerId) return null;
+  if (!dbReady()) {
+    for (const u of mem.users.values()) if (u.stripeCustomerId === customerId) return u.id;
+    return null;
+  }
+  const res = await getPool()
+    .request()
+    .input("cust", sql.NVarChar(64), customerId)
+    .query<{ id: string }>(`SELECT id FROM dbo.Users WHERE stripeCustomerId = @cust;`);
+  return res.recordset[0]?.id ?? null;
+}
+
+/** The user's stored Stripe ids (for checkout reuse + status display). */
+export async function getStripeIds(
+  userId: string,
+): Promise<{ stripeCustomerId: string | null; stripeSubscriptionId: string | null }> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    return {
+      stripeCustomerId: u?.stripeCustomerId ?? null,
+      stripeSubscriptionId: u?.stripeSubscriptionId ?? null,
+    };
+  }
+  const res = await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .query<{ stripeCustomerId: string | null; stripeSubscriptionId: string | null }>(
+      `SELECT stripeCustomerId, stripeSubscriptionId FROM dbo.Users WHERE id = @id;`,
+    );
+  const row = res.recordset[0];
+  return {
+    stripeCustomerId: row?.stripeCustomerId ?? null,
+    stripeSubscriptionId: row?.stripeSubscriptionId ?? null,
+  };
 }
 
 /**

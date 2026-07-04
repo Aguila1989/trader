@@ -23,6 +23,7 @@ import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
 import { requireTradingAccount } from "./keyProvider";
 import { quoteSwap } from "./transfers";
+import { planSwapFee } from "../fees/collector";
 import { USDC_SPEC } from "./universe";
 
 const BALANCE_ID = /^[0-9a-f]{72}$/i;
@@ -185,7 +186,13 @@ export async function swapClaimableToXlm(input: {
   // (limit 0) succeeds and reclaims the 0.5 XLM reserve - atomically.
   if (!hasTrust) builder.addOperation(Operation.changeTrust({ asset: token, limit: "0" }));
 
+  // Feature 2: this claim+swap is a platform trade - bundle the fee Payment in
+  // the same atomic transaction. Volume = the quoted XLM received.
+  const feePlan = await planSwapFee(Number(quote.destAmount) || 0, "MANUAL");
+  if (feePlan) builder.addOperation(feePlan.op);
+
   const { hash } = await signAndSubmit(builder.setTimeout(120).build());
+  if (feePlan) await feePlan.record(hash);
   return {
     hash,
     asset: canonToken,

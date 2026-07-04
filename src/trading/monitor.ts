@@ -22,6 +22,7 @@ import {
 import { stopLossService } from "./stopLossService";
 import { priceAlertService, alertCrossed } from "./priceAlertService";
 import { getPricedPortfolio } from "../stellar/valuation";
+import { accrueFillFee, collectPendingFees, repairMissingEurRates } from "../fees/collector";
 import { recordPortfolioSample } from "./drawdown";
 import type { ProposedTrade } from "../claude/agent";
 import type { PositionSummary, TradeProposal } from "../types";
@@ -48,6 +49,20 @@ function logPartialFill(p: TradeProposal, delta: number): void {
     status: "PARTIAL",
     ...(p.txHash ? { txHash: p.txHash } : {}),
     orderId: p.id,
+  });
+  // Feature 2: accrue the platform fee for this tranche. The id keys on the
+  // cumulative filled amount AFTER this delta, so re-running the same booking
+  // (crash + reconcile replay) cannot double-charge. Fire-and-forget.
+  const cumulative = round7((Number(p.filledAmount ?? 0) || 0) + delta);
+  void accrueFillFee({
+    idKey: `${p.id}-p${cumulative}`,
+    baseAsset: p.baseAsset,
+    quoteAsset: p.quoteAsset,
+    amountBase: delta,
+    price,
+    tradeType: p.initiator === "manual" ? "MANUAL" : "AI",
+    tradeTxHash: p.txHash,
+    paper: p.paper === true,
   });
 }
 async function sampleDrawdown(): Promise<void> {
@@ -838,6 +853,13 @@ async function runOnce(): Promise<void> {
     await outcomeMarks(snaps).catch((err) =>
       store.log("error", `Monitor outcome marks failed: ${(err as Error).message}`),
     );
+    // Feature 2: pay out accrued platform fees (each signed with the fee
+    // payer's own wallet) + repair any tax-ledger rows missing their
+    // receipt-time EUR rate. Both no-op without a fee wallet / DB.
+    await collectPendingFees().catch((err) =>
+      store.log("error", `Fee collection failed: ${(err as Error).message}`),
+    );
+    await repairMissingEurRates().catch(() => {});
   } finally {
     running = false;
   }

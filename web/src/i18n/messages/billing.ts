@@ -1,0 +1,81 @@
+// Feature 2 strings OUTSIDE the pricing page: the premium lock/gate, the
+// sidebar Upgrade entry, and the Account section's subscription block. The
+// pricing page itself uses the pricing.* namespace.
+export default {
+  en: {
+    upgradeNav: "Upgrade",
+    gate: {
+      title: "AI trading is a Premium feature",
+      body: "Manual trading, the rule-based bot, stop losses and the scanners stay free. Premium unlocks the AI trading loop and lower fees — and you bring your own AI API key.",
+      cta: "View pricing",
+      lockedControl: "Premium required",
+    },
+    account: {
+      title: "Subscription",
+      free: "Free plan",
+      premium: "Premium",
+      status: "Status",
+      nextBilling: "Next billing date",
+      upgrade: "Upgrade to Premium",
+      pastDue: "Your last payment failed — AI trading is paused until payment succeeds.",
+      canceled: "Your subscription has ended. AI trading is disabled.",
+    },
+  },
+  nl: {
+    upgradeNav: "Upgraden",
+    gate: {
+      title: "AI-handel is een Premium-functie",
+      body: "Handmatig handelen, de regelgebaseerde bot, stop-losses en de scanners blijven gratis. Premium ontgrendelt de AI-handelslus en lagere kosten — je gebruikt je eigen AI-API-sleutel.",
+      cta: "Bekijk prijzen",
+      lockedControl: "Premium vereist",
+    },
+    account: {
+      title: "Abonnement",
+      free: "Gratis abonnement",
+      premium: "Premium",
+      status: "Status",
+      nextBilling: "Volgende factuurdatum",
+      upgrade: "Upgraden naar Premium",
+      pastDue: "Je laatste betaling is mislukt — AI-handel is gepauzeerd tot de betaling slaagt.",
+      canceled: "Je abonnement is beëindigd. AI-handel is uitgeschakeld.",
+    },
+  },
+  fr: {
+    upgradeNav: "Passer à Premium",
+    gate: {
+      title: "Le trading IA est une fonction Premium",
+      body: "Le trading manuel, le bot à règles, les stop-loss et les scanners restent gratuits. Premium débloque la boucle de trading IA et des frais réduits — avec votre propre clé API d'IA.",
+      cta: "Voir les tarifs",
+      lockedControl: "Premium requis",
+    },
+    account: {
+      title: "Abonnement",
+      free: "Offre gratuite",
+      premium: "Premium",
+      status: "Statut",
+      nextBilling: "Prochaine facturation",
+      upgrade: "Passer à Premium",
+      pastDue: "Votre dernier paiement a échoué — le trading IA est suspendu jusqu'au paiement.",
+      canceled: "Votre abonnement est terminé. Le trading IA est désactivé.",
+    },
+  },
+  es: {
+    upgradeNav: "Mejorar plan",
+    gate: {
+      title: "El trading con IA es una función Premium",
+      body: "El trading manual, el bot de reglas, los stop-loss y los escáneres siguen siendo gratuitos. Premium desbloquea el bucle de trading con IA y comisiones más bajas — con tu propia clave API de IA.",
+      cta: "Ver precios",
+      lockedControl: "Requiere Premium",
+    },
+    account: {
+      title: "Suscripción",
+      free: "Plan gratuito",
+      premium: "Premium",
+      status: "Estado",
+      nextBilling: "Próxima facturación",
+      upgrade: "Mejorar a Premium",
+      pastDue: "Tu último pago falló — el trading con IA está en pausa hasta que el pago se complete.",
+      canceled: "Tu suscripción ha terminado. El trading con IA está desactivado.",
+    },
+  },
+};

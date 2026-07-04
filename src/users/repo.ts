@@ -24,6 +24,10 @@ interface UserRow {
   lastLoginAt: Date | string | null;
   isActive: boolean;
   onboardingCompleted: boolean;
+  isPremium: boolean;
+  subscriptionStatus: string | null;
+  subscriptionEnd: Date | string | null;
+  volumeTier: string | null;
 }
 
 function toIso(v: Date | string): string {
@@ -38,11 +42,15 @@ function rowToUser(r: UserRow): User {
     lastLoginAt: r.lastLoginAt ? toIso(r.lastLoginAt) : null,
     isActive: Boolean(r.isActive),
     onboardingCompleted: Boolean(r.onboardingCompleted),
+    isPremium: Boolean(r.isPremium),
+    subscriptionStatus: r.subscriptionStatus ?? null,
+    subscriptionEnd: r.subscriptionEnd ? toIso(r.subscriptionEnd) : null,
+    volumeTier: r.volumeTier || "Bronze",
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
 }
 
-const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive, onboardingCompleted`;
+const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
 
 /**
  * Create a new account (idempotent on the unique email). Returns the created -

@@ -376,6 +376,27 @@ export const config = {
     secure: bool("SMTP_SECURE", false),
   },
   /**
+   * Billing + platform fees (Feature 2, 2026-07). Stripe is hand-rolled REST
+   * (fetch + webhook HMAC) - no SDK dependency. When STRIPE_SECRET_KEY is empty
+   * the billing endpoints answer 503 and the UI shows billing as unavailable.
+   * The platform fee WALLET lives in dbo.PlatformSettings (admin-editable,
+   * never hardcoded); PLATFORM_FEE_WALLET only SEEDS that setting on first boot.
+   * Fees are entirely disabled while no fee wallet is configured.
+   */
+  billing: {
+    stripeSecretKey: env("STRIPE_SECRET_KEY"),
+    stripeWebhookSecret: env("STRIPE_WEBHOOK_SECRET"),
+    /** Initial seed for the PlatformSettings feeWalletAddress row (optional). */
+    feeWalletSeed: env("PLATFORM_FEE_WALLET"),
+    /** Defaults for the PlatformSettings price rows (EUR). Kevin 2026-07-04:
+     *  €10/month, €96/year (≈20% off) - editable in the admin panel later. */
+    priceMonthlyEurDefault: num("PREMIUM_PRICE_MONTHLY_EUR", 10),
+    priceAnnualEurDefault: num("PREMIUM_PRICE_ANNUAL_EUR", 96),
+    /** Local time (minutes after midnight, config.timezone) for the daily
+     *  volume-tier recalculation job. Default 00:10. */
+    tierRecalcMinuteOfDay: num("TIER_RECALC_MINUTE_OF_DAY", 10),
+  },
+  /**
    * Extra browser origins allowed to make state-changing /api calls (the CSRF
    * allowlist). Comma-separated, e.g. "https://trader.example.com". Loopback
    * origins pass on a loopback bind; on an exposed bind, list the exact host:port

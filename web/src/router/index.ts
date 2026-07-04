@@ -63,6 +63,14 @@ const router = createRouter({
         { path: "pending", name: "pending", component: PendingPaymentsPage },
         { path: "logs", name: "logs", component: LogsPage },
         {
+          // Feature 2: pricing/upgrade page. Sidebar but no trading header
+          // (standalone, like the Academy) - it's a marketing/decision page.
+          path: "pricing",
+          name: "pricing",
+          component: () => import("../components/PricingPage.vue"),
+          meta: { standalone: true },
+        },
+        {
           path: "academy",
           name: "academy",
           component: () => import("../academy/components/AcademyPage.vue"),

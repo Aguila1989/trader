@@ -12,6 +12,7 @@ import { recommendedFee, formatAmount } from "./amounts";
 import { signAndSubmit } from "./signer";
 import { requireTradingAccount } from "./keyProvider";
 import { assertDnsPublic } from "./safeHost";
+import { planSwapFee } from "../fees/collector";
 
 /**
  * Payments and path-payment swaps from the hot wallet. All submits go out only
@@ -85,15 +86,17 @@ export async function resolveDestination(
   };
 }
 
-async function buildSignSubmit(
-  op: Parameters<TransactionBuilder["addOperation"]>[0],
-  memo?: Memo,
-): Promise<{ hash: string }> {
+type TxOperation = Parameters<TransactionBuilder["addOperation"]>[0];
+
+/** Build, sign and submit one ATOMIC transaction from 1..N operations (all
+ *  succeed or none do - Feature 2 bundles a fee Payment with a swap here). */
+async function buildSignSubmit(ops: TxOperation | TxOperation[], memo?: Memo): Promise<{ hash: string }> {
   const account = await horizon.loadAccount(await requireTradingAccount());
   const builder = new TransactionBuilder(account, {
     fee: recommendedFee(),
     networkPassphrase: config.networkPassphrase,
-  }).addOperation(op);
+  });
+  for (const op of Array.isArray(ops) ? ops : [ops]) builder.addOperation(op);
   if (memo) builder.addMemo(memo);
   const { hash } = await signAndSubmit(builder.setTimeout(120).build());
   return { hash };
@@ -188,16 +191,30 @@ export async function swap(
   const sendAsset = parseAsset(input.sendAsset);
   const destAsset = parseAsset(input.destAsset);
   const path: Asset[] = quote.path.map((s) => parseAsset(s));
-  const { hash } = await buildSignSubmit(
-    Operation.pathPaymentStrictSend({
-      sendAsset,
-      sendAmount: formatAmount(input.sendAmount),
-      // Swap to self: the destination is the current signer's own account.
-      destination: await requireTradingAccount(),
-      destAsset,
-      destMin,
-      path,
-    }),
-  );
+
+  // Feature 2: bundle the platform fee as a second Payment in the SAME
+  // transaction - the swap and its fee are atomic (both land or neither).
+  // Volume is the swap's XLM-equivalent; when neither leg is XLM, an extra
+  // send->XLM quote values it. planSwapFee returns null when fees are off.
+  const volumeXlm =
+    quote.sendAsset === "XLM"
+      ? Number(quote.sendAmount)
+      : quote.destAsset === "XLM"
+        ? Number(quote.destAmount)
+        : Number((await quoteSwap(input.sendAsset, input.sendAmount, "XLM"))?.destAmount ?? 0);
+  const feePlan = await planSwapFee(volumeXlm, "MANUAL");
+
+  const swapOp = Operation.pathPaymentStrictSend({
+    sendAsset,
+    sendAmount: formatAmount(input.sendAmount),
+    // Swap to self: the destination is the current signer's own account.
+    destination: await requireTradingAccount(),
+    destAsset,
+    destMin,
+    path,
+  });
+  const { hash } = await buildSignSubmit(feePlan ? [swapOp, feePlan.op] : swapOp);
+  // The tx (swap + fee) succeeded - write the collected fee to the tax ledger.
+  if (feePlan) await feePlan.record(hash);
   return { hash, destMin, quoted: quote.destAmount };
 }

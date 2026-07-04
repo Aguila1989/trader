@@ -10,6 +10,7 @@ import { useRoute } from "vue-router";
 import { session } from "../auth/session";
 import { uiState } from "../ui/uiState";
 import { maybeAutoStartTour, tourState } from "../onboarding/tour";
+import { loadBillingStatus } from "../billing/premium";
 import Sidebar from "./Sidebar.vue";
 import GlobalHeader from "./GlobalHeader.vue";
 import SettingsModal from "./SettingsModal.vue";
@@ -24,7 +25,11 @@ const showHeader = computed(() => !!session.user && route.meta.standalone !== tr
 // configured, onboardingCompleted still false server-side. The shell re-mounts
 // after wallet setup ("Continue" navigates here), so first-time users get the
 // tour right after their wallet is ready.
-onMounted(() => void maybeAutoStartTour());
+onMounted(() => {
+  void maybeAutoStartTour();
+  // Feature 2: premium/tier state drives the AI locks + the Upgrade nav entry.
+  if (session.user) void loadBillingStatus();
+});
 </script>
 
 <template>

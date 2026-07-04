@@ -34,6 +34,10 @@ import { assetCode, canonicalAsset, pairLabel } from "./stellar/assets";
 import { checkEgress } from "./policy/engine";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
+import { startTierScheduler, stopTierScheduler } from "./fees/tierScheduler";
+import { createBillingRouter } from "./billing/routes";
+import { processWebhookDelivery } from "./billing/webhook";
+import { stripeConfigured } from "./billing/stripeClient";
 import { settingsCatalog, settingLoop } from "./trading/settings";
 import { assessSwapToXlm, swapClaimableToXlm } from "./stellar/claimableSwap";
 import {
@@ -47,7 +51,8 @@ import {
   runTrustlineScanNow,
   computeUserViews,
 } from "./trading/trustlineScanner";
-import { runWithUserId, DEFAULT_USER_ID } from "./users/context";
+import { runWithUserId, currentUserId, DEFAULT_USER_ID } from "./users/context";
+import { findUserById } from "./auth/store";
 import {
   insertTrustlineDismissal,
   listTrustlineScansForAsset,
@@ -117,7 +122,23 @@ app.use(
 // SEC-26: bound the JSON body so an oversized payload can't exhaust memory
 // before auth even runs. The largest legitimate body (a risk profile / settings
 // change) is well under 16kb.
-app.use(express.json({ limit: "16kb" }));
+// Feature 2: the verify hook keeps the RAW body bytes for the Stripe webhook
+// ONLY - its HMAC signature is computed over the exact bytes on the wire, so a
+// re-serialized JSON.parse->stringify round-trip would not verify. Stripe
+// events fit 16kb comfortably; every other path skips the copy.
+app.use(
+  express.json({
+    limit: "16kb",
+    verify: (req, _res, buf) => {
+      if (req.url?.toLowerCase().startsWith("/api/billing/webhook")) {
+        (req as RawBodyRequest).rawBody = Buffer.from(buf);
+      }
+    },
+  }),
+);
+interface RawBodyRequest extends Request {
+  rawBody?: Buffer;
+}
 // SEC-04: never leak the dashboard token (or any URL) to third parties via the
 // Referer header on outbound navigations/subresources.
 app.use((_req, res, next) => {
@@ -194,6 +215,30 @@ app.use("/api/auth", createAuthRouter());
 // Feature 3: wallet management. Mounted AFTER requireAuth so every route runs in
 // the authenticated user's scope (currentUserId()); absent from PUBLIC_API_PATHS.
 app.use("/api/wallet", createWalletRouter());
+
+// Feature 2 (2026-07): billing. The authed routes (checkout/status) run in the
+// user's scope; the WEBHOOK is public (in PUBLIC_API_PATHS - Stripe has no
+// session cookie) and is authenticated by its HMAC signature over the raw body
+// captured above. Any verification/shape failure answers 400; a handler error
+// answers 500 so Stripe retries the delivery.
+app.use("/api/billing", createBillingRouter());
+app.post("/api/billing/webhook", async (req, res) => {
+  if (!stripeConfigured()) {
+    res.status(503).json({ error: "billing not configured" });
+    return;
+  }
+  try {
+    const status = await processWebhookDelivery(
+      (req as RawBodyRequest).rawBody,
+      req.header("stripe-signature"),
+      config.billing.stripeWebhookSecret,
+    );
+    res.status(status).json({ received: status === 200 });
+  } catch (err) {
+    store.log("error", `Stripe webhook processing failed: ${(err as Error).message}`);
+    res.status(500).json({ error: "webhook processing failed" });
+  }
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, network: config.network });
@@ -326,6 +371,25 @@ function ensureAiEnabled(res: Response): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Feature 2 (2026-07): AI trading is the ONLY premium paywall. The platform
+ * OPERATOR (DEFAULT_USER_ID - the account the background bot itself runs as,
+ * on the server's own env AI key) is exempt; every other account needs an
+ * active premium subscription. 402 carries a machine-readable code so the UI
+ * can route free users to /pricing instead of showing a generic error.
+ */
+async function ensurePremiumForAi(res: Response): Promise<boolean> {
+  const userId = currentUserId();
+  if (userId === DEFAULT_USER_ID) return true;
+  const user = await findUserById(userId);
+  if (user?.isPremium) return true;
+  res.status(402).json({
+    error: "AI trading requires a Premium subscription.",
+    code: "PREMIUM_REQUIRED",
+  });
+  return false;
 }
 
 /**
@@ -1452,6 +1516,7 @@ app.post("/api/analyze", async (req, res) => {
     res.status(400).json({ error: "quote is required" });
     return;
   }
+  if (!(await ensurePremiumForAi(res))) return;
   if (!ensureAiEnabled(res)) return;
   if (!aiReady()) {
     res.status(400).json({ error: "No AI API key configured" });
@@ -1470,6 +1535,7 @@ app.post("/api/analyze", async (req, res) => {
 
 // Scan the curated universe of reputable tokens (each vs XLM) in one pass.
 app.post("/api/scan", async (_req, res) => {
+  if (!(await ensurePremiumForAi(res))) return;
   if (!ensureAiEnabled(res)) return;
   if (!aiReady()) {
     res.status(400).json({ error: "No AI API key configured" });
@@ -1779,7 +1845,10 @@ app.post("/api/kill", (req, res) => {
   res.json({ killSwitch: store.killSwitch });
 });
 
-app.post("/api/auto-approve", (req, res) => {
+app.post("/api/auto-approve", async (req, res) => {
+  // Feature 2: turning auto-trade ON is an AI-trading action (premium);
+  // turning it OFF is always allowed.
+  if (Boolean(req.body?.enabled) && !(await ensurePremiumForAi(res))) return;
   store.setAutoApprove(Boolean(req.body?.enabled));
   res.json({ autoApprove: store.autoApprove });
 });
@@ -1872,7 +1941,9 @@ app.post("/api/paper-trading", (req, res) => {
 });
 
 // Feature 1: AI trading master switch (pause/resume the AI loop). Persisted.
-app.post("/api/ai-enabled", (req, res) => {
+app.post("/api/ai-enabled", async (req, res) => {
+  // Feature 2: ENABLING the AI requires premium; pausing it never does.
+  if (Boolean(req.body?.enabled) && !(await ensurePremiumForAi(res))) return;
   store.setAiEnabled(Boolean(req.body?.enabled));
   res.json({ aiEnabled: store.aiEnabled });
 });
@@ -2114,6 +2185,7 @@ async function start(): Promise<void> {
     startMonitor();
     startLiquidityScanner();
     startTrustlineScanner();
+    startTierScheduler();
     // Retention maintenance, at boot and every 12h (unref'd so it never holds
     // the process open):
     //  - Feature 2: purge expired dbo.AuthSessions;
@@ -2178,6 +2250,7 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     stopMonitor();
     stopLiquidityScanner();
     stopTrustlineScanner();
+    stopTierScheduler();
     void closeDb().finally(() => process.exit(0));
   });
 }
