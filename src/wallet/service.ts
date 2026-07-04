@@ -98,6 +98,13 @@ export async function createWallet(): Promise<{ publicKey: string; secret: strin
   // Supersede any earlier un-confirmed pending wallet so they don't accumulate.
   const stale = await getLatestPendingWallet();
   if (stale) await setWalletStatus(stale.id, "replaced");
+  // Encode the strkeys BEFORE zeroing: kp.rawSecretKey() returns a reference to
+  // the keypair's INTERNAL seed buffer, so the fill(0) below also blanks the
+  // keypair itself. Calling kp.secret() after that encoded an all-zero seed —
+  // the user was shown (and asked to save) a garbage "SAAAA..." key that could
+  // never match confirmWallet's last-4 check, while the DB kept the real one.
+  const publicKey = kp.publicKey();
+  const secret = kp.secret();
   const seed = kp.rawSecretKey();
   let blob: string;
   try {
@@ -107,13 +114,13 @@ export async function createWallet(): Promise<{ publicKey: string; secret: strin
   }
   await insertWallet({
     id: randomUUID(),
-    publicKey: kp.publicKey(),
+    publicKey,
     encryptedSecret: blob,
     status: "pending",
   });
   // The secret leaves the server exactly here, once, over the user's authed TLS
   // session. It is never persisted in plaintext and never returned again.
-  return { publicKey: kp.publicKey(), secret: kp.secret() };
+  return { publicKey, secret };
 }
 
 /**

@@ -105,4 +105,22 @@ describe("crypto/secretBox", () => {
     expect(rebuilt.publicKey()).toBe(kp.publicKey());
     expect(rebuilt.secret()).toBe(kp.secret());
   });
+
+  // Regression pin for the createWallet "SAAAA..." bug: rawSecretKey() returns a
+  // REFERENCE to the keypair's internal seed buffer, so zeroing it corrupts every
+  // later kp.secret() encode (it silently returns the strkey of an all-zero
+  // seed). Any caller that zeroes the seed as hygiene MUST encode the strkeys
+  // first (see wallet/service.ts createWallet). If a future SDK version makes
+  // rawSecretKey() return a copy, this test failing is the signal to re-check —
+  // the encode-before-zero order in service.ts stays correct either way.
+  it("zeroing rawSecretKey() corrupts later kp.secret() encodes (encode-before-zero!)", () => {
+    const kp = Keypair.random();
+    const goodSecret = kp.secret();
+    kp.rawSecretKey().fill(0);
+    const afterZero = kp.secret();
+    expect(afterZero).not.toBe(goodSecret);
+    // The garbage encode is a syntactically valid strkey of the all-zero seed —
+    // exactly why the bug shipped: nothing threw, the user just got a wrong key.
+    expect(afterZero.startsWith("SA")).toBe(true);
+  });
 });
