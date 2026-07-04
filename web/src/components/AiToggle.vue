@@ -47,7 +47,7 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
         <span class="at-mode-label">{{ t("common.ai.access") }}</span>
         <span class="muted at-hint">{{ t("common.ai.accessHint") }}</span>
       </div>
-      <div class="segmented at-seg" role="group" :aria-label="t('common.ai.access')">
+      <div class="segmented at-seg" role="group" data-tour="trading-mode" :aria-label="t('common.ai.access')">
         <button
           class="seg"
           :class="{ active: !store.isLive && !store.isPaper }"

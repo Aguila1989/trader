@@ -11,7 +11,7 @@
 // the backdrop, or tap × to close). The Academy entry is set apart with a
 // divider, a secondary accent colour, and a "New" badge until the user has
 // opened at least one lesson.
-import { ref, computed, watch } from "vue";
+import { computed, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { session, logout } from "../auth/session";
@@ -43,8 +43,14 @@ function isActive(name: string): boolean {
 // its content by the matching width. ---
 const collapsed = computed(() => uiState.sidebarCollapsed);
 
-// --- mobile drawer ---
-const mobileOpen = ref(false);
+// --- mobile drawer (state lives in uiState so the onboarding tour can observe
+// and steer it) ---
+const mobileOpen = computed({
+  get: () => uiState.mobileNavOpen,
+  set: (v: boolean) => {
+    uiState.mobileNavOpen = v;
+  },
+});
 // Any navigation closes the drawer (tap-a-link behaviour).
 watch(
   () => route.fullPath,
@@ -69,6 +75,7 @@ async function doLogout(): Promise<void> {
   <button
     class="hamburger"
     type="button"
+    data-tour="hamburger"
     :aria-label="t('sidebar.openMenu')"
     :aria-expanded="mobileOpen"
     @click="mobileOpen = true"
@@ -92,6 +99,7 @@ async function doLogout(): Promise<void> {
       <button
         class="sb-collapse"
         type="button"
+        data-tour="sidebar-collapse"
         :aria-label="collapsed ? t('sidebar.expand') : t('sidebar.collapse')"
         :title="collapsed ? t('sidebar.expand') : t('sidebar.collapse')"
         @click="toggleSidebar"
@@ -139,6 +147,7 @@ async function doLogout(): Promise<void> {
       <RouterLink
         to="/academy"
         class="sb-link sb-academy"
+        data-tour="nav-academy"
         :class="{ active: isActive('academy') || isActive('academy-lesson') }"
         :title="t('sidebar.academy')"
       >

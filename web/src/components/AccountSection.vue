@@ -6,13 +6,17 @@
 // OTHER sessions, keeps this one alive, and audit-logs the change.
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { authApi } from "../api";
 import { session } from "../auth/session";
 import { checkPassword } from "../auth/passwordPolicy";
 import { dateTimeStr } from "../format";
+import { closeSettings } from "../ui/uiState";
+import { startTour } from "../onboarding/tour";
 import PasswordStrengthMeter from "./auth/PasswordStrengthMeter.vue";
 
 const { t } = useI18n();
+const router = useRouter();
 
 // --- read-only identity ---
 const email = ref(session.user?.email ?? "");
@@ -24,6 +28,26 @@ onMounted(async () => {
     createdAt.value = r.data.user.createdAt;
   }
 });
+
+// --- restart the onboarding tutorial (Feature 1) ---
+const restartError = ref("");
+const restarting = ref(false);
+async function restartTutorial(): Promise<void> {
+  restartError.value = "";
+  restarting.value = true;
+  // Reset the server flag first so the tour also auto-starts on the next load
+  // if the user closes the app mid-way through.
+  const r = await authApi.setOnboarding(false);
+  restarting.value = false;
+  if (!r.ok) {
+    restartError.value = t("onboarding.account.error");
+    return;
+  }
+  // The settings modal swallows navigations while open — close it first.
+  closeSettings();
+  void router.push("/").catch(() => {});
+  startTour();
+}
 
 // --- change password ---
 const current = ref("");
@@ -87,6 +111,13 @@ async function submit(): Promise<void> {
         <dd>{{ dateTimeStr(createdAt) }}</dd>
       </div>
     </dl>
+
+    <h3 class="acct-sub">{{ t("onboarding.account.title") }}</h3>
+    <p class="acct-hint">{{ t("onboarding.account.hint") }}</p>
+    <p v-if="restartError" class="violations" role="alert">{{ restartError }}</p>
+    <button class="btn acct-restart" type="button" :disabled="restarting" @click="restartTutorial">
+      {{ t("onboarding.account.restart") }}
+    </button>
 
     <h3 class="acct-sub">{{ t("account.changePassword") }}</h3>
     <form class="acct-form" @submit.prevent="submit">
@@ -191,5 +222,14 @@ async function submit(): Promise<void> {
 .acct-submit {
   align-self: flex-start;
   min-height: 44px;
+}
+.acct-hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.acct-restart {
+  min-height: 44px;
+  margin-bottom: 18px;
 }
 </style>

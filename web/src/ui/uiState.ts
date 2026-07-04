@@ -16,9 +16,13 @@ function readCollapsed(): boolean {
   }
 }
 
-export const uiState = reactive<{ settingsOpen: boolean; sidebarCollapsed: boolean }>({
+export const uiState = reactive<{ settingsOpen: boolean; sidebarCollapsed: boolean; mobileNavOpen: boolean }>({
   settingsOpen: false,
   sidebarCollapsed: readCollapsed(),
+  // Mobile (<768px) slide-in drawer. Lives here (not inside the Sidebar) so the
+  // onboarding tour can observe/steer it; not persisted — a drawer should never
+  // reopen itself on load.
+  mobileNavOpen: false,
 });
 
 export function openSettings(): void {

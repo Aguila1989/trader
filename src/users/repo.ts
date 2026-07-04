@@ -23,6 +23,7 @@ interface UserRow {
   createdAt: Date | string;
   lastLoginAt: Date | string | null;
   isActive: boolean;
+  onboardingCompleted: boolean;
 }
 
 function toIso(v: Date | string): string {
@@ -36,11 +37,12 @@ function rowToUser(r: UserRow): User {
     createdAt: toIso(r.createdAt),
     lastLoginAt: r.lastLoginAt ? toIso(r.lastLoginAt) : null,
     isActive: Boolean(r.isActive),
+    onboardingCompleted: Boolean(r.onboardingCompleted),
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
 }
 
-const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive`;
+const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive, onboardingCompleted`;
 
 /**
  * Create a new account (idempotent on the unique email). Returns the created -

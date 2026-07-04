@@ -181,8 +181,23 @@ export function createAuthRouter(): Router {
         email: user.email,
         displayName: user.displayName ?? null,
         createdAt: user.createdAt,
+        onboardingCompleted: user.onboardingCompleted,
       },
     });
+  });
+
+  // POST /api/auth/onboarding {completed: boolean} - mark the interactive tour
+  // done/skipped (true) or reset it so it auto-starts again (false, the
+  // Settings > Account "Restart Tutorial" action). Authenticated (default-deny
+  // gate) and self-scoped: a user can only ever flip their own flag.
+  router.post("/onboarding", async (req: Request, res: Response) => {
+    const completed = req.body?.completed;
+    if (typeof completed !== "boolean") {
+      res.status(400).json({ error: "completed must be a boolean" });
+      return;
+    }
+    await auth.setOnboardingCompleted(currentUserId(), completed);
+    res.json({ ok: true, onboardingCompleted: completed });
   });
 
   return router;

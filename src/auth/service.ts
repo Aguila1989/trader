@@ -347,3 +347,9 @@ export async function verifyEmail(input: { token: unknown }): Promise<VerifyResu
 export async function getAccount(userId: string): Promise<User | null> {
   return authStore.findUserById(userId);
 }
+
+// --- onboarding tutorial flag (Feature 1, 2026-07) --------------------------
+
+export async function setOnboardingCompleted(userId: string, completed: boolean): Promise<void> {
+  await authStore.setOnboardingCompleted(userId, completed);
+}

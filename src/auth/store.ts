@@ -58,6 +58,7 @@ interface MemUser {
   emailVerified: boolean;
   failedLoginAttempts: number;
   lockedUntil: number | null;
+  onboardingCompleted: boolean;
 }
 interface MemSession {
   id: string;
@@ -88,6 +89,7 @@ function memUserToUser(u: MemUser): User {
     createdAt: new Date(u.createdAt).toISOString(),
     lastLoginAt: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : null,
     isActive: u.isActive,
+    onboardingCompleted: u.onboardingCompleted,
     ...(u.displayName ? { displayName: u.displayName } : {}),
   };
 }
@@ -111,6 +113,7 @@ interface CredentialRow {
   emailVerified: boolean;
   failedLoginAttempts: number;
   lockedUntil: Date | string | null;
+  onboardingCompleted: boolean;
 }
 
 function rowToCredential(r: CredentialRow): Credential {
@@ -120,6 +123,7 @@ function rowToCredential(r: CredentialRow): Credential {
     createdAt: toIso(r.createdAt),
     lastLoginAt: r.lastLoginAt ? toIso(r.lastLoginAt) : null,
     isActive: Boolean(r.isActive),
+    onboardingCompleted: Boolean(r.onboardingCompleted),
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
   return {
@@ -132,7 +136,7 @@ function rowToCredential(r: CredentialRow): Credential {
   };
 }
 
-const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil`;
+const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, onboardingCompleted`;
 
 // --- accounts ---------------------------------------------------------------
 
@@ -156,6 +160,7 @@ export async function createAccount(a: NewAccount): Promise<User | null> {
       emailVerified: a.emailVerified,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      onboardingCompleted: false,
     };
     mem.users.set(u.id, u);
     return memUserToUser(u);
@@ -293,6 +298,24 @@ export async function setEmailVerified(userId: string): Promise<void> {
     .request()
     .input("id", sql.NVarChar(64), userId)
     .query(`UPDATE dbo.Users SET emailVerified = 1 WHERE id = @id;`);
+}
+
+/**
+ * Persist whether the onboarding tutorial was completed (or skipped). `false`
+ * is the "Restart Tutorial" reset: the tour will auto-start again on the next
+ * shell load.
+ */
+export async function setOnboardingCompleted(userId: string, completed: boolean): Promise<void> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (u) u.onboardingCompleted = completed;
+    return;
+  }
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("completed", sql.Bit, completed)
+    .query(`UPDATE dbo.Users SET onboardingCompleted = @completed WHERE id = @id;`);
 }
 
 /**

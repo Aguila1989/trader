@@ -103,4 +103,16 @@ describe("auth/store (in-memory)", () => {
     await store.setEmailVerified(u!.id);
     expect((await store.findCredentialByEmail("e@f.com"))?.emailVerified).toBe(true);
   });
+
+  it("onboardingCompleted starts false, completes, and resets (Restart Tutorial)", async () => {
+    const u = await makeUser("g@h.com");
+    expect(u?.onboardingCompleted).toBe(false);
+
+    await store.setOnboardingCompleted(u!.id, true);
+    expect((await store.findUserById(u!.id))?.onboardingCompleted).toBe(true);
+
+    // "Restart Tutorial": reset so the tour auto-starts on the next shell load.
+    await store.setOnboardingCompleted(u!.id, false);
+    expect((await store.findUserById(u!.id))?.onboardingCompleted).toBe(false);
+  });
 });

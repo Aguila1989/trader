@@ -31,6 +31,7 @@ function selectTab(tab: "manual" | "bot"): void {
       <button
         class="tab"
         role="tab"
+        data-tour="tab-manual"
         :aria-selected="store.activeTab === 'manual' && !store.selectedToken"
         :class="{ active: store.activeTab === 'manual' && !store.selectedToken }"
         @click="selectTab('manual')"
@@ -40,6 +41,7 @@ function selectTab(tab: "manual" | "bot"): void {
       <button
         class="tab"
         role="tab"
+        data-tour="tab-bot"
         :aria-selected="store.activeTab === 'bot' && !store.selectedToken"
         :class="{ active: store.activeTab === 'bot' && !store.selectedToken }"
         @click="selectTab('bot')"

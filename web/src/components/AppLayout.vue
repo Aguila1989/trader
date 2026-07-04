@@ -5,18 +5,26 @@
 // meta.standalone so the trading header is NOT shown over it (Change 3 — the
 // Academy stays usable with no login and no trading context). The settings modal
 // is owned here so the header's gear button can open it from anywhere.
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { session } from "../auth/session";
 import { uiState } from "../ui/uiState";
+import { maybeAutoStartTour, tourState } from "../onboarding/tour";
 import Sidebar from "./Sidebar.vue";
 import GlobalHeader from "./GlobalHeader.vue";
 import SettingsModal from "./SettingsModal.vue";
+import OnboardingTour from "./OnboardingTour.vue";
 
 const route = useRoute();
 
 // The trading header only makes sense on trading pages for a logged-in user.
 const showHeader = computed(() => !!session.user && route.meta.standalone !== true);
+
+// Onboarding tour (Feature 1): auto-start exactly once — logged in, wallet
+// configured, onboardingCompleted still false server-side. The shell re-mounts
+// after wallet setup ("Continue" navigates here), so first-time users get the
+// tour right after their wallet is ready.
+onMounted(() => void maybeAutoStartTour());
 </script>
 
 <template>
@@ -27,6 +35,7 @@ const showHeader = computed(() => !!session.user && route.meta.standalone !== tr
       <router-view />
     </div>
     <SettingsModal v-if="uiState.settingsOpen" />
+    <OnboardingTour v-if="tourState.active" />
   </div>
 </template>
 

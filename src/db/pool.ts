@@ -470,6 +470,10 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // after dbo.Users exists so the foreign keys resolve.
   await ensureAuthSchema(p);
 
+  // User profile flags (2026-07 Feature 1: onboarding tutorial). Additive and
+  // idempotent like every other migration here.
+  await ensureProfileSchema(p);
+
   // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
   // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
   // per network - a hard DB guarantee, not just app logic. Added here (after
@@ -579,6 +583,20 @@ async function ensureAuthSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_LoginAttempts_ts ON dbo.LoginAttempts (ts DESC);
       CREATE INDEX IX_LoginAttempts_email ON dbo.LoginAttempts (email, ts DESC);
     END
+  `);
+}
+
+/**
+ * Per-user profile flags on dbo.Users (2026-07 Feature 1: onboarding tutorial).
+ * onboardingCompleted starts 0 for every account (including pre-existing rows,
+ * so existing operators see the tour once too) and flips via
+ * POST /api/auth/onboarding; "Restart Tutorial" in Settings resets it.
+ */
+async function ensureProfileSchema(p: sql.ConnectionPool): Promise<void> {
+  await p.request().batch(`
+    IF COL_LENGTH('dbo.Users', 'onboardingCompleted') IS NULL
+      ALTER TABLE dbo.Users ADD onboardingCompleted BIT NOT NULL
+        CONSTRAINT DF_Users_onboardingCompleted DEFAULT 0;
   `);
 }
 

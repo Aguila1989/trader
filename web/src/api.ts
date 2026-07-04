@@ -155,7 +155,7 @@ export const authApi = {
   resetPassword: (token: string, password: string, confirmPassword: string) =>
     authRequest("/api/auth/reset-password", { token, password, confirmPassword }),
   verifyEmail: (token: string) => authRequest("/api/auth/verify-email", { token }),
-  me: () => getJSON<{ user: SessionUser }>("/api/auth/me"),
+  me: () => getJSON<{ user: SessionUser & { onboardingCompleted: boolean } }>("/api/auth/me"),
   // Self-service password change (authenticated). Keeps the current session alive
   // server-side, so no re-login is needed after success.
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -163,9 +163,13 @@ export const authApi = {
   // Account details for the Account screen. Same data as me() plus createdAt,
   // returned via the non-throwing AuthApiResult shape.
   account: () =>
-    authGet<{ user: { id: string; email: string; displayName?: string; createdAt: string } }>(
+    authGet<{ user: { id: string; email: string; displayName?: string; createdAt: string; onboardingCompleted?: boolean } }>(
       "/api/auth/me",
     ),
+  // Onboarding tutorial flag (Feature 1). true = completed/skipped; false =
+  // "Restart Tutorial" (the tour auto-starts again on the next shell load).
+  setOnboarding: (completed: boolean) =>
+    authRequest<{ onboardingCompleted?: boolean }>("/api/auth/onboarding", { completed }),
 };
 
 // --- Wallet API (Feature 3) -------------------------------------------------

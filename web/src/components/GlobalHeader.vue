@@ -52,7 +52,7 @@ function viewWarnings(): void {
       </div>
       <div class="bs-item">{{ t("globalHeader.whitelistedTokens") }}: <strong>{{ whitelistCount }}</strong></div>
     </section>
-    <PortfolioPanel />
+    <PortfolioPanel data-tour="portfolio" />
   </div>
 </template>
 

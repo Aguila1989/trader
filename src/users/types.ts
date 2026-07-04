@@ -27,6 +27,12 @@ export interface User {
   lastLoginAt: string | null;
   /** When false the account is disabled (kept for data integrity, cannot log in). */
   isActive: boolean;
+  /**
+   * Whether the user finished (or skipped) the interactive onboarding tutorial.
+   * False for new accounts; the tour auto-starts once after wallet setup and
+   * flips this via POST /api/auth/onboarding. "Restart Tutorial" resets it.
+   */
+  onboardingCompleted: boolean;
 }
 
 /** Fields required to create a new account. */
