@@ -124,6 +124,9 @@ export const config = {
       { id: "anthropic", label: "Claude (Anthropic)", prefix: "ANTHROPIC", defaultModel: "claude-sonnet-4-6", defaultBaseURL: "" },
       { id: "openai", label: "OpenAI", prefix: "OPENAI", defaultModel: "gpt-4o", defaultBaseURL: "https://api.openai.com/v1" },
       { id: "deepseek", label: "DeepSeek", prefix: "DEEPSEEK", defaultModel: "deepseek-chat", defaultBaseURL: "https://api.deepseek.com/v1" },
+      // Feature 3 (2026-07): Gemini via Google's OpenAI-compatible endpoint, so
+      // the shared OpenAI dialect provider drives it - no separate SDK.
+      { id: "google", label: "Google (Gemini)", prefix: "GOOGLE", defaultModel: "gemini-2.5-pro", defaultBaseURL: "https://generativelanguage.googleapis.com/v1beta/openai" },
       { id: "openrouter", label: "OpenRouter", prefix: "OPENROUTER", defaultModel: "anthropic/claude-sonnet-4.6", defaultBaseURL: "https://openrouter.ai/api/v1" },
       { id: "groq", label: "Groq", prefix: "GROQ", defaultModel: "llama-3.3-70b-versatile", defaultBaseURL: "https://api.groq.com/openai/v1" },
       { id: "mistral", label: "Mistral", prefix: "MISTRAL", defaultModel: "mistral-large-latest", defaultBaseURL: "https://api.mistral.ai/v1" },

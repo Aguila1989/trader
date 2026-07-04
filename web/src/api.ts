@@ -172,6 +172,33 @@ export const authApi = {
     authRequest<{ onboardingCompleted?: boolean }>("/api/auth/onboarding", { completed }),
 };
 
+// --- AI API key (Feature 3) ---------------------------------------------------
+
+export interface AiKeyMeta {
+  configured: boolean;
+  provider?: "anthropic" | "openai" | "google" | "deepseek";
+  keyLast4?: string;
+  updatedAt?: string;
+}
+
+export const aiKeyApi = {
+  get: () => getJSON<AiKeyMeta>("/api/ai-key"),
+  save: (provider: string, key: string) =>
+    authRequest<AiKeyMeta>("/api/ai-key", { provider, key }),
+  remove: async (): Promise<AuthApiResult<AiKeyMeta>> => {
+    try {
+      const res = await fetch("/api/ai-key", { method: "DELETE", credentials: CREDENTIALS });
+      const data = (await res.json().catch(() => ({}))) as AiKeyMeta & { error?: string };
+      return { ok: res.ok, status: res.status, data };
+    } catch {
+      return { ok: false, status: 0, data: { configured: true, error: "Network error - please try again." } as AiKeyMeta & { error?: string } };
+    }
+  },
+  // One-token connectivity test against the CANDIDATE key (pre-save).
+  test: (provider: string, key: string) =>
+    authRequest<{ ok?: boolean; message?: string; model?: string }>("/api/ai-key/test", { provider, key }),
+};
+
 // --- Billing API (Feature 2) -------------------------------------------------
 
 export interface BillingStatus {

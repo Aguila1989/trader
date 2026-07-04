@@ -1,4 +1,5 @@
-import { getProvider, type AiMessage } from "../ai";
+import { type AiMessage } from "../ai";
+import { resolveProviderForCurrentUser } from "../ai/userKeys";
 import { config } from "../config";
 import {
   getBalances,
@@ -158,7 +159,8 @@ export async function analyze(
   quoteAsset: string,
   memory?: TradingMemory,
 ): Promise<AnalysisResult> {
-  const provider = getProvider();
+  // Feature 3: the operator uses the env provider; other users their own key.
+  const provider = await resolveProviderForCurrentUser();
   const toolTrace: string[] = [];
   const proposals: ProposedTrade[] = [];
   let reasoning = "";
@@ -288,7 +290,8 @@ export async function analyzeChain(
   markets: MarketSnapshot[],
   memory?: TradingMemory,
 ): Promise<AnalysisResult> {
-  const provider = getProvider();
+  // Feature 3: the operator uses the env provider; other users their own key.
+  const provider = await resolveProviderForCurrentUser();
   const toolTrace: string[] = [];
   const proposals: ProposedTrade[] = [];
   let reasoning = "";

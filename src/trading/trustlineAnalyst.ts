@@ -1,4 +1,5 @@
-import { getProvider, aiReady, type AiRequest, type AiTool } from "../ai";
+import { type AiRequest, type AiTool } from "../ai";
+import { aiReadyForCurrentUser, resolveProviderForCurrentUser } from "../ai/userKeys";
 import type { TokenRawData, TokenScores } from "../types";
 
 /**
@@ -100,7 +101,7 @@ function userPrompt(asset: string, raw: TokenRawData): string {
 
 /** Score one token. Never throws - returns fallbackScores() on any failure. */
 export async function scoreToken(asset: string, raw: TokenRawData): Promise<TokenScores> {
-  if (!aiReady()) return fallbackScores("no AI API key configured");
+  if (!(await aiReadyForCurrentUser())) return fallbackScores("no AI API key configured");
   try {
     const req: AiRequest = {
       system: SYSTEM,
@@ -108,7 +109,8 @@ export async function scoreToken(asset: string, raw: TokenRawData): Promise<Toke
       tools: [TOOL],
       maxReplyTokens: 800,
     };
-    const turn = await getProvider().run(req);
+    // Feature 3: operator -> env provider; other users -> their own stored key.
+    const turn = await (await resolveProviderForCurrentUser()).run(req);
     const call =
       turn.toolCalls.find((c) => c.name === TOOL.name) ?? turn.toolCalls[0];
     if (!call) return fallbackScores("the AI returned no structured evaluation");

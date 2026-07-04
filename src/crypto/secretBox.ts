@@ -36,16 +36,34 @@ const IV_LEN = 12; // GCM nonce - 96 bits is the recommended size; random per ca
 const TAG_LEN = 16; // GCM auth tag
 const KEY_LEN = 32; // AES-256
 
-/** HKDF `info` context. The userId binds the derived key to one account. */
-function hkdfInfo(userId: string): Buffer {
-  return Buffer.from(`atrium:wallet-seed:v1:${userId}`, "utf8");
+/**
+ * Secret classes this box can seal. Domain separation: each class derives keys
+ * under a DIFFERENT HKDF info tag AND a different GCM AAD, so a ciphertext of
+ * one class can never be opened as another (an AI-key row moved into the
+ * wallet table fails the auth tag, and vice versa). "wallet-seed" is the
+ * original (and default) class - existing wallet blobs keep decrypting.
+ */
+export type SecretPurpose = "wallet-seed" | "ai-api-key" | "admin-totp";
+
+/** HKDF `info` context. userId + purpose bind the derived key to one account
+ *  and one secret class. */
+function hkdfInfo(userId: string, purpose: SecretPurpose): Buffer {
+  return Buffer.from(`atrium:${purpose}:v1:${userId}`, "utf8");
 }
 
 /** Derive the per-record AES key. Wrapped in a Buffer (hkdfSync gives an ArrayBuffer). */
-function deriveKey(masterKey: string, salt: Buffer, userId: string): Buffer {
+function deriveKey(masterKey: string, salt: Buffer, userId: string, purpose: SecretPurpose): Buffer {
   return Buffer.from(
-    hkdfSync("sha256", Buffer.from(masterKey, "utf8"), salt, hkdfInfo(userId), KEY_LEN),
+    hkdfSync("sha256", Buffer.from(masterKey, "utf8"), salt, hkdfInfo(userId, purpose), KEY_LEN),
   );
+}
+
+/** GCM AAD: the same (userId, purpose) binding as the KDF, so both layers
+ *  reject cross-user AND cross-class ciphertext moves. */
+function aad(userId: string, purpose: SecretPurpose): Buffer {
+  return purpose === "wallet-seed"
+    ? Buffer.from(userId, "utf8") // original format - existing blobs still open
+    : Buffer.from(`${purpose}:${userId}`, "utf8");
 }
 
 /**
@@ -53,14 +71,19 @@ function deriveKey(masterKey: string, salt: Buffer, userId: string): Buffer {
  * random salt + IV per call makes (key, IV) reuse - catastrophic for GCM -
  * negligible. Throws (without leaking anything) if the master key is unusable.
  */
-export function encryptSecret(plaintext: Buffer, userId: string, masterKey: string): string {
+export function encryptSecret(
+  plaintext: Buffer,
+  userId: string,
+  masterKey: string,
+  purpose: SecretPurpose = "wallet-seed",
+): string {
   if (!masterKey) throw new Error("wallet encryption key is not configured");
   if (!userId) throw new Error("a userId is required to encrypt a wallet secret");
   const salt = randomBytes(SALT_LEN);
   const iv = randomBytes(IV_LEN);
-  const key = deriveKey(masterKey, salt, userId);
+  const key = deriveKey(masterKey, salt, userId, purpose);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
-  cipher.setAAD(Buffer.from(userId, "utf8"));
+  cipher.setAAD(aad(userId, purpose));
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
   key.fill(0);
@@ -73,7 +96,12 @@ export function encryptSecret(plaintext: Buffer, userId: string, masterKey: stri
  * secret-free error on any tamper / wrong-user / wrong-key / malformed input -
  * never distinguish the cause to a caller, and never include key/secret/userId.
  */
-export function decryptSecret(blob: string, userId: string, masterKey: string): Buffer {
+export function decryptSecret(
+  blob: string,
+  userId: string,
+  masterKey: string,
+  purpose: SecretPurpose = "wallet-seed",
+): Buffer {
   if (!masterKey) throw new Error("wallet encryption key is not configured");
   try {
     const raw = Buffer.from(blob, "base64");
@@ -85,9 +113,9 @@ export function decryptSecret(blob: string, userId: string, masterKey: string): 
     const iv = raw.subarray(o, (o += IV_LEN));
     const tag = raw.subarray(o, (o += TAG_LEN));
     const ciphertext = raw.subarray(o);
-    const key = deriveKey(masterKey, salt, userId);
+    const key = deriveKey(masterKey, salt, userId, purpose);
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAAD(Buffer.from(userId, "utf8"));
+    decipher.setAAD(aad(userId, purpose));
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     key.fill(0);

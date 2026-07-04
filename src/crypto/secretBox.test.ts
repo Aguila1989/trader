@@ -123,4 +123,29 @@ describe("crypto/secretBox", () => {
     // exactly why the bug shipped: nothing threw, the user just got a wrong key.
     expect(afterZero.startsWith("SA")).toBe(true);
   });
+
+  // Feature 3 (2026-07): purpose-based domain separation. Each secret class
+  // (wallet seed / AI API key / admin TOTP) derives under its own HKDF info +
+  // AAD, so ciphertexts can never be opened across classes; the default
+  // "wallet-seed" keeps every pre-existing wallet blob decryptable.
+  it("separates secret classes: a blob sealed for one purpose never opens as another", () => {
+    const apiKey = Buffer.from("sk-ant-test-0123456789", "utf8");
+    const blob = encryptSecret(apiKey, USER_A, MASTER, "ai-api-key");
+    expect(decryptSecret(blob, USER_A, MASTER, "ai-api-key").toString("utf8")).toBe(
+      "sk-ant-test-0123456789",
+    );
+    // Wrong class (default wallet-seed) and wrong user both fail uniformly.
+    expect(() => decryptSecret(blob, USER_A, MASTER)).toThrow("decryption failed");
+    expect(() => decryptSecret(blob, USER_B, MASTER, "ai-api-key")).toThrow("decryption failed");
+  });
+
+  it("default purpose stays byte-compatible with pre-purpose wallet blobs", () => {
+    // A blob sealed WITHOUT the purpose arg must open with an explicit
+    // "wallet-seed" and vice versa - proves existing rows keep decrypting.
+    const secret = seed();
+    const legacyStyle = encryptSecret(secret, USER_A, MASTER);
+    expect(decryptSecret(legacyStyle, USER_A, MASTER, "wallet-seed")).toEqual(secret);
+    const explicitStyle = encryptSecret(secret, USER_A, MASTER, "wallet-seed");
+    expect(decryptSecret(explicitStyle, USER_A, MASTER)).toEqual(secret);
+  });
 });

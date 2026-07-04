@@ -516,6 +516,24 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         CONSTRAINT PK_PlatformSettings PRIMARY KEY (network, keyName)
       );
     END
+
+    -- Feature 3 (2026-07, AI keys): one BYO AI API key per user, encrypted with
+    -- the same AES-256-GCM box as wallet seeds (purpose "ai-api-key" - own KDF
+    -- domain). The plaintext exists only in memory at the moment the AI makes a
+    -- request; it is never returned to a client and never logged. userId is
+    -- added by ensureUserScoping; the one-row-per-user unique index is added
+    -- after scoping (it references that column).
+    IF OBJECT_ID('dbo.UserAiKeys', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.UserAiKeys (
+        id           NVARCHAR(64)  NOT NULL CONSTRAINT PK_UserAiKeys PRIMARY KEY,
+        createdAt    DATETIME2(3)  NOT NULL,
+        updatedAt    DATETIME2(3)  NOT NULL,
+        provider     NVARCHAR(24)  NOT NULL,  -- anthropic | openai | google | deepseek
+        encryptedKey NVARCHAR(MAX) NOT NULL,
+        keyLast4     NVARCHAR(4)   NOT NULL   -- display-only identification
+      );
+    END
   `);
 
   // User accounts + per-user scoping. Runs after the data tables exist so the
@@ -545,6 +563,15 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
        AND INDEXPROPERTY(OBJECT_ID('dbo.Wallets'), 'UX_Wallets_active', 'IndexID') IS NULL
       EXEC('CREATE UNIQUE INDEX UX_Wallets_active
               ON dbo.Wallets (userId, network) WHERE status = ''active''');
+  `);
+
+  // AI keys (2026-07 Feature 3): ONE key row per user - a hard DB guarantee,
+  // same EXEC-after-scoping pattern as UX_Wallets_active.
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.UserAiKeys', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.UserAiKeys', 'userId') IS NOT NULL
+       AND INDEXPROPERTY(OBJECT_ID('dbo.UserAiKeys'), 'UX_UserAiKeys_user', 'IndexID') IS NULL
+      EXEC('CREATE UNIQUE INDEX UX_UserAiKeys_user ON dbo.UserAiKeys (userId)');
   `);
 
   // AUDIT-025: the Logs tab filters TradeLog by action/token and AiLog by
@@ -715,6 +742,7 @@ const USER_SCOPED_TABLES: ReadonlyArray<{ table: string; orderCol: string }> = [
   { table: "TrustlineScans", orderCol: "scanDate" },
   { table: "TrustlineDismissals", orderCol: "createdAt" },
   { table: "FeeLedger", orderCol: "ts" },
+  { table: "UserAiKeys", orderCol: "updatedAt" },
 ];
 
 /** SQL-safe single-quote escaping for our own (non-user-supplied) constants. */

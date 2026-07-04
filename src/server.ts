@@ -11,6 +11,15 @@ import { requireAuth, authRateLimiter } from "./auth/middleware";
 import { createWalletRouter } from "./wallet/routes";
 import { purgeExpiredSessions, purgeAuthArtifacts } from "./auth/store";
 import { aiReady, aiModel, aiProviderId } from "./ai";
+import {
+  AiKeyError,
+  aiReadyForCurrentUser,
+  deleteUserAiKey,
+  getUserAiKeyMeta,
+  isUserAiProvider,
+  saveUserAiKey,
+  testAiKey,
+} from "./ai/userKeys";
 import { store } from "./trading/store";
 import {
   runAnalysis,
@@ -1509,6 +1518,61 @@ app.get("/api/liquidity", async (req, res) => {
   }
 });
 
+/* ------------------------------------------------------------------ *
+ * Feature 3 (2026-07): per-user AI API keys. GET exposes provider + last4
+ * ONLY (the key itself never leaves the server); POST validates + encrypts
+ * (secretBox, purpose "ai-api-key"); the test endpoint runs a one-token
+ * round-trip against the CANDIDATE key so the user verifies before saving.
+ * All default-deny (after requireAuth), scoped to currentUserId().
+ * ------------------------------------------------------------------ */
+
+app.get("/api/ai-key", async (_req, res) => {
+  const meta = await getUserAiKeyMeta(currentUserId());
+  res.json(meta ? { configured: true, ...meta } : { configured: false });
+});
+
+app.post("/api/ai-key", async (req, res) => {
+  const provider = req.body?.provider;
+  const key = String(req.body?.key ?? "");
+  if (!isUserAiProvider(provider)) {
+    res.status(400).json({ error: "provider must be one of: anthropic, openai, google, deepseek" });
+    return;
+  }
+  try {
+    await saveUserAiKey(currentUserId(), provider, key);
+    const meta = await getUserAiKeyMeta(currentUserId());
+    res.json({ configured: true, ...meta });
+  } catch (err) {
+    if (err instanceof AiKeyError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    failGeneric(res, err, 500);
+  }
+});
+
+app.delete("/api/ai-key", async (_req, res) => {
+  const removed = await deleteUserAiKey(currentUserId());
+  res.json({ configured: false, removed });
+});
+
+app.post("/api/ai-key/test", async (req, res) => {
+  const provider = req.body?.provider;
+  const key = String(req.body?.key ?? "");
+  if (!isUserAiProvider(provider)) {
+    res.status(400).json({ error: "provider must be one of: anthropic, openai, google, deepseek" });
+    return;
+  }
+  // The test spends the USER's own provider credit; the single-slot LLM gate
+  // still applies so a stuck tab can't fan out concurrent calls.
+  if (!llmGateAcquire(res)) return;
+  try {
+    res.json(await testAiKey(provider, key));
+  } finally {
+    llmGateRelease();
+  }
+});
+
 app.post("/api/analyze", async (req, res) => {
   const base = String(req.body?.base ?? "XLM");
   const quote = String(req.body?.quote ?? "");
@@ -1518,7 +1582,7 @@ app.post("/api/analyze", async (req, res) => {
   }
   if (!(await ensurePremiumForAi(res))) return;
   if (!ensureAiEnabled(res)) return;
-  if (!aiReady()) {
+  if (!(await aiReadyForCurrentUser())) {
     res.status(400).json({ error: "No AI API key configured" });
     return;
   }
@@ -1537,7 +1601,7 @@ app.post("/api/analyze", async (req, res) => {
 app.post("/api/scan", async (_req, res) => {
   if (!(await ensurePremiumForAi(res))) return;
   if (!ensureAiEnabled(res)) return;
-  if (!aiReady()) {
+  if (!(await aiReadyForCurrentUser())) {
     res.status(400).json({ error: "No AI API key configured" });
     return;
   }
