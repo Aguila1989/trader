@@ -11,6 +11,7 @@ import type { ChartData, ChartOptions } from "chart.js";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { goToToken } from "../token/navigation";
 import { fmtNum, timeStr } from "../format";
 import type { PortfolioHolding } from "../types";
 import PortfolioHistoryChart from "./PortfolioHistoryChart.vue";
@@ -21,12 +22,11 @@ const { t } = useI18n();
 const router = useRouter();
 const store = useTraderStore();
 
-// Restore clickable token rows: open the token's detail page (order book + price
-// graph). The TokenDetail overlay lives on the Trading route, so ensure we're
-// there — this panel is in the persistent header, reachable from any page.
+// Feature 5: token detail is its own /token/... page - navigate there and
+// record the origin so its back button reads "← Back to Portfolio" and
+// returns exactly here (browser history, works from any page this header is on).
 function openToken(asset: string): void {
-  store.openToken(asset);
-  void router.push("/");
+  goToToken(router, asset, "portfolio");
 }
 
 const PALETTE = [

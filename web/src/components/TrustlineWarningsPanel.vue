@@ -4,18 +4,21 @@
 // Token" opens the token detail; "Dismiss Warning" snoozes it for 7 days.
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { goToToken } from "../token/navigation";
 import { fmtNum } from "../format";
 import type { TrustlineWarning } from "../types";
 import { warningLessonPath } from "../academy/deeplinks";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
 
 const warnings = computed(() => store.trustlineWarnings);
 
 function review(w: TrustlineWarning): void {
-  store.openToken(w.asset);
+  goToToken(router, w.asset, "whitelist");
 }
 function snooze(w: TrustlineWarning): void {
   void store.snoozeTrustlineWarning(w.asset);

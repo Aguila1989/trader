@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { goToToken } from "../token/navigation";
 import { fmtNum } from "../format";
 import type { RankTrend, VolumeTrend } from "../types";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
 
 const TIPS = computed(() => ({
@@ -66,7 +69,7 @@ function trendClass(t?: string): string {
         <tr v-for="r in recs" :key="r.asset" :class="{ recommended: r.recommended }">
           <td class="mono">{{ r.rank }}</td>
           <td>
-            <button class="link-token" :title="r.asset" @click="store.openToken(r.asset)">
+            <button class="link-token" :title="r.asset" @click="goToToken(router, r.asset, 'trading')">
               {{ r.assetCode }}
             </button>
           </td>

@@ -208,8 +208,9 @@ onUnmounted(() => {
 
 <template>
   <section class="panel token-detail">
+    <!-- Feature 5: the back button moved to TokenDetailPage's history-aware
+         back bar - this component now renders inside the /token/... route. -->
     <div class="detail-head">
-      <button class="btn" @click="store.closeToken()">← {{ t("tokenDetail.back") }}</button>
       <h2>{{ code }} <span class="muted">/ {{ quoteCode }}</span></h2>
       <span v-if="store.tokenLoading" class="muted refreshing">{{ t("tokenDetail.refreshing") }}</span>
     </div>
@@ -451,6 +452,41 @@ onUnmounted(() => {
   gap: 6px;
   font-size: 13px;
   padding-bottom: 8px;
+  min-height: 44px;
+}
+
+/* .order-* are duplicated from ManualTradePanel.vue ON PURPOSE: its styles are
+   scoped and never reached this component - the stop-loss inputs rendered as
+   unstyled white browser defaults (same trap as AiKeySection). Kept in sync
+   with the manual-trade form + the app-wide dark input convention. */
+.order-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+}
+.order-input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: ui-monospace, monospace;
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.order-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.order-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 420px;
 }
 .sl-hint {
   font-size: 11px;

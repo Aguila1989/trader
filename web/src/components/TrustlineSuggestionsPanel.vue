@@ -6,13 +6,16 @@
 // status + a "Run Now" button.
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { goToToken } from "../token/navigation";
 import { dateTimeStr } from "../format";
 import type { TrustlineSuggestion } from "../types";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
 
 const suggestions = computed(() => store.trustlineSuggestions);
@@ -95,7 +98,7 @@ function dismiss(s: TrustlineSuggestion): void {
       <div v-for="s in suggestions" :key="s.asset" class="card ts-card">
         <div class="row">
           <div class="headline">
-            <button class="link-token" :title="s.asset" @click="store.openToken(s.asset)">
+            <button class="link-token" :title="s.asset" @click="goToToken(router, s.asset, 'whitelist')">
               {{ s.assetCode }}
             </button>
             <span v-if="s.toml?.projectName" class="muted ts-proj">{{ s.toml.projectName }}</span>
@@ -157,7 +160,7 @@ function dismiss(s: TrustlineSuggestion): void {
         <div v-for="s in unscored" :key="s.asset" class="card ts-card ts-card-unscored">
           <div class="row">
             <div class="headline">
-              <button class="link-token" :title="s.asset" @click="store.openToken(s.asset)">
+              <button class="link-token" :title="s.asset" @click="goToToken(router, s.asset, 'whitelist')">
                 {{ s.assetCode }}
               </button>
               <span v-if="s.toml?.projectName" class="muted ts-proj">{{ s.toml.projectName }}</span>
@@ -176,7 +179,7 @@ function dismiss(s: TrustlineSuggestion): void {
             <span v-else class="muted mono">{{ s.homeDomain }}</span>
           </p>
           <div class="actions">
-            <button class="btn" @click="store.openToken(s.asset)">{{ t("trustlineSuggestions.actions.review") }}</button>
+            <button class="btn" @click="goToToken(router, s.asset, 'whitelist')">{{ t("trustlineSuggestions.actions.review") }}</button>
             <button class="btn" @click="dismiss(s)">{{ t("trustlineSuggestions.actions.dismiss") }}</button>
           </div>
         </div>

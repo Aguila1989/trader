@@ -5,13 +5,16 @@
 // applies to AI trades only; manual orders bypass it.
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { goToToken } from "../token/navigation";
 import { fmtNum } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useTraderStore();
 
 const TIPS = computed(() => ({
@@ -88,7 +91,7 @@ const configRows = computed(() => {
           :key="tok.spec"
           class="btn token-chip"
           :title="tok.name || tok.spec"
-          @click="store.openToken(tok.spec)"
+          @click="goToToken(router, tok.spec, 'trading')"
         >
           {{ tok.code }}
         </button>

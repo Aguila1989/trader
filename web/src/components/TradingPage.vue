@@ -10,17 +10,15 @@ import BotTab from "./BotTab.vue";
 import StatsPanel from "./StatsPanel.vue";
 import PositionsPanel from "./PositionsPanel.vue";
 import EvolutionCharts from "./EvolutionCharts.vue";
-import TokenDetail from "./TokenDetail.vue";
 import LiveLogDrawer from "./LiveLogDrawer.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
 
-// Manual/Bot are the only two sub-tabs now; leaving either also closes any
-// token drill-down overlay.
+// Manual/Bot are the only two sub-tabs now. (Feature 5: the token drill-down
+// is its own /token/... route - no overlay to close here anymore.)
 function selectTab(tab: "manual" | "bot"): void {
   store.setActiveTab(tab);
-  store.closeToken();
 }
 </script>
 
@@ -32,8 +30,8 @@ function selectTab(tab: "manual" | "bot"): void {
         class="tab"
         role="tab"
         data-tour="tab-manual"
-        :aria-selected="store.activeTab === 'manual' && !store.selectedToken"
-        :class="{ active: store.activeTab === 'manual' && !store.selectedToken }"
+        :aria-selected="store.activeTab === 'manual'"
+        :class="{ active: store.activeTab === 'manual' }"
         @click="selectTab('manual')"
       >
         {{ t("common.tab.manual") }}
@@ -42,18 +40,16 @@ function selectTab(tab: "manual" | "bot"): void {
         class="tab"
         role="tab"
         data-tour="tab-bot"
-        :aria-selected="store.activeTab === 'bot' && !store.selectedToken"
-        :class="{ active: store.activeTab === 'bot' && !store.selectedToken }"
+        :aria-selected="store.activeTab === 'bot'"
+        :class="{ active: store.activeTab === 'bot' }"
         @click="selectTab('bot')"
       >
         {{ t("common.tab.bot") }}
       </button>
     </div>
 
-    <!-- A drilled-in token overlays the body. -->
     <div class="tab-body">
-      <TokenDetail v-if="store.selectedToken" />
-      <ManualTab v-else-if="store.activeTab === 'manual'" />
+      <ManualTab v-if="store.activeTab === 'manual'" />
       <BotTab v-else />
     </div>
 

@@ -71,6 +71,15 @@ const router = createRouter({
           meta: { standalone: true },
         },
         {
+          // Feature 5: token detail as a real, bookmarkable page (order book +
+          // chart + stop-loss form). ":assetIssuer" is "native" for XLM.
+          // Standalone: full-screen focus, its own history-aware back bar.
+          path: "token/:assetCode/:assetIssuer",
+          name: "token",
+          component: () => import("../components/TokenDetailPage.vue"),
+          meta: { standalone: true },
+        },
+        {
           path: "academy",
           name: "academy",
           component: () => import("../academy/components/AcademyPage.vue"),
