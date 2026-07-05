@@ -478,10 +478,11 @@ async function loadState(): Promise<void> {
 }
 
 async function tick(): Promise<void> {
-  // Skip while a scan runs, the feature is off, or the AI master switch is paused
-  // (the scan makes AI calls). A skipped due-scan runs on a later tick once AI is
-  // re-enabled (lastScanAt is unchanged, so it stays "due").
-  if (running || !config.trustlineScan.enabled || !store.aiEnabled) return;
+  // Skip while a scan runs, the feature is off, the AI master switch is paused
+  // (the scan makes AI calls), or the kill switch is engaged (Feature 6: "stop
+  // all bot activity" includes this scanner). A skipped due-scan runs on a
+  // later tick once unblocked (lastScanAt is unchanged, so it stays "due").
+  if (running || !config.trustlineScan.enabled || !store.aiEnabled || store.killSwitch) return;
   if (!hydrated) await loadState();
   const nextIso = computeNextScanAt();
   if (nextIso && Date.now() >= new Date(nextIso).getTime()) {

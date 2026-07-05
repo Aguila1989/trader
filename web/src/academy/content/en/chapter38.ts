@@ -41,6 +41,21 @@ export const chapter38: Chapter & { whoFor: string } = {
       example:
         "Say you trade 8,000 XLM worth of volume in a month — that puts you on the Silver tier. As a Free user your trades that month cost 0.23% each. Upgrade to Premium and trade manually at the same volume, and the fee drops to 0.16% per trade; let the AI trade for you at Silver, and it drops further to 0.12%. The tier is reassessed daily from last month's volume, so if next month you trade 25,000 XLM, you move up to Gold and the percentages fall again — regardless of whether you are Free or Premium.",
     },
+    {
+      id: "c38-l3",
+      title: "What does the kill switch do?",
+      paragraphs: [
+        "The red kill switch in the header instantly pauses all bot activity. Pressing it opens a confirmation dialog that lists every consequence before you commit, and the confirm button stays disabled for two seconds so a stray click or an itchy trigger finger can't set it off by accident.",
+        "Several things stop the moment it engages. The AI trading loop stops generating new proposals altogether. Any pending AI trade proposals that were still waiting for your approval are cancelled outright. The stop-loss monitor stops firing — meaning active stop losses will NOT trigger until you reactivate. And the background scanners, both the liquidity scanner and the AI trustline scanner, pause along with everything else.",
+        "Just as important is what keeps running. Any open orders you already have on the Stellar network stay active and on the book until you cancel them yourself in Active Orders — the kill switch does not touch the network directly. Your stop-loss settings are not deleted, only paused; they are kept exactly as configured and pick back up the moment you reactivate. Your wallet and funds are completely untouched. And manual trading remains fully available: read-only mode still lets you trade by hand, since the kill switch only ever governs the bot.",
+        "⚠ WARNING — the most dangerous nuance here: while the kill switch is on, your stop losses do NOT execute. If the market moves against an open position, nothing will close it automatically. Do not treat the kill switch as a safety net for open positions; it is the opposite for anything that relies on a stop loss.",
+        "The kill switch is also durable: once engaged, it stays on even if the server restarts, and it will remain on until you deliberately reactivate it. It does not quietly reset itself.",
+        "Reach for it whenever something feels wrong — unexpected trades, unusual market conditions, or simply wanting a moment to think — or when you're stepping away and don't want the bot acting without you, or during an incident of any kind. Treat it as a pause button, not an emergency wipe: it freezes the bot in place rather than undoing anything that has already happened.",
+        "Reactivating is just as deliberate as engaging it. A 'Bot is paused' banner stays visible on screen the whole time it's active; tap the banner and confirm, and the AI loop, the stop-loss monitor, and the background scanners all resume together.",
+      ],
+      example:
+        "You notice the AI proposing trades that look off during a volatile hour, so you hit the kill switch, confirm after the two-second delay, and everything pauses: no new AI proposals, pending ones cancelled, stop-loss monitor silent, scanners paused. Your existing open orders on Stellar are still sitting on the book, so you cancel the one you're unsure about manually from Active Orders. You leave the kill switch on overnight — even though the server restarts for a routine update, it comes back up still paused. The next morning you tap the 'Bot is paused' banner, confirm, and the AI loop, stop-loss monitor, and scanners all start back up.",
+    },
   ],
   quiz: [
     {
@@ -149,6 +164,50 @@ export const chapter38: Chapter & { whoFor: string } = {
           text: "Whether you have made a one-off payment to unlock a higher tier.",
           explanation:
             "No. There is no way to buy a tier directly — tiers come only from actual trading volume, and a Premium subscription changes the percentage you pay within a tier, not which tier you are on.",
+        },
+      ],
+      correctIndex: 1,
+    },
+    {
+      id: "c38-q6",
+      prompt: "You engage the kill switch. Which of these keeps running exactly as before?",
+      options: [
+        {
+          text: "Any open orders you already placed on the Stellar network — they stay active on the book.",
+          explanation:
+            "Correct. The kill switch pauses the bot, not the network. Orders you already placed keep sitting on the book until you cancel them yourself in Active Orders.",
+        },
+        {
+          text: "Your active stop losses — they keep firing normally.",
+          explanation:
+            "No. This is the dangerous part: the stop-loss monitor stops firing while the kill switch is on, so active stop losses will NOT trigger until you reactivate.",
+        },
+        {
+          text: "The AI trading loop — it keeps proposing new trades for you to approve.",
+          explanation:
+            "No. The AI trading loop stops generating new proposals altogether, and any proposals still waiting for approval are cancelled outright.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c38-q7",
+      prompt: "You engage the kill switch and the server restarts a few hours later. Is the kill switch still on afterward?",
+      options: [
+        {
+          text: "No — a server restart automatically clears it, so the bot resumes on its own.",
+          explanation:
+            "No. The kill switch does not quietly reset itself on a restart — that would defeat the point of it.",
+        },
+        {
+          text: "Yes — it survives the restart and stays on until you deliberately reactivate it.",
+          explanation:
+            "Correct. Once engaged, the kill switch stays on even through a server restart, and only comes off when you tap the 'Bot is paused' banner and confirm.",
+        },
+        {
+          text: "It depends on whether any orders were open at the time of the restart.",
+          explanation:
+            "No. Open orders have no bearing on the kill switch's own state — it stays engaged across a restart regardless of what else is happening in your account.",
         },
       ],
       correctIndex: 1,

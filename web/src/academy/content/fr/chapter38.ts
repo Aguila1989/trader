@@ -38,6 +38,21 @@ export const chapter38: Chapter & { whoFor: string } = {
       example:
         "Disons que vous tradez pour 8 000 XLM de volume sur un mois — cela vous place au palier Argent. En tant qu'utilisateur Gratuit, vos trades ce mois-là coûtent 0,23 % chacun. Passez à Premium et tradez manuellement au même volume, et les frais tombent à 0,16 % par trade ; laissez l'IA trader pour vous en Argent, et ils tombent encore à 0,12 %. Le palier est réévalué chaque jour à partir du volume du mois précédent, donc si le mois suivant vous tradez pour 25 000 XLM, vous passez au palier Or et les pourcentages baissent à nouveau — que vous soyez en Gratuit ou en Premium.",
     },
+    {
+      id: "c38-l3",
+      title: "Que fait le bouton d'arrêt d'urgence ?",
+      paragraphs: [
+        "Le bouton d'arrêt d'urgence rouge dans l'en-tête met instantanément en pause toute l'activité du bot. Y appuyer ouvre une boîte de dialogue de confirmation qui liste toutes les conséquences, et le bouton de confirmation reste désactivé pendant deux secondes pour qu'un clic accidentel ne puisse pas le déclencher par erreur.",
+        "Plusieurs choses s'arrêtent dès qu'il est activé. La boucle de trading par IA arrête complètement de générer de nouvelles propositions. Toute proposition de trade IA encore en attente de votre approbation est annulée sur-le-champ. Le moniteur de stop-loss cesse de se déclencher — ce qui signifie que les stop-loss actifs ne se déclencheront PAS tant que vous ne réactivez pas. Et les scanners en arrière-plan, aussi bien le scanner de liquidité que le scanner de trustlines par IA, se mettent en pause avec le reste.",
+        "⚠ AVERTISSEMENT — la nuance la plus dangereuse ici : tant que l'arrêt d'urgence est actif, vos stop-loss ne s'exécutent PAS. Si le marché évolue contre une position ouverte, rien ne la clôturera automatiquement. Ne considérez pas l'arrêt d'urgence comme un filet de sécurité pour vos positions ouvertes ; pour tout ce qui dépend d'un stop-loss, c'est exactement l'inverse.",
+        "Tout aussi important, ce qui continue de fonctionner. Les ordres que vous avez déjà ouverts sur le réseau Stellar restent actifs et affichés sur le carnet d'ordres jusqu'à ce que vous les annuliez vous-même dans Ordres actifs — l'arrêt d'urgence ne touche pas le réseau directement. Vos réglages de stop-loss ne sont pas supprimés, seulement mis en pause ; ils restent exactement tels que configurés et reprennent dès que vous réactivez. Votre portefeuille et vos fonds restent totalement intacts. Et le trading manuel reste pleinement disponible : le mode lecture seule vous permet toujours de trader à la main, puisque l'arrêt d'urgence ne concerne que le bot.",
+        "L'arrêt d'urgence est aussi durable : une fois activé, il reste actif même si le serveur redémarre, et il le restera jusqu'à ce que vous le réactiviez délibérément. Il ne se réinitialise jamais discrètement tout seul.",
+        "Utilisez-le dès que quelque chose vous semble anormal — des trades inattendus, des conditions de marché inhabituelles, ou simplement le besoin de réfléchir un instant — ou lorsque vous vous absentez et ne voulez pas que le bot agisse sans vous, ou encore pendant n'importe quel type d'incident. Voyez-le comme un bouton pause, pas comme un effacement d'urgence : il fige le bot sur place plutôt que d'annuler quoi que ce soit qui s'est déjà produit.",
+        "Le réactiver est tout aussi délibéré que de l'activer. Une bannière « Bot en pause » reste visible à l'écran tant qu'il est actif ; appuyez sur la bannière et confirmez, et la boucle IA, le moniteur de stop-loss et les scanners en arrière-plan reprennent tous ensemble.",
+      ],
+      example:
+        "Vous remarquez que l'IA propose des trades qui semblent anormaux pendant une heure de forte volatilité, alors vous appuyez sur l'arrêt d'urgence, confirmez après le délai de deux secondes, et tout se met en pause : plus aucune nouvelle proposition de l'IA, celles en attente sont annulées, le moniteur de stop-loss est silencieux, les scanners sont en pause. Vos ordres déjà ouverts sur Stellar restent sur le carnet d'ordres, donc vous annulez vous-même manuellement celui dont vous n'êtes pas sûr, depuis Ordres actifs. Vous laissez l'arrêt d'urgence activé pendant la nuit — et même si le serveur redémarre pour une mise à jour de routine, il revient toujours en pause. Le lendemain matin, vous appuyez sur la bannière « Bot en pause », confirmez, et la boucle IA, le moniteur de stop-loss et les scanners repartent tous ensemble.",
+    },
   ],
   quiz: [
     {
@@ -146,6 +161,50 @@ export const chapter38: Chapter & { whoFor: string } = {
           text: "Le fait d'avoir effectué un paiement ponctuel pour débloquer un palier supérieur.",
           explanation:
             "Non. Il n'existe aucun moyen d'acheter directement un palier — les paliers résultent uniquement du volume de trading réel, et un abonnement Premium modifie le pourcentage payé au sein d'un palier, pas le palier lui-même.",
+        },
+      ],
+      correctIndex: 1,
+    },
+    {
+      id: "c38-q6",
+      prompt: "Vous activez l'arrêt d'urgence. Lequel de ces éléments continue de fonctionner exactement comme avant ?",
+      options: [
+        {
+          text: "Les ordres que vous aviez déjà placés sur le réseau Stellar — ils restent actifs sur le carnet d'ordres.",
+          explanation:
+            "Correct. L'arrêt d'urgence met le bot en pause, pas le réseau. Les ordres déjà placés restent sur le carnet d'ordres jusqu'à ce que vous les annuliez vous-même dans Ordres actifs.",
+        },
+        {
+          text: "Vos stop-loss actifs — ils continuent de se déclencher normalement.",
+          explanation:
+            "Non. C'est justement la partie dangereuse : le moniteur de stop-loss cesse de se déclencher tant que l'arrêt d'urgence est actif, donc les stop-loss actifs ne se déclencheront PAS avant que vous ne réactiviez.",
+        },
+        {
+          text: "La boucle de trading par IA — elle continue de proposer de nouveaux trades à approuver.",
+          explanation:
+            "Non. La boucle de trading par IA arrête complètement de générer de nouvelles propositions, et celles encore en attente d'approbation sont annulées sur-le-champ.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c38-q7",
+      prompt: "Vous activez l'arrêt d'urgence et le serveur redémarre quelques heures plus tard. L'arrêt d'urgence est-il encore actif après ?",
+      options: [
+        {
+          text: "Non — un redémarrage du serveur le désactive automatiquement, et le bot reprend tout seul.",
+          explanation:
+            "Non. L'arrêt d'urgence ne se réinitialise jamais discrètement tout seul lors d'un redémarrage — cela irait à l'encontre de son objectif même.",
+        },
+        {
+          text: "Oui — il survit au redémarrage et reste actif jusqu'à ce que vous le réactiviez délibérément.",
+          explanation:
+            "Correct. Une fois activé, l'arrêt d'urgence reste actif même après un redémarrage du serveur, et ne se désactive que lorsque vous appuyez sur la bannière « Bot en pause » et confirmez.",
+        },
+        {
+          text: "Cela dépend du nombre d'ordres qui étaient ouverts au moment du redémarrage.",
+          explanation:
+            "Non. Les ordres ouverts n'ont aucune incidence sur l'état de l'arrêt d'urgence lui-même — il reste actif après un redémarrage, quoi qu'il se passe par ailleurs sur votre compte.",
         },
       ],
       correctIndex: 1,

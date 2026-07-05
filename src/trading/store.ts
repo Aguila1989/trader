@@ -349,6 +349,13 @@ class Store {
       } else if (mode === "paper") {
         this.setPaperTrading(true, "restore");
       }
+      // Feature 6 (2026-07): the kill switch PERSISTS. "Bot is paused until I
+      // reactivate it" must survive a restart - previously it silently reset
+      // to OFF, asymmetric with the other persisted toggles.
+      if ((await repo.getSetting("killSwitch")) === "on") {
+        this.killSwitch = true;
+        this.log("warn", "KILL SWITCH restored ON from the previous session - reactivate it deliberately.");
+      }
       // Rejected pending payments (Feature 5) survive restart.
       const rej = await repo.getSetting("rejectedClaimables");
       if (rej) {
@@ -958,6 +965,11 @@ class Store {
     this.log(
       "warn",
       active ? "KILL SWITCH ON - trading halted." : "Kill switch released.",
+    );
+    // Feature 6: persist (tradingMode pattern) so the paused state survives a
+    // restart until the user deliberately reactivates.
+    this.persist(() =>
+      runWithUserId(DEFAULT_USER_ID, () => repo.upsertSetting("killSwitch", active ? "on" : "off")),
     );
     this.emit("state", this.snapshot());
   }

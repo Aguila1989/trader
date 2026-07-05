@@ -28,6 +28,9 @@ let running = false;
 
 async function runOnce(): Promise<void> {
   if (running) return;
+  // Feature 6: "Stop all bot activity" now includes the observe-only scanners -
+  // the kill-switch dialog promises it, so it must be true. Resumes on release.
+  if (store.killSwitch) return;
   running = true;
   try {
     const obs = await collectTopLiquidity({

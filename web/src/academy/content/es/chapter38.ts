@@ -38,6 +38,21 @@ export const chapter38: Chapter & { whoFor: string } = {
       example:
         "Supongamos que en un mes operas un volumen de 8.000 XLM: eso te sitúa en el tramo Plata. Como usuario Gratis, tus operaciones ese mes cuestan un 0,23% cada una. Si pasas a Premium y operas manualmente con el mismo volumen, la comisión baja a 0,16% por operación; si dejas que la IA opere por ti en Plata, baja aún más, a 0,12%. El tramo se reevalúa a diario según el volumen del mes anterior, así que si al mes siguiente operas 25.000 XLM, subes a Oro y los porcentajes vuelven a bajar, seas Gratis o Premium.",
     },
+    {
+      id: "c38-l3",
+      title: "¿Qué hace el interruptor de emergencia?",
+      paragraphs: [
+        "El interruptor de emergencia rojo en el encabezado pausa al instante toda la actividad del bot. Al pulsarlo se abre un diálogo de confirmación que enumera todas las consecuencias, y el botón de confirmar permanece desactivado durante dos segundos para que un clic accidental no pueda activarlo por error.",
+        "Varias cosas se detienen en el momento en que se activa. El bucle de trading por IA deja de generar nuevas propuestas por completo. Cualquier propuesta de operación de la IA que aún estuviera esperando tu aprobación se cancela de inmediato. El monitor de stop-loss deja de dispararse, lo que significa que los stop-loss activos NO se activarán hasta que reactives. Y los escáneres en segundo plano, tanto el escáner de liquidez como el escáner de trustlines por IA, se pausan junto con todo lo demás.",
+        "⚠ ADVERTENCIA — el matiz más peligroso de todos: mientras el interruptor de emergencia esté activado, tus stop-loss NO se ejecutan. Si el mercado se mueve en contra de una posición abierta, nada la cerrará automáticamente. No trates el interruptor de emergencia como una red de seguridad para tus posiciones abiertas; para todo lo que depende de un stop-loss, es justo lo contrario.",
+        "Igual de importante es lo que sigue funcionando. Cualquier orden que ya tuvieras abierta en la red Stellar permanece activa y en el libro de órdenes hasta que la canceles tú mismo en Órdenes activas; el interruptor de emergencia no toca la red directamente. Tus ajustes de stop-loss no se eliminan, solo se pausan; se mantienen exactamente como los configuraste y se reanudan en cuanto reactives. Tu cartera y tus fondos quedan completamente intactos. Y el trading manual sigue estando totalmente disponible: el modo de solo lectura te sigue permitiendo operar a mano, ya que el interruptor de emergencia solo rige al bot.",
+        "El interruptor de emergencia también es duradero: una vez activado, permanece encendido incluso si el servidor se reinicia, y seguirá así hasta que tú lo reactives deliberadamente. No se restablece a escondidas por sí solo.",
+        "Recurre a él cuando algo no te parezca correcto —operaciones inesperadas, condiciones de mercado inusuales, o simplemente para tomarte un momento para pensar—, cuando te vayas a ausentar y no quieras que el bot actúe sin ti, o durante cualquier tipo de incidente. Trátalo como un botón de pausa, no como un borrado de emergencia: congela al bot donde está en lugar de deshacer nada de lo que ya haya ocurrido.",
+        "Reactivarlo es tan deliberado como activarlo. Un aviso de 'Bot en pausa' permanece visible en pantalla todo el tiempo que esté activo; toca el aviso y confirma, y el bucle de la IA, el monitor de stop-loss y los escáneres en segundo plano se reanudan todos a la vez.",
+      ],
+      example:
+        "Notas que la IA propone operaciones que parecen fuera de lugar durante una hora de mucha volatilidad, así que pulsas el interruptor de emergencia, confirmas tras los dos segundos de espera, y todo se pausa: no hay nuevas propuestas de la IA, las pendientes se cancelan, el monitor de stop-loss queda en silencio, los escáneres se pausan. Tus órdenes ya abiertas en Stellar siguen en el libro de órdenes, así que cancelas tú mismo, manualmente, la que te genera dudas desde Órdenes activas. Dejas el interruptor de emergencia activado durante la noche y, aunque el servidor se reinicia para una actualización de rutina, vuelve a arrancar todavía en pausa. A la mañana siguiente tocas el aviso 'Bot en pausa', confirmas, y el bucle de la IA, el monitor de stop-loss y los escáneres vuelven a arrancar todos juntos.",
+    },
   ],
   quiz: [
     {
@@ -146,6 +161,50 @@ export const chapter38: Chapter & { whoFor: string } = {
           text: "Haber hecho un pago puntual para desbloquear un tramo superior.",
           explanation:
             "No. No existe forma de comprar un tramo directamente: los tramos surgen solo del volumen de trading real, y una suscripción Premium cambia el porcentaje que pagas dentro de un tramo, no en qué tramo estás.",
+        },
+      ],
+      correctIndex: 1,
+    },
+    {
+      id: "c38-q6",
+      prompt: "Activas el interruptor de emergencia. ¿Cuál de estas cosas sigue funcionando exactamente igual que antes?",
+      options: [
+        {
+          text: "Las órdenes que ya tenías abiertas en la red Stellar: siguen activas en el libro de órdenes.",
+          explanation:
+            "Correcto. El interruptor de emergencia pausa el bot, no la red. Las órdenes que ya habías colocado se quedan en el libro de órdenes hasta que las canceles tú mismo en Órdenes activas.",
+        },
+        {
+          text: "Tus stop-loss activos: siguen disparándose con normalidad.",
+          explanation:
+            "No. Esta es justo la parte peligrosa: el monitor de stop-loss deja de dispararse mientras el interruptor de emergencia está activado, así que los stop-loss activos NO se activarán hasta que reactives.",
+        },
+        {
+          text: "El bucle de trading por IA: sigue proponiendo nuevas operaciones para que las apruebes.",
+          explanation:
+            "No. El bucle de trading por IA deja de generar nuevas propuestas por completo, y las que aún estuvieran esperando aprobación se cancelan de inmediato.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c38-q7",
+      prompt: "Activas el interruptor de emergencia y unas horas después el servidor se reinicia. ¿Sigue activado después?",
+      options: [
+        {
+          text: "No: un reinicio del servidor lo desactiva automáticamente, y el bot se reanuda por sí solo.",
+          explanation:
+            "No. El interruptor de emergencia no se restablece a escondidas por sí solo con un reinicio; eso anularía todo su propósito.",
+        },
+        {
+          text: "Sí: sobrevive al reinicio y permanece activado hasta que tú lo reactives deliberadamente.",
+          explanation:
+            "Correcto. Una vez activado, el interruptor de emergencia sigue encendido incluso tras un reinicio del servidor, y solo se apaga cuando tocas el aviso 'Bot en pausa' y confirmas.",
+        },
+        {
+          text: "Depende de cuántas órdenes estuvieran abiertas en el momento del reinicio.",
+          explanation:
+            "No. Las órdenes abiertas no afectan en nada al propio estado del interruptor de emergencia: permanece activado tras un reinicio sin importar qué más ocurra en tu cuenta.",
         },
       ],
       correctIndex: 1,

@@ -28,6 +28,7 @@ import {
   approve,
   autoApprove,
   reject,
+  rejectAllPending,
   placeManualOrder,
   runExclusive,
 } from "./trading/orchestrator";
@@ -1914,7 +1915,10 @@ app.post("/api/kill", (req, res) => {
     return;
   }
   store.setKill(req.body.active);
-  res.json({ killSwitch: store.killSwitch });
+  // Feature 6: arming also cancels every AI proposal still awaiting approval -
+  // the confirmation dialog promises exactly that.
+  const cancelledProposals = req.body.active ? rejectAllPending() : 0;
+  res.json({ killSwitch: store.killSwitch, cancelledProposals });
 });
 
 app.post("/api/auto-approve", async (req, res) => {

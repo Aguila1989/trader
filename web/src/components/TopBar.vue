@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import LangSwitcher from "./LangSwitcher.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -37,6 +38,24 @@ function onProviderChange(e: Event): void {
 }
 
 const killOn = computed(() => store.snapshot?.killSwitch ?? false);
+
+// Feature 6: the kill switch is never an instant toggle anymore. Arming opens
+// a consequences dialog with a 2s-armed destructive button; releasing opens a
+// simpler reactivation confirm (also reachable from the paused banner).
+const showKillConfirm = ref(false);
+const showReactivateConfirm = ref(false);
+function onKillClick(): void {
+  if (killOn.value) showReactivateConfirm.value = true;
+  else showKillConfirm.value = true;
+}
+function confirmKill(): void {
+  showKillConfirm.value = false;
+  void store.setKill(true);
+}
+function confirmReactivate(): void {
+  showReactivateConfirm.value = false;
+  void store.setKill(false);
+}
 
 // Mobile: secondary status badges collapse behind a "More" toggle so the header
 // never wraps into disorganised rows. Desktop shows everything inline.
@@ -111,12 +130,55 @@ const showMore = ref(false);
       <button
         class="btn danger kill-btn"
         :class="{ active: killOn }"
-        @click="store.setKill(!killOn)"
+        @click="onKillClick"
       >
         {{ killOn ? t("topBar.killSwitchOn") : t("topBar.killSwitch") }}
       </button>
     </div>
   </header>
+
+  <!-- Feature 6: persistent paused banner - a second, always-visible way back. -->
+  <button v-if="killOn" class="ks-banner" type="button" @click="showReactivateConfirm = true">
+    ⏸ {{ t("killSwitch.pausedBanner") }}
+  </button>
+
+  <ConfirmDialog
+    v-if="showKillConfirm"
+    :title="t('killSwitch.confirmTitle')"
+    :confirm-label="t('killSwitch.confirm')"
+    :cancel-label="t('killSwitch.cancel')"
+    destructive
+    :countdown-sec="2"
+    @confirm="confirmKill"
+    @cancel="showKillConfirm = false"
+  >
+    <p><strong>{{ t("killSwitch.willTitle") }}</strong></p>
+    <ul>
+      <li>{{ t("killSwitch.will.aiLoop") }}</li>
+      <li>{{ t("killSwitch.will.proposals") }}</li>
+      <li>{{ t("killSwitch.will.stopLoss") }}</li>
+      <li>{{ t("killSwitch.will.scanners") }}</li>
+    </ul>
+    <p><strong>{{ t("killSwitch.wontTitle") }}</strong></p>
+    <ul>
+      <li>{{ t("killSwitch.wont.orders") }}</li>
+      <li>{{ t("killSwitch.wont.stops") }}</li>
+      <li>{{ t("killSwitch.wont.wallet") }}</li>
+    </ul>
+    <p>{{ t("killSwitch.manualNote") }}</p>
+    <p class="cd-muted">{{ t("killSwitch.persistNote") }}</p>
+  </ConfirmDialog>
+
+  <ConfirmDialog
+    v-if="showReactivateConfirm"
+    :title="t('killSwitch.reactivateTitle')"
+    :confirm-label="t('killSwitch.reactivate')"
+    :cancel-label="t('killSwitch.cancel')"
+    @confirm="confirmReactivate"
+    @cancel="showReactivateConfirm = false"
+  >
+    <p>{{ t("killSwitch.reactivateBody") }}</p>
+  </ConfirmDialog>
 </template>
 
 <style scoped>

@@ -971,6 +971,20 @@ export function reject(id: string): TradeProposal | undefined {
 }
 
 /**
+ * Feature 6: engaging the kill switch cancels every AI proposal still waiting
+ * for approval (the dialog promises exactly that). Reuses the single-id
+ * reject() path so audit logging stays uniform. Returns how many were cancelled.
+ */
+export function rejectAllPending(): number {
+  const pending = store.listProposals().filter((p) => p.status === "pending_approval");
+  for (const p of pending) reject(p.id);
+  if (pending.length > 0) {
+    store.log("warn", `Kill switch: cancelled ${pending.length} pending AI proposal(s).`);
+  }
+  return pending.length;
+}
+
+/**
  * A serial queue tail. Every execution awaits the previous one and installs a
  * new tail that resolves when it finishes, so executions never overlap.
  */

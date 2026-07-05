@@ -39,6 +39,21 @@ export const chapter38: Chapter & { whoFor: string } = {
       example:
         "Stel dat je in een maand voor 8.000 XLM aan volume verhandelt — dat plaatst je in de Zilver-schijf. Als Gratis-gebruiker kosten je trades die maand elk 0,23%. Stap je over naar Premium en handel je handmatig met hetzelfde volume, dan zakt de kost naar 0,16% per trade; laat je de AI voor je handelen op Zilver, dan zakt het verder naar 0,12%. De schijf wordt dagelijks herberekend op basis van het volume van vorige maand, dus handel je volgende maand voor 25.000 XLM, dan schuif je door naar Goud en dalen de percentages opnieuw — ongeacht of je Gratis of Premium bent.",
     },
+    {
+      id: "c38-l3",
+      title: "Wat doet de noodstop?",
+      paragraphs: [
+        "De rode noodstop in de header pauzeert onmiddellijk alle activiteit van de bot. Als je erop drukt, verschijnt een bevestigingsvenster met alle gevolgen op een rijtje, en de bevestigingsknop blijft twee seconden uitgeschakeld, zodat je hem niet per ongeluk kunt indrukken.",
+        "Verschillende dingen stoppen op het moment dat je hem inschakelt. De AI-handelslus stopt volledig met het genereren van nieuwe voorstellen. Alle openstaande AI-handelsvoorstellen die nog op jouw goedkeuring wachtten, worden meteen geannuleerd. De stop-loss-monitor stopt met vuren — actieve stop losses gaan dus NIET af zolang je niet opnieuw activeert. En de achtergrondscanners, zowel de liquiditeitsscanner als de AI-trustline-scanner, pauzeren mee.",
+        "⚠ WAARSCHUWING — de gevaarlijkste nuance hierbij: zolang de noodstop actief is, worden je stop losses NIET uitgevoerd. Als de markt tegen een open positie in beweegt, sluit niets die positie automatisch af. Beschouw de noodstop niet als een vangnet voor open posities; voor alles wat op een stop loss steunt, is het net het tegenovergestelde.",
+        "Minstens even belangrijk is wat wél blijft doorlopen. Alle openstaande orders die je al op het Stellar-netwerk had staan, blijven actief en op het orderboek staan totdat je ze zelf annuleert bij Openstaande orders — de noodstop raakt het netwerk zelf niet aan. Je stop-loss-instellingen worden niet gewist, alleen gepauzeerd; ze blijven precies zoals ingesteld en lopen weer verder zodra je opnieuw activeert. Je wallet en je tegoeden blijven volledig onaangeroerd. En handmatig handelen blijft gewoon beschikbaar: in alleen-lezen-modus kun jij nog steeds zelf handelen, want de noodstop regelt uitsluitend de bot.",
+        "De noodstop is bovendien blijvend: eenmaal ingeschakeld, blijft hij aan, zelfs als de server herstart, en blijft hij actief totdat jij hem bewust weer uitschakelt. Hij zet zichzelf niet stiekem terug.",
+        "Grijp ernaar wanneer iets niet goed aanvoelt — onverwachte trades, ongewone marktomstandigheden, of gewoon een moment om na te denken — of wanneer je weggaat en niet wilt dat de bot zonder jou handelt, of tijdens om het even welk incident. Zie het als een pauzeknop, geen noodwis: hij bevriest de bot ter plekke in plaats van iets terug te draaien dat al gebeurd is.",
+        "Opnieuw activeren gebeurt even bewust als het inschakelen. Een banner 'Bot is gepauzeerd' blijft de hele tijd zichtbaar op het scherm; tik op de banner en bevestig, en de AI-lus, de stop-loss-monitor en de achtergrondscanners hervatten allemaal samen.",
+      ],
+      example:
+        "Je merkt dat de AI tijdens een volatiel uur trades voorstelt die niet kloppen, dus druk je op de noodstop, bevestigt na de vertraging van twee seconden, en alles pauzeert: geen nieuwe AI-voorstellen meer, openstaande voorstellen geannuleerd, stop-loss-monitor stil, scanners gepauzeerd. Je bestaande openstaande orders op Stellar staan nog altijd op het orderboek, dus annuleer je zelf handmatig de order waar je niet zeker van bent, via Openstaande orders. Je laat de noodstop 's nachts aanstaan — en zelfs al herstart de server voor een routine-update, hij komt weer op met de noodstop nog steeds actief. De volgende ochtend tik je op de banner 'Bot is gepauzeerd', bevestigt, en de AI-lus, de stop-loss-monitor en de scanners starten allemaal weer op.",
+    },
   ],
   quiz: [
     {
@@ -147,6 +162,50 @@ export const chapter38: Chapter & { whoFor: string } = {
           text: "Of je een eenmalige betaling hebt gedaan om een hogere schijf te ontgrendelen.",
           explanation:
             "Nee. Je kunt een schijf niet rechtstreeks kopen — schijven komen alleen voort uit echt handelsvolume, en een Premium-abonnement verandert het percentage dat je binnen een schijf betaalt, niet in welke schijf je zit.",
+        },
+      ],
+      correctIndex: 1,
+    },
+    {
+      id: "c38-q6",
+      prompt: "Je schakelt de noodstop in. Wat blijft precies zoals voorheen doorlopen?",
+      options: [
+        {
+          text: "Openstaande orders die je al op het Stellar-netwerk had geplaatst — die blijven actief op het orderboek staan.",
+          explanation:
+            "Juist. De noodstop pauzeert de bot, niet het netwerk. Orders die je al geplaatst had, blijven op het orderboek staan totdat je ze zelf annuleert bij Openstaande orders.",
+        },
+        {
+          text: "Je actieve stop losses — die blijven gewoon afgaan.",
+          explanation:
+            "Nee. Dit is nu net het gevaarlijke deel: de stop-loss-monitor stopt met vuren zolang de noodstop actief is, dus actieve stop losses gaan NIET af totdat je opnieuw activeert.",
+        },
+        {
+          text: "De AI-handelslus — die blijft nieuwe trades voorstellen ter goedkeuring.",
+          explanation:
+            "Nee. De AI-handelslus stopt volledig met het genereren van nieuwe voorstellen, en voorstellen die nog op goedkeuring wachtten, worden meteen geannuleerd.",
+        },
+      ],
+      correctIndex: 0,
+    },
+    {
+      id: "c38-q7",
+      prompt: "Je schakelt de noodstop in en een paar uur later herstart de server. Staat de noodstop daarna nog aan?",
+      options: [
+        {
+          text: "Nee — een serverherstart schakelt hem automatisch uit, waarna de bot vanzelf hervat.",
+          explanation:
+            "Nee. De noodstop zet zichzelf niet stiekem terug bij een herstart — dat zou het hele nut ervan tenietdoen.",
+        },
+        {
+          text: "Ja — hij overleeft de herstart en blijft aan totdat jij hem bewust weer inschakelt naar actief.",
+          explanation:
+            "Juist. Eenmaal ingeschakeld, blijft de noodstop aan, zelfs over een serverherstart heen, en gaat hij pas uit als je op de banner 'Bot is gepauzeerd' tikt en bevestigt.",
+        },
+        {
+          text: "Dat hangt af van of er op het moment van de herstart nog orders openstonden.",
+          explanation:
+            "Nee. Openstaande orders hebben geen invloed op de status van de noodstop zelf — die blijft ingeschakeld over een herstart heen, ongeacht wat er verder in je account gebeurt.",
         },
       ],
       correctIndex: 1,
