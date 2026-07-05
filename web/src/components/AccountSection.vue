@@ -14,6 +14,7 @@ import { dateTimeStr } from "../format";
 import { closeSettings } from "../ui/uiState";
 import { startTour } from "../onboarding/tour";
 import { billingState, loadBillingStatus } from "../billing/premium";
+import AiKeySection from "./AiKeySection.vue";
 import PasswordStrengthMeter from "./auth/PasswordStrengthMeter.vue";
 
 const { t } = useI18n();
@@ -146,6 +147,9 @@ async function submit(): Promise<void> {
     <button v-if="!billingState.isPremium" class="btn acct-restart" type="button" @click="goPricing">
       {{ t("billing.account.upgrade") }}
     </button>
+
+    <!-- Feature 3: bring-your-own AI API key (premium AI trading). -->
+    <AiKeySection />
 
     <h3 class="acct-sub">{{ t("onboarding.account.title") }}</h3>
     <p class="acct-hint">{{ t("onboarding.account.hint") }}</p>
