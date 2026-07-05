@@ -274,6 +274,89 @@ async function save(): Promise<void> {
 .aikey {
   margin-top: 4px;
 }
+
+/* The .acct-* rules are duplicated from AccountSection.vue ON PURPOSE: its
+   styles are scoped, so they never reach this child component's elements -
+   without these local copies the select/input rendered as unstyled browser
+   defaults (white boxes). Keep in sync with the Change Password form. */
+.acct-sub {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin: 0 0 12px;
+}
+.acct-hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.acct-meta {
+  margin: 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.acct-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.acct-row dt {
+  color: var(--muted);
+  font-size: 13px;
+  min-width: 140px;
+  margin: 0;
+}
+.acct-row dd {
+  margin: 0;
+  color: var(--text);
+}
+.acct-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+}
+.acct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.acct-input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  min-height: 44px;
+  box-sizing: border-box;
+  width: 100%;
+}
+.acct-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.acct-show {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  min-height: 44px;
+}
+.acct-success {
+  color: var(--pos);
+  font-size: 13px;
+  margin: 0;
+}
+.acct-submit {
+  align-self: flex-start;
+  min-height: 44px;
+}
 .aikey-summary {
   margin-bottom: 12px;
 }
