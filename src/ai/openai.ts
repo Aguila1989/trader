@@ -11,6 +11,8 @@ interface ChatCompletionResponse {
         function?: { name: string; arguments: string };
       }>;
     };
+    /** "stop" | "length" | "tool_calls" | ... - "length" = truncated (Fix 4). */
+    finish_reason?: string | null;
   }>;
   error?: { message?: string };
 }
@@ -102,6 +104,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     const msg = data.choices?.[0]?.message;
+    const stopReason = data.choices?.[0]?.finish_reason ?? undefined;
     const text = (msg?.content ?? "").trim();
     const toolCalls: AiToolCall[] = (msg?.tool_calls ?? [])
       .filter((tc) => tc.type === "function" && tc.function)
@@ -118,7 +121,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         return { id: tc.id || `call_${i}`, name: tc.function?.name ?? "", input };
       });
 
-    return { text, toolCalls };
+    return { text, toolCalls, ...(stopReason ? { stopReason } : {}) };
   }
 }
 

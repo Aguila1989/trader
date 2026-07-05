@@ -81,7 +81,12 @@ export class AnthropicProvider implements AiProvider {
     // Hand back the verbatim content so the loop can replay it next turn -
     // critical when thinking is on (thinking blocks carry signatures that must
     // be preserved unmodified alongside the tool_use blocks).
-    return { text, toolCalls, raw: res.content };
+    return {
+      text,
+      toolCalls,
+      raw: res.content,
+      ...(res.stop_reason ? { stopReason: res.stop_reason } : {}),
+    };
   }
 }
 

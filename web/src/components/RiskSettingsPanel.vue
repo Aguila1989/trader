@@ -3,12 +3,13 @@
 // current conservative behavior). EXPERT mode: exact numeric thresholds per
 // factor + preset loader. Changes POST immediately (next proposal). The backend
 // clamps every value, so the UI is a convenience layer over server validation.
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
+import { riskApi, type EffectiveRiskProfile } from "../api";
 import {
   EXPERT_PRESETS,
   EXPERT_RANGES,
@@ -40,6 +41,27 @@ const profile = computed(() => store.riskProfile);
 const expertMode = computed(() => profile.value.expertMode === true);
 const expert = computed<ExpertRiskProfile>(() => profile.value.expert ?? defaultExpertProfile());
 
+// --- effective (resolved) values — single source of truth from the server.
+// Never recompute preset math client-side (that's exactly how the "inert
+// value confused the operator" incident happened): always reflect what the
+// backend says is actually active right now.
+const effective = ref<EffectiveRiskProfile | null>(null);
+async function loadEffective(): Promise<void> {
+  try {
+    effective.value = await riskApi.effective();
+  } catch {
+    // Leave the previous value (or null) in place; captions simply stay blank.
+  }
+}
+onMounted(loadEffective);
+
+/** Every mutation goes through here so the effective-values panel is always
+ *  fresh after a change (never left showing stale "currently active" text). */
+async function applyRiskProfile(next: RiskProfile): Promise<void> {
+  await store.setRiskProfile(next);
+  await loadEffective();
+}
+
 // --- basic mode ---
 const anyHigh = computed(() => {
   const p = profile.value;
@@ -56,10 +78,10 @@ const overall = computed<"LOW" | "MEDIUM" | "HIGH" | "MIXED">(() => {
 
 function setLevel(key: keyof RiskProfile, level: RiskLevel): void {
   if (profile.value[key] === level) return;
-  void store.setRiskProfile({ ...profile.value, [key]: level });
+  void applyRiskProfile({ ...profile.value, [key]: level });
 }
 function resetLow(): void {
-  void store.setRiskProfile({
+  void applyRiskProfile({
     ...profile.value,
     positionSize: "low", stopLossDistance: "low", tradeFrequency: "low",
     volatilityTolerance: "low", drawdownTolerance: "low", slippageTolerance: "low",
@@ -68,10 +90,10 @@ function resetLow(): void {
 
 // --- expert mode ---
 function setExpertMode(on: boolean): void {
-  void store.setRiskProfile({ ...profile.value, expertMode: on, expert: profile.value.expert ?? defaultExpertProfile() });
+  void applyRiskProfile({ ...profile.value, expertMode: on, expert: profile.value.expert ?? defaultExpertProfile() });
 }
 function updateExpert(patch: Partial<ExpertRiskProfile>): void {
-  void store.setRiskProfile({ ...profile.value, expertMode: true, expert: { ...expert.value, ...patch } });
+  void applyRiskProfile({ ...profile.value, expertMode: true, expert: { ...expert.value, ...patch } });
 }
 function clampField(field: keyof typeof EXPERT_RANGES, n: number): number {
   const r = EXPERT_RANGES[field];
@@ -87,7 +109,7 @@ const currentPreset = computed(() => matchExpertPreset(expert.value));
 function onPreset(ev: Event): void {
   const v = (ev.target as HTMLSelectElement).value as RiskPreset | "custom";
   if (v === "custom") return;
-  void store.setRiskProfile({ ...profile.value, expertMode: true, expert: { ...EXPERT_PRESETS[v] } });
+  void applyRiskProfile({ ...profile.value, expertMode: true, expert: { ...EXPERT_PRESETS[v] } });
 }
 
 // Live position-size preview + cap warning.
@@ -110,6 +132,42 @@ const beyondHigh = computed(() => {
     e.maxSlippagePct > H.maxSlippagePct
   );
 });
+
+// Expert Mode ON while a basic preset is still HIGH: the numeric thresholds
+// win, so surface that the HIGH toggle is not what's actually driving risk.
+const expertOverridesHighWarning = computed(() => expertMode.value && anyHigh.value);
+
+// --- effective-value captions (Fix 7): always sourced from /effective, never
+// recomputed from preset math here — see the incident this fix addresses.
+const capSlippage = computed(() => (effective.value ? t("riskSettings.active.slippage", { bps: effective.value.limits.maxSlippageBps }) : ""));
+const capVolatility = computed(() => {
+  if (!effective.value) return "";
+  const { maxEntrySpreadBps, minVolume24h } = effective.value.limits;
+  return t("riskSettings.active.volatility", {
+    spread: maxEntrySpreadBps || t("riskSettings.active.volatilityOff"),
+    volume: minVolume24h || t("riskSettings.active.volatilityNone"),
+  });
+});
+const capPositionSize = computed(() => (effective.value ? t("riskSettings.active.positionSize", { amt: fmtNum(effective.value.limits.maxAmountPerTrade) }) : ""));
+const capStopLoss = computed(() => (effective.value ? t("riskSettings.active.stopLoss", { pct: fmtNum(effective.value.stopLossPct) }) : ""));
+const capTradeFrequency = computed(() => (effective.value ? t("riskSettings.active.tradeFrequency", { seconds: effective.value.limits.cooldownSeconds }) : ""));
+const capDrawdown = computed(() => {
+  if (!effective.value) return "";
+  return effective.value.drawdownPausePct === null
+    ? t("riskSettings.active.drawdownNever")
+    : t("riskSettings.active.drawdownPause", { pct: effective.value.drawdownPausePct });
+});
+const CAPTIONS: Partial<Record<keyof RiskProfile, () => string>> = {
+  slippageTolerance: () => capSlippage.value,
+  volatilityTolerance: () => capVolatility.value,
+  positionSize: () => capPositionSize.value,
+  stopLossDistance: () => capStopLoss.value,
+  tradeFrequency: () => capTradeFrequency.value,
+  drawdownTolerance: () => capDrawdown.value,
+};
+function captionFor(key: keyof RiskProfile): string {
+  return CAPTIONS[key]?.() ?? "";
+}
 </script>
 
 <template>
@@ -118,16 +176,25 @@ const beyondHigh = computed(() => {
       <h2>{{ t("riskSettings.title") }}</h2>
       <label class="rs-expert-toggle">
         <input type="checkbox" :checked="expertMode" @change="setExpertMode(($event.target as HTMLInputElement).checked)" />
-        {{ t("riskSettings.expert.toggle") }}
+        {{ t("riskSettings.expert.toggleExplained") }}
       </label>
     </div>
     <p class="muted rs-note">{{ t("riskSettings.note") }}</p>
 
-    <!-- ============ BASIC MODE ============ -->
-    <template v-if="!expertMode">
-      <div v-if="anyHigh" class="rs-warn">⚠ {{ t("riskSettings.highWarning") }}</div>
-      <ul class="rs-list">
-        <li v-for="f in FACTORS" :key="f.key" class="rs-row">
+    <!-- Effective risk/reward minimum: always on top, always from the server. -->
+    <div class="rs-rr">
+      {{ t("riskSettings.effectiveRR", { value: effective ? fmtNum(effective.limits.minRiskReward) : "…" }) }}
+      <span v-if="effective?.minRiskRewardScaled" class="muted">{{ t("riskSettings.effectiveRRScaled") }}</span>
+    </div>
+
+    <div v-if="expertOverridesHighWarning" class="rs-warn">⚠ {{ t("riskSettings.expertOverridesHigh") }}</div>
+
+    <!-- ============ BASIC MODE (always visible, always interactive) ============ -->
+    <div v-if="anyHigh" class="rs-warn">⚠ {{ t("riskSettings.highWarning") }}</div>
+    <p v-if="expertMode" class="muted rs-note rs-overridden-note">{{ t("riskSettings.presetsOverridden") }}</p>
+    <ul class="rs-list">
+      <li v-for="f in FACTORS" :key="f.key" class="rs-row">
+        <div class="rs-row-main">
           <span class="rs-label">{{ f.label }}<InfoTip :text="f.tip" :label="f.label" :learn-more="LESSONS.riskFactors" /></span>
           <div class="segmented rs-seg" role="group" :aria-label="f.label">
             <button
@@ -141,24 +208,25 @@ const beyondHigh = computed(() => {
               {{ lvl.toUpperCase() }}
             </button>
           </div>
-        </li>
-      </ul>
-      <div class="rs-foot">
-        <span class="rs-overall">
-          {{ t("riskSettings.overall") }}:
-          <strong :class="'rs-' + overall.toLowerCase()">{{ overall }}</strong>
-        </span>
-        <button class="btn rs-reset" :disabled="overall === 'LOW'" @click="resetLow">
-          {{ t("riskSettings.resetToLow") }}
-        </button>
-      </div>
-    </template>
+        </div>
+        <span class="rs-caption muted">{{ captionFor(f.key) }}</span>
+      </li>
+    </ul>
+    <div class="rs-foot">
+      <span class="rs-overall">
+        {{ t("riskSettings.overall") }}:
+        <strong :class="'rs-' + overall.toLowerCase()">{{ overall }}</strong>
+      </span>
+      <button class="btn rs-reset" :disabled="overall === 'LOW'" @click="resetLow">
+        {{ t("riskSettings.resetToLow") }}
+      </button>
+    </div>
 
-    <!-- ============ EXPERT MODE ============ -->
-    <template v-else>
+    <!-- ============ EXPERT MODE (always rendered; greyed out + disabled when OFF) ============ -->
+    <div class="rs-xsection" :class="{ 'rs-xsection-inactive': !expertMode }">
       <div class="rs-preset">
         <label class="rs-label">{{ t("riskSettings.expert.preset") }}</label>
-        <select class="rs-input" :value="currentPreset" @change="onPreset">
+        <select class="rs-input" :disabled="!expertMode" :value="currentPreset" @change="onPreset">
           <option v-for="p in PRESETS" :key="p" :value="p">{{ t("riskSettings.expert.presets." + p) }}</option>
           <option v-if="currentPreset === 'custom'" value="custom">{{ t("riskSettings.expert.presets.custom") }}</option>
         </select>
@@ -167,7 +235,7 @@ const beyondHigh = computed(() => {
         </span>
       </div>
 
-      <div v-if="beyondHigh" class="rs-warn">⚠ {{ t("riskSettings.expert.highWarning") }}</div>
+      <div v-if="expertMode && beyondHigh" class="rs-warn">⚠ {{ t("riskSettings.expert.highWarning") }}</div>
 
       <div class="rs-xlist">
         <!-- Position size -->
@@ -175,15 +243,16 @@ const beyondHigh = computed(() => {
           <span class="rs-label">{{ t("riskSettings.expert.positionSize") }}</span>
           <div class="rs-xinput">
             <input
-              type="number" class="rs-input" :min="EXPERT_RANGES.positionSizePct.min" :max="EXPERT_RANGES.positionSizePct.max"
+              type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.positionSizePct.min" :max="EXPERT_RANGES.positionSizePct.max"
               :step="EXPERT_RANGES.positionSizePct.step" :value="expert.positionSizePct"
               @change="onNum('positionSizePct', $event)"
             /><span class="rs-unit">%</span>
           </div>
-          <span class="rs-preview muted">
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
+          <span v-if="expertMode" class="rs-preview muted">
             {{ t("riskSettings.expert.positionPreview", { bal: fmtNum(balXlm), amt: fmtNum(maxOrder) }) }}
           </span>
-          <span v-if="exceedsCap" class="rs-fieldwarn">
+          <span v-if="expertMode && exceedsCap" class="rs-fieldwarn">
             ⚠ {{ t("riskSettings.expert.positionExceedsCap", { cap: fmtNum(aiCap) }) }}
           </span>
         </div>
@@ -192,26 +261,27 @@ const beyondHigh = computed(() => {
         <div class="rs-xrow">
           <span class="rs-label">{{ t("riskSettings.factors.stopLossDistance.label") }}</span>
           <div class="segmented rs-seg">
-            <button class="seg" :class="{ active: expert.stopLossMode === 'pct' }" @click="updateExpert({ stopLossMode: 'pct' })">
+            <button class="seg" :disabled="!expertMode" :class="{ active: expert.stopLossMode === 'pct' }" @click="updateExpert({ stopLossMode: 'pct' })">
               {{ t("riskSettings.expert.stopMode.pct") }}
             </button>
-            <button class="seg" :class="{ active: expert.stopLossMode === 'amount' }" @click="updateExpert({ stopLossMode: 'amount' })">
+            <button class="seg" :disabled="!expertMode" :class="{ active: expert.stopLossMode === 'amount' }" @click="updateExpert({ stopLossMode: 'amount' })">
               {{ t("riskSettings.expert.stopMode.amount") }}
             </button>
           </div>
           <div class="rs-xinput">
             <input
               v-if="expert.stopLossMode === 'pct'"
-              type="number" class="rs-input" :min="EXPERT_RANGES.stopLossPct.min" :max="EXPERT_RANGES.stopLossPct.max"
+              type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.stopLossPct.min" :max="EXPERT_RANGES.stopLossPct.max"
               :step="EXPERT_RANGES.stopLossPct.step" :value="expert.stopLossPct" @change="onNum('stopLossPct', $event)"
             />
             <input
-              v-else type="number" class="rs-input" :min="EXPERT_RANGES.stopLossAmount.min"
+              v-else type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.stopLossAmount.min"
               :step="EXPERT_RANGES.stopLossAmount.step" :value="expert.stopLossAmount" @change="onNum('stopLossAmount', $event)"
             />
             <span class="rs-unit">{{ expert.stopLossMode === "pct" ? "%" : "XLM" }}</span>
           </div>
-          <span v-if="stopTight" class="rs-fieldwarn">⚠ {{ t("riskSettings.expert.stopTight") }}</span>
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
+          <span v-if="expertMode && stopTight" class="rs-fieldwarn">⚠ {{ t("riskSettings.expert.stopTight") }}</span>
         </div>
 
         <!-- Trade frequency = min confidence -->
@@ -221,10 +291,11 @@ const beyondHigh = computed(() => {
           </span>
           <div class="rs-xinput">
             <input
-              type="number" class="rs-input" :min="EXPERT_RANGES.minConfidence.min" :max="EXPERT_RANGES.minConfidence.max"
+              type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.minConfidence.min" :max="EXPERT_RANGES.minConfidence.max"
               :step="EXPERT_RANGES.minConfidence.step" :value="expert.minConfidence" @change="onNum('minConfidence', $event)"
             /><span class="rs-unit">/ 100</span>
           </div>
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
         </div>
 
         <!-- Asset volatility tolerance -->
@@ -234,10 +305,11 @@ const beyondHigh = computed(() => {
           </span>
           <div class="rs-xinput">
             <input
-              type="number" class="rs-input" :min="EXPERT_RANGES.maxVolatilityPct.min" :max="EXPERT_RANGES.maxVolatilityPct.max"
+              type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.maxVolatilityPct.min" :max="EXPERT_RANGES.maxVolatilityPct.max"
               :step="EXPERT_RANGES.maxVolatilityPct.step" :value="expert.maxVolatilityPct" @change="onNum('maxVolatilityPct', $event)"
             /><span class="rs-unit">%</span>
           </div>
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
         </div>
 
         <!-- Drawdown tolerance -->
@@ -245,15 +317,16 @@ const beyondHigh = computed(() => {
           <span class="rs-label">{{ t("riskSettings.expert.drawdownPause") }}</span>
           <div class="rs-xinput">
             <input
-              type="number" class="rs-input" :min="EXPERT_RANGES.drawdownPausePct.min" :max="EXPERT_RANGES.drawdownPausePct.max"
+              type="number" class="rs-input" :disabled="!expertMode || expert.drawdownNeverPause" :min="EXPERT_RANGES.drawdownPausePct.min" :max="EXPERT_RANGES.drawdownPausePct.max"
               :step="EXPERT_RANGES.drawdownPausePct.step" :value="expert.drawdownPausePct"
-              :disabled="expert.drawdownNeverPause" @change="onNum('drawdownPausePct', $event)"
+              @change="onNum('drawdownPausePct', $event)"
             /><span class="rs-unit">%</span>
           </div>
           <label class="rs-check">
-            <input type="checkbox" :checked="expert.drawdownNeverPause" @change="updateExpert({ drawdownNeverPause: ($event.target as HTMLInputElement).checked })" />
+            <input type="checkbox" :disabled="!expertMode" :checked="expert.drawdownNeverPause" @change="updateExpert({ drawdownNeverPause: ($event.target as HTMLInputElement).checked })" />
             {{ t("riskSettings.expert.neverPause") }}
           </label>
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
         </div>
 
         <!-- Slippage tolerance -->
@@ -261,13 +334,14 @@ const beyondHigh = computed(() => {
           <span class="rs-label">{{ t("riskSettings.expert.slippage") }}</span>
           <div class="rs-xinput">
             <input
-              type="number" class="rs-input" :min="EXPERT_RANGES.maxSlippagePct.min" :max="EXPERT_RANGES.maxSlippagePct.max"
+              type="number" class="rs-input" :disabled="!expertMode" :min="EXPERT_RANGES.maxSlippagePct.min" :max="EXPERT_RANGES.maxSlippagePct.max"
               :step="EXPERT_RANGES.maxSlippagePct.step" :value="expert.maxSlippagePct" @change="onNum('maxSlippagePct', $event)"
             /><span class="rs-unit">%</span>
           </div>
+          <span v-if="!expertMode" class="rs-inactive muted">{{ t("riskSettings.inactive") }}</span>
         </div>
       </div>
-    </template>
+    </div>
   </section>
 </template>
 
@@ -280,10 +354,17 @@ const beyondHigh = computed(() => {
   background: rgba(245, 166, 35, 0.12); border: 1px solid #5e4a1f; color: var(--warn);
   border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px;
 }
+.rs-rr {
+  background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; margin: 10px 0 12px; display: flex; gap: 8px; flex-wrap: wrap;
+}
+.rs-overridden-note { margin-top: -2px; margin-bottom: 10px; }
 .rs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.rs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.rs-row { display: flex; flex-direction: column; gap: 2px; }
+.rs-row-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .rs-label { display: inline-flex; align-items: center; font-size: 13px; }
 .rs-seg .seg { padding: 5px 14px; font-size: 12px; }
+.rs-caption { font-size: 11px; }
 .rs-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .rs-overall { font-size: 13px; color: var(--muted); }
 .rs-overall strong { letter-spacing: 0.04em; }
@@ -294,6 +375,8 @@ const beyondHigh = computed(() => {
 .rs-reset { padding: 4px 12px; font-size: 12px; }
 
 /* expert */
+.rs-xsection { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rs-xsection-inactive { opacity: 0.5; cursor: not-allowed; }
 .rs-preset { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .rs-preset-desc { font-size: 12px; }
 .rs-input {
@@ -301,7 +384,8 @@ const beyondHigh = computed(() => {
   color: var(--text); padding: 6px 10px; font-family: ui-monospace, monospace; max-width: 130px;
 }
 .rs-input:focus { outline: none; border-color: var(--accent); }
-.rs-input:disabled { opacity: 0.5; }
+.rs-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.rs-seg .seg:disabled { cursor: not-allowed; }
 .rs-xlist { display: flex; flex-direction: column; gap: 14px; }
 .rs-xrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rs-xrow .rs-label { min-width: 220px; flex: 1 1 220px; }
@@ -309,5 +393,6 @@ const beyondHigh = computed(() => {
 .rs-unit { font-size: 12px; color: var(--muted); }
 .rs-preview { font-size: 12px; flex-basis: 100%; }
 .rs-fieldwarn { font-size: 12px; color: var(--warn); flex-basis: 100%; }
+.rs-inactive { font-size: 11px; flex-basis: 100%; font-style: italic; }
 .rs-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
 </style>

@@ -46,6 +46,15 @@ export interface AiTurn {
    * that produced it; other providers reconstruct from text + toolCalls.
    */
   raw?: unknown;
+  /**
+   * FIX-PLAN Fix 4: why the provider stopped - Anthropic stop_reason
+   * ("end_turn" | "max_tokens" | "tool_use" | ...) or the OpenAI dialect's
+   * finish_reason ("stop" | "length" | "tool_calls" | ...). A truncated turn
+   * ("max_tokens"/"length") with no text and no tool calls used to be
+   * indistinguishable from a deliberate pass; the agent loop now logs and
+   * retries it once with a doubled reply budget.
+   */
+  stopReason?: string;
 }
 
 /** A single model call: stable system prompt, the conversation, and tools. */

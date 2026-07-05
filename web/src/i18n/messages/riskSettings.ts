@@ -8,6 +8,22 @@ export default {
       "One or more risk factors are set to HIGH. The AI may place larger or more frequent trades. Monitor your portfolio closely.",
     overall: "Overall risk profile",
     resetToLow: "Reset to LOW",
+    inactive: "Not active — enable Expert Mode to use this value",
+    presetsOverridden: "Expert Mode is ON — these presets are overridden by the numeric thresholds below.",
+    expertOverridesHigh: "Expert Mode overrides HIGH preset values. Verify your numeric thresholds are intentional.",
+    effectiveRR: "Effective risk/reward minimum: {value}",
+    effectiveRRScaled: "(scaled from your risk profile)",
+    active: {
+      slippage: "Currently active: {bps} bps",
+      volatility: "Currently active: spread cap {spread} bps · volume floor {volume}",
+      volatilityOff: "off",
+      volatilityNone: "none",
+      positionSize: "Currently active: max {amt} per trade",
+      stopLoss: "Currently active: {pct}%",
+      tradeFrequency: "Currently active: cooldown {seconds}s",
+      drawdownNever: "Currently active: never pauses",
+      drawdownPause: "Currently active: pause at {pct}%",
+    },
     factors: {
       positionSize: {
         label: "Position size",
@@ -36,6 +52,7 @@ export default {
     },
     expert: {
       toggle: "Expert Mode — configure exact numeric thresholds",
+      toggleExplained: "Expert Mode — set exact numeric thresholds (overrides LOW/MEDIUM/HIGH)",
       preset: "Load preset",
       presets: { conservative: "Conservative", balanced: "Balanced", aggressive: "Aggressive", custom: "Custom" },
       presetDesc: {
@@ -67,6 +84,22 @@ export default {
       "Een of meer risicofactoren staan op HIGH. De AI kan grotere of frequentere trades plaatsen. Houd je portefeuille goed in de gaten.",
     overall: "Algeheel risicoprofiel",
     resetToLow: "Terug naar LOW",
+    inactive: "Niet actief — schakel Expert-modus in om deze waarde te gebruiken",
+    presetsOverridden: "Expert-modus staat AAN — deze voorinstellingen worden overschreven door de numerieke drempels hieronder.",
+    expertOverridesHigh: "Expert-modus overschrijft de HIGH-voorinstelling. Controleer of je numerieke drempels bewust zijn ingesteld.",
+    effectiveRR: "Effectieve minimale risico/rendement-verhouding: {value}",
+    effectiveRRScaled: "(geschaald op basis van je risicoprofiel)",
+    active: {
+      slippage: "Momenteel actief: {bps} bps",
+      volatility: "Momenteel actief: spread-limiet {spread} bps · volumedrempel {volume}",
+      volatilityOff: "uit",
+      volatilityNone: "geen",
+      positionSize: "Momenteel actief: max. {amt} per trade",
+      stopLoss: "Momenteel actief: {pct}%",
+      tradeFrequency: "Momenteel actief: afkoelperiode {seconds}s",
+      drawdownNever: "Momenteel actief: pauzeert nooit",
+      drawdownPause: "Momenteel actief: pauzeert bij {pct}%",
+    },
     factors: {
       positionSize: {
         label: "Positiegrootte",
@@ -95,6 +128,7 @@ export default {
     },
     expert: {
       toggle: "Expert-modus — stel exacte numerieke drempels in",
+      toggleExplained: "Expert-modus — stel exacte numerieke drempels in (overschrijft LOW/MEDIUM/HIGH)",
       preset: "Voorinstelling laden",
       presets: { conservative: "Conservatief", balanced: "Gebalanceerd", aggressive: "Agressief", custom: "Aangepast" },
       presetDesc: {
@@ -126,6 +160,22 @@ export default {
       "Un ou plusieurs facteurs de risque sont réglés sur HIGH. L'IA peut placer des trades plus importants ou plus fréquents. Surveillez votre portefeuille de près.",
     overall: "Profil de risque global",
     resetToLow: "Réinitialiser à LOW",
+    inactive: "Non actif — activez le Mode Expert pour utiliser cette valeur",
+    presetsOverridden: "Le Mode Expert est ACTIVÉ — ces préréglages sont remplacés par les seuils numériques ci-dessous.",
+    expertOverridesHigh: "Le Mode Expert remplace les valeurs du préréglage HIGH. Vérifiez que vos seuils numériques sont intentionnels.",
+    effectiveRR: "Ratio risque/rendement minimum effectif : {value}",
+    effectiveRRScaled: "(ajusté à partir de votre profil de risque)",
+    active: {
+      slippage: "Actuellement actif : {bps} pb",
+      volatility: "Actuellement actif : plafond de spread {spread} pb · plancher de volume {volume}",
+      volatilityOff: "désactivé",
+      volatilityNone: "aucun",
+      positionSize: "Actuellement actif : max {amt} par trade",
+      stopLoss: "Actuellement actif : {pct}%",
+      tradeFrequency: "Actuellement actif : délai de récupération {seconds}s",
+      drawdownNever: "Actuellement actif : ne se met jamais en pause",
+      drawdownPause: "Actuellement actif : pause à {pct}%",
+    },
     factors: {
       positionSize: {
         label: "Taille de position",
@@ -154,6 +204,7 @@ export default {
     },
     expert: {
       toggle: "Mode Expert — configurez des seuils numériques exacts",
+      toggleExplained: "Mode Expert — définissez des seuils numériques exacts (remplace LOW/MEDIUM/HIGH)",
       preset: "Charger un préréglage",
       presets: { conservative: "Conservateur", balanced: "Équilibré", aggressive: "Agressif", custom: "Personnalisé" },
       presetDesc: {
@@ -185,6 +236,22 @@ export default {
       "Uno o más factores de riesgo están en HIGH. La IA puede realizar operaciones más grandes o más frecuentes. Vigila tu cartera de cerca.",
     overall: "Perfil de riesgo general",
     resetToLow: "Restablecer a LOW",
+    inactive: "No activo — activa el Modo Experto para usar este valor",
+    presetsOverridden: "El Modo Experto está ACTIVADO — estos preajustes quedan anulados por los umbrales numéricos de abajo.",
+    expertOverridesHigh: "El Modo Experto anula los valores del preajuste HIGH. Verifica que tus umbrales numéricos sean intencionados.",
+    effectiveRR: "Mínimo de riesgo/recompensa efectivo: {value}",
+    effectiveRRScaled: "(escalado a partir de tu perfil de riesgo)",
+    active: {
+      slippage: "Actualmente activo: {bps} pb",
+      volatility: "Actualmente activo: límite de spread {spread} pb · piso de volumen {volume}",
+      volatilityOff: "desactivado",
+      volatilityNone: "ninguno",
+      positionSize: "Actualmente activo: máx. {amt} por operación",
+      stopLoss: "Actualmente activo: {pct}%",
+      tradeFrequency: "Actualmente activo: enfriamiento {seconds}s",
+      drawdownNever: "Actualmente activo: nunca pausa",
+      drawdownPause: "Actualmente activo: pausa al {pct}%",
+    },
     factors: {
       positionSize: {
         label: "Tamaño de posición",
@@ -213,6 +280,7 @@ export default {
     },
     expert: {
       toggle: "Modo Experto — configura umbrales numéricos exactos",
+      toggleExplained: "Modo Experto — define umbrales numéricos exactos (anula LOW/MEDIUM/HIGH)",
       preset: "Cargar preajuste",
       presets: { conservative: "Conservador", balanced: "Equilibrado", aggressive: "Agresivo", custom: "Personalizado" },
       presetDesc: {

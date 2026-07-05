@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { aiReady } from "../ai";
 import { store } from "./store";
-import { runChainScan } from "./orchestrator";
+import { runChainScan, ScanBusyError } from "./orchestrator";
 
 /**
  * The autopilot: a background loop that runs a chain scan of the curated token
@@ -52,6 +52,13 @@ async function runOnce(): Promise<void> {
       `Auto-pilot scan done: ${out.scanned} market(s), ${out.proposals.length} proposal(s).`,
     );
   } catch (err) {
+    // FIX-PLAN Fix 5: a manual POST /api/scan may already hold the scan mutex -
+    // that's a skip, not a failure (the missing cross-entry-point exclusion
+    // used to double the paid LLM calls).
+    if (err instanceof ScanBusyError) {
+      store.log("info", "Auto-pilot tick skipped — scan already in progress");
+      return;
+    }
     store.log("error", `Auto-pilot scan failed: ${(err as Error).message}`);
   } finally {
     running = false;

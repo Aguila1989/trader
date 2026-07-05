@@ -263,6 +263,40 @@ function snapToNoEntry(snap: MarketSnapshot): NoEntryInput {
 }
 
 /**
+ * FIX-PLAN Fix 5: cross-entry-point scan mutex. POST /api/scan (llmGate) and
+ * the autopilot tick (module-local `running`) each had their OWN guard that
+ * could not see the other - two concurrent scans meant doubled paid LLM calls.
+ * The guard lives HERE, at the single choke point both funnel through.
+ * Deliberately NOT runExclusive(): that lock serializes trade EXECUTION, and a
+ * multi-minute scan holding it would block stop-loss exits.
+ */
+let scanInFlight = false;
+
+/** Thrown when a chain scan is already running. /api/scan maps it to 429; the
+ *  autopilot tick catches it and skips with a log line. */
+export class ScanBusyError extends Error {
+  constructor() {
+    super("A chain scan is already in progress.");
+  }
+}
+
+export function isScanInFlight(): boolean {
+  return scanInFlight;
+}
+
+/** The mutex itself, exported for deterministic tests: rejects with
+ *  ScanBusyError while another holder is inside, always releases. */
+export async function withScanLock<T>(fn: () => Promise<T>): Promise<T> {
+  if (scanInFlight) throw new ScanBusyError();
+  scanInFlight = true;
+  try {
+    return await fn();
+  } finally {
+    scanInFlight = false;
+  }
+}
+
+/**
  * Scan the curated universe (reputable tokens vs XLM) PLUS the configured
  * cross pairs (fx / peg books like USDC/EURC) in a single pass, then route
  * every proposal through the same policy + approval pipeline as a manual
@@ -270,6 +304,10 @@ function snapToNoEntry(snap: MarketSnapshot): NoEntryInput {
  * FIRST so their mids feed the XLM rate map before any cross pair needs it.
  */
 export async function runChainScan(): Promise<ScanOutcome> {
+  return withScanLock(runChainScanInner);
+}
+
+async function runChainScanInner(): Promise<ScanOutcome> {
   const assets = config.scanAssets;
   const crossPairs = config.scanPairs;
   store.log(

@@ -142,6 +142,32 @@ export function prefersTrailingStop(p: RiskProfile): boolean {
   return p.stopLossDistance === "medium" || p.stopLossDistance === "high";
 }
 
+/**
+ * FIX-PLAN Fix 6: minimum reward/risk, scaled with the risk profile. At HIGH
+ * risk the spread/slippage allowances triple while the 1.2 bar stayed fixed -
+ * causing pre-proposal self-censorship on marginal setups. Kevin's sign-off
+ * (2026-07-04): STOP_LOSS_DISTANCE or POSITION_SIZE at HIGH -> 1.1, at MEDIUM
+ * (neither high) -> 1.15, all-LOW -> the base 1.2.
+ *
+ * A user-set value always wins: scaling ONLY applies while the configured
+ * value equals the shipped default (1.2). Anything else - env MIN_RISK_REWARD
+ * or a runtime Settings edit (settings.ts mutates config.limits live) - is an
+ * explicit operator choice and is returned untouched. Expert mode also returns
+ * the base (expert users set exact numbers, same convention as the other
+ * effective* functions).
+ */
+const SHIPPED_MIN_RISK_REWARD = 1.2;
+export function effectiveMinRiskReward(p: RiskProfile): number {
+  const base = config.limits.minRiskReward;
+  if (expertOf(p)) return base;
+  if (base !== SHIPPED_MIN_RISK_REWARD) return base; // user/env-set: never overwrite
+  const high = p.stopLossDistance === "high" || p.positionSize === "high";
+  const medium = p.stopLossDistance === "medium" || p.positionSize === "medium";
+  if (high) return 1.1;
+  if (medium) return 1.15;
+  return base;
+}
+
 /** 24h portfolio-drawdown % that PAUSES new AI entries; null = no pause. */
 export function drawdownPausePct(p: RiskProfile): number | null {
   const e = expertOf(p);
@@ -177,6 +203,7 @@ export function effectiveLimits(p: RiskProfile, availableBalanceXlm?: number): L
     cooldownSeconds: effectiveCooldownSeconds(p),
     minVolume24h: effectiveMinVolume24h(p),
     maxEntrySpreadBps: effectiveMaxEntrySpreadBps(p),
+    minRiskReward: effectiveMinRiskReward(p), // FIX-PLAN Fix 6
   };
 }
 

@@ -24,6 +24,7 @@ import { store } from "./trading/store";
 import {
   runAnalysis,
   runChainScan,
+  ScanBusyError,
   approve,
   autoApprove,
   reject,
@@ -41,6 +42,7 @@ import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
 import { listClaimableBalances, claimBalance } from "./stellar/claimable";
 import { assetCode, canonicalAsset, pairLabel } from "./stellar/assets";
 import { checkEgress } from "./policy/engine";
+import { drawdownPausePct, effectiveLimits, effectiveStopLossPct } from "./policy/riskProfile";
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
 import { startTierScheduler, stopTierScheduler } from "./fees/tierScheduler";
@@ -1609,6 +1611,12 @@ app.post("/api/scan", async (_req, res) => {
   try {
     res.json(await runChainScan());
   } catch (err) {
+    // FIX-PLAN Fix 5: the scan mutex (shared with the autopilot tick) is
+    // already held - a duplicate would double the paid LLM calls.
+    if (err instanceof ScanBusyError) {
+      res.status(429).json({ error: "Scan already in progress" });
+      return;
+    }
     store.log("error", `Chain scan failed: ${(err as Error).message}`);
     failGeneric(res, err, 500);
   } finally {
@@ -1921,6 +1929,21 @@ app.post("/api/auto-approve", async (req, res) => {
 // store; takes effect on the next proposal (the policy reads it live).
 app.post("/api/risk-profile", (req, res) => {
   res.json({ riskProfile: store.setRiskProfile(req.body ?? {}) });
+});
+
+// FIX-PLAN Fix 7: the EFFECTIVE values the active profile maps to, computed by
+// the same functions the policy engine + system prompt use (zero client-side
+// duplication of the preset math). The Risk Settings panel shows these inline
+// ("Currently active: 300bps") and the scaled minRiskReward banner.
+app.get("/api/risk-profile/effective", (_req, res) => {
+  const p = store.riskProfile;
+  res.json({
+    expertMode: p.expertMode === true,
+    limits: effectiveLimits(p),
+    stopLossPct: effectiveStopLossPct(p),
+    drawdownPausePct: drawdownPausePct(p),
+    minRiskRewardScaled: effectiveLimits(p).minRiskReward !== config.limits.minRiskReward,
+  });
 });
 
 // Feature 2 — operational settings. GET returns the full catalog (metadata +

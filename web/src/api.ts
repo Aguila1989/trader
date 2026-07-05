@@ -221,6 +221,34 @@ export const billingApi = {
     authRequest<{ url?: string }>("/api/billing/checkout-session", { plan, ack }),
 };
 
+// --- Risk profile: effective (resolved) values (FIX-PLAN Fix 7) ------------
+// The RiskSettingsPanel shows BOTH the basic (LOW/MEDIUM/HIGH) and expert
+// (numeric) sections at all times; this endpoint is the single source of
+// truth for what is actually active right now, so the UI never recomputes
+// preset math client-side and risks drifting from the server's policy.
+export interface EffectiveRiskLimits {
+  maxSlippageBps: number;
+  maxEntrySpreadBps: number;
+  minVolume24h: number;
+  cooldownSeconds: number;
+  maxAmountPerTrade: number;
+  maxAmountPerTradeHigh: number;
+  minRiskReward: number;
+  stopLossPct: number;
+  [key: string]: number;
+}
+export interface EffectiveRiskProfile {
+  expertMode: boolean;
+  limits: EffectiveRiskLimits;
+  stopLossPct: number;
+  drawdownPausePct: number | null;
+  minRiskRewardScaled: boolean;
+}
+
+export const riskApi = {
+  effective: () => getJSON<EffectiveRiskProfile>("/api/risk-profile/effective"),
+};
+
 // --- Wallet API (Feature 3) -------------------------------------------------
 // Status is a plain GET (used by the header chip + the setup gate). The mutating
 // flows go through authRequest so the screens can show the server's (safe,
