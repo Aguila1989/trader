@@ -517,6 +517,24 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       );
     END
 
+    -- Feature 4 (2026-07, admin backoffice): the immutable admin audit trail.
+    -- Append-only by API surface (insert + list only, like TradeLog); every
+    -- admin action (tier override, disable, flag, fee-wallet/settings change,
+    -- login attempts) lands here with the admin identifier + timestamp.
+    IF OBJECT_ID('dbo.AdminAudit', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AdminAudit (
+        id     NVARCHAR(64)  NOT NULL CONSTRAINT PK_AdminAudit PRIMARY KEY,
+        ts     DATETIME2(3)  NOT NULL,
+        network NVARCHAR(16) NOT NULL,
+        admin  NVARCHAR(256) NOT NULL,   -- admin email (env identity)
+        action NVARCHAR(48)  NOT NULL,   -- 'login' | 'login-failed' | 'tier-override' | ...
+        target NVARCHAR(128) NULL,       -- userId / setting key / wallet address
+        detail NVARCHAR(MAX) NULL
+      );
+      CREATE INDEX IX_AdminAudit_ts ON dbo.AdminAudit (network, ts DESC);
+    END
+
     -- Feature 3 (2026-07, AI keys): one BYO AI API key per user, encrypted with
     -- the same AES-256-GCM box as wallet seeds (purpose "ai-api-key" - own KDF
     -- domain). The plaintext exists only in memory at the moment the AI makes a

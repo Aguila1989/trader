@@ -5,3 +5,6 @@ node_modules/
 dist/
 .DS_Store
 .backtest-cache/
+
+# Sandbox verification env (local only — never commit; holds throwaway secrets)
+.env.sandbox

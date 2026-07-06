@@ -173,6 +173,12 @@ export async function login(input: {
     await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: false, reason: "disabled" });
     return { ok: false, status: 403, error: "This account is disabled." };
   }
+  // Feature 4: an admin-disabled account cannot log in (same generic message -
+  // the backoffice action is deliberately not distinguishable to the user).
+  if (cred.disabledByAdmin) {
+    await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: false, reason: "admin-disabled" });
+    return { ok: false, status: 403, error: "This account is disabled." };
+  }
   if (!cred.emailVerified) {
     await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: false, reason: "unverified" });
     return { ok: false, status: 403, error: "Please verify your email address before logging in. Check your inbox for the verification link." };

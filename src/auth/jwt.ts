@@ -25,6 +25,12 @@ export interface JwtClaims {
   email: string;
   /** Session id (dbo.AuthSessions.id) for server-side revocation/logout. */
   jti: string;
+  /**
+   * Audience (Feature 4). ABSENT on user session tokens; "atrium-admin" on
+   * admin backoffice tokens. Both gates check it, so the two token kinds can
+   * never impersonate each other even though they share the signing secret.
+   */
+  aud?: string;
   /** Issued-at (seconds since epoch). */
   iat: number;
   /** Expires-at (seconds since epoch). */
@@ -143,6 +149,15 @@ export function verifyJwt(token: string, secret: string, nowSec: number): JwtVer
 
   return {
     ok: true,
-    claims: { sub: c.sub, email: c.email, jti: c.jti, iat: c.iat, exp: c.exp },
+    claims: {
+      sub: c.sub,
+      email: c.email,
+      jti: c.jti,
+      iat: c.iat,
+      exp: c.exp,
+      // Feature 4: preserve the audience so the admin gate can enforce it and
+      // the user gate can reject an admin token (both check claims.aud).
+      ...(typeof c.aud === "string" ? { aud: c.aud } : {}),
+    },
   };
 }

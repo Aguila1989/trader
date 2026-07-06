@@ -386,6 +386,18 @@ export const config = {
    * never hardcoded); PLATFORM_FEE_WALLET only SEEDS that setting on first boot.
    * Fees are entirely disabled while no fee wallet is configured.
    */
+  /**
+   * Admin backoffice (Feature 4, 2026-07). Credentials live ONLY in env - never
+   * in user tables, never enrollable from the app. All three must be set for
+   * /admin to accept logins (adminConfigured()). Generate with:
+   *   npm run admin:hash-password   (bcrypt hash for ADMIN_PASSWORD_HASH)
+   *   npm run admin:totp-setup      (base32 secret + otpauth:// enrollment URI)
+   */
+  admin: {
+    email: env("ADMIN_EMAIL"),
+    passwordHash: env("ADMIN_PASSWORD_HASH"),
+    totpSecret: env("ADMIN_TOTP_SECRET"),
+  },
   billing: {
     stripeSecretKey: env("STRIPE_SECRET_KEY"),
     stripeWebhookSecret: env("STRIPE_WEBHOOK_SECRET"),

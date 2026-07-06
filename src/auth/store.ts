@@ -30,6 +30,8 @@ export interface Credential {
   failedLoginAttempts: number;
   /** Epoch ms the lock expires, or null when not locked. */
   lockedUntil: number | null;
+  /** Feature 4: blocked by the admin backoffice (login refused). */
+  disabledByAdmin: boolean;
 }
 
 export interface NewAccount {
@@ -124,6 +126,7 @@ interface CredentialRow {
   emailVerified: boolean;
   failedLoginAttempts: number;
   lockedUntil: Date | string | null;
+  disabledByAdmin: boolean;
   onboardingCompleted: boolean;
   isPremium: boolean;
   subscriptionStatus: string | null;
@@ -152,10 +155,11 @@ function rowToCredential(r: CredentialRow): Credential {
     isActive: Boolean(r.isActive),
     failedLoginAttempts: Number(r.failedLoginAttempts ?? 0),
     lockedUntil: toMs(r.lockedUntil),
+    disabledByAdmin: Boolean(r.disabledByAdmin),
   };
 }
 
-const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
+const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, disabledByAdmin, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
 
 // --- accounts ---------------------------------------------------------------
 
@@ -225,6 +229,7 @@ export async function findCredentialByEmail(email: string): Promise<Credential |
           isActive: u.isActive,
           failedLoginAttempts: u.failedLoginAttempts,
           lockedUntil: u.lockedUntil,
+          disabledByAdmin: false, // admin backoffice requires a DB
         };
       }
     }

@@ -24,6 +24,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["--env-file=.env.sandbox", "./node_modules/tsx/dist/cli.mjs", "src/server.ts"],
       "port": 3105
+    },
+    {
+      "name": "admin-web (vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "admin-web", "run", "dev"],
+      "port": 5176
     }
   ]
 }

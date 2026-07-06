@@ -47,6 +47,7 @@ import { drawdownPausePct, effectiveLimits, effectiveStopLossPct } from "./polic
 import { startAutoPilot, stopAutoPilot } from "./trading/autopilot";
 import { startMonitor, stopMonitor } from "./trading/monitor";
 import { startTierScheduler, stopTierScheduler } from "./fees/tierScheduler";
+import { createAdminRouter } from "./admin/routes";
 import { createBillingRouter } from "./billing/routes";
 import { processWebhookDelivery } from "./billing/webhook";
 import { stripeConfigured } from "./billing/stripeClient";
@@ -94,6 +95,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Vite dev server (`npm run dev`) on :5175 instead, which proxies /api here.
 const webDist = join(here, "..", "web", "dist");
 const webBuilt = existsSync(join(webDist, "index.html"));
+// Feature 4: the admin backoffice is its OWN build (admin-web/dist), served at
+// /admin - never bundled into, linked from, or routable within the main SPA.
+const adminDist = join(here, "..", "admin-web", "dist");
+const adminBuilt = existsSync(join(adminDist, "index.html"));
 
 const app = express();
 // SEC-20/22: when a proxy is explicitly trusted, trust EXACTLY ONE hop (the
@@ -158,6 +163,9 @@ app.use((_req, res, next) => {
   next();
 });
 if (webBuilt) app.use(express.static(webDist));
+// Feature 4: /admin static app, mounted BEFORE the SPA fallback so its assets
+// and shell never fall through to the main app's index.html.
+if (adminBuilt) app.use("/admin", express.static(adminDist));
 
 // CSRF guard: reject cross-site STATE-CHANGING requests to /api. The decision
 // lives in ./csrf (checkOrigin) so it can be unit-tested without booting the
@@ -222,6 +230,12 @@ app.use((req, res, next) => {
 // so a cross-site POST is rejected before the (auto-sent) cookie is ever trusted
 // - SameSite=Strict on the cookie is the second layer.
 app.use(authRateLimiter);
+// Feature 4: /api/admin/* is handled ENTIRELY by the admin stack (env creds +
+// TOTP + its own aud-scoped 4h cookie). Mounted BEFORE requireAuth: admin
+// requests never touch the user gate, never get a user context, and the two
+// session types can't cross (both verifiers enforce the aud claim). The CSRF
+// origin guard + per-IP rate limiter above still apply.
+app.use("/api/admin", createAdminRouter());
 app.use(requireAuth);
 app.use("/api/auth", createAuthRouter());
 // Feature 3: wallet management. Mounted AFTER requireAuth so every route runs in
@@ -2053,6 +2067,18 @@ app.post("/api/provider", (req, res) => {
   }
   res.json({ aiProvider: aiProviderId(), model: aiModel() });
 });
+
+// Feature 4: /admin/* falls back to the ADMIN shell (registered before the
+// main SPA fallback so an admin deep link never serves the user app).
+if (adminBuilt) {
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || !req.path.toLowerCase().startsWith("/admin")) {
+      next();
+      return;
+    }
+    res.sendFile(join(adminDist, "index.html"));
+  });
+}
 
 // SPA fallback: any non-API GET returns index.html so client-side routing works.
 if (webBuilt) {

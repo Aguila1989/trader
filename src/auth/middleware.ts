@@ -69,6 +69,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
     return;
   }
+  // Feature 4 defense-in-depth: an ADMIN token (aud claim) copied into the
+  // user cookie must never pass the user gate. (Its "admin" jti also has no
+  // AuthSessions row, but reject on shape first - fail early, fail closed.)
+  if (verdict.claims.aud) {
+    res.status(401).json({ error: "unauthorized", code: "AUTH_REQUIRED" });
+    return;
+  }
   // Server-side session validity (revocation / logout / forced re-login).
   let active = false;
   try {
@@ -98,7 +105,9 @@ export function authRateLimiter(req: Request, res: Response, next: NextFunction)
   // Lowercase the path: Express matches routes case-insensitively, so without
   // this `/API/AUTH/LOGIN` would skip the limiter yet still reach the login
   // handler - a brute-force bypass. (Same normalization as requireAuth.)
-  if (!req.path.toLowerCase().startsWith("/api/auth/")) return next();
+  // Feature 4: the admin login shares the same per-IP brute-force cap.
+  const rlPath = req.path.toLowerCase();
+  if (!rlPath.startsWith("/api/auth/") && rlPath !== "/api/admin/login") return next();
   const ip = req.ip ?? "unknown";
   const now = Date.now();
   const arr = authHits.get(ip) ?? [];

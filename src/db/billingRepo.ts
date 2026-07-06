@@ -17,6 +17,7 @@
  * that do so say it in their name or doc.
  */
 import sql from "mssql";
+import { randomUUID } from "node:crypto";
 import { config } from "../config";
 import { dbReady, getPool } from "./pool";
 
@@ -394,4 +395,261 @@ export async function setUserFlaggedForReview(userId: string, flagged: boolean):
     .input("id", sql.NVarChar(64), userId)
     .input("flag", sql.Bit, flagged)
     .query(`UPDATE dbo.Users SET flaggedForReview = @flag WHERE id = @id;`);
+}
+
+/* ---- admin backoffice (Feature 4) --------------------------------------- */
+/* All PLATFORM-scoped. userId is exposed as-is (an opaque id) - emails/names
+ * deliberately never leave this layer toward the backoffice (GDPR). */
+
+/** Collected fee transactions in [fromMs, toMs), newest first, paged. */
+export async function listCollectedFees(
+  fromMs: number,
+  toMs: number,
+  limit = 50,
+  offset = 0,
+): Promise<{ rows: FeeLedgerRow[]; total: number }> {
+  if (!dbReady()) return { rows: [], total: 0 };
+  const lim = Math.max(1, Math.min(500, limit));
+  const off = Math.max(0, offset);
+  const req = getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("from", sql.DateTime2, new Date(fromMs))
+    .input("to", sql.DateTime2, new Date(toMs))
+    .input("lim", sql.Int, lim)
+    .input("off", sql.Int, off);
+  const res = await req.query<RawFeeRow & { total: number }>(
+    `SELECT ${FEE_COLS}, COUNT(*) OVER () AS total FROM dbo.FeeLedger
+      WHERE network = @net AND status = 'collected'
+        AND collectedAt >= @from AND collectedAt < @to
+      ORDER BY collectedAt DESC
+      OFFSET @off ROWS FETCH NEXT @lim ROWS ONLY;`,
+  );
+  return {
+    rows: res.recordset.map(rowToFee),
+    total: Number(res.recordset[0]?.total ?? 0),
+  };
+}
+
+export interface MonthlyFeeSummary {
+  month: string; // "YYYY-MM"
+  feeXlm: number;
+  feeEur: number; // sum of receipt-time EUR values (rows missing a rate excluded)
+  txCount: number;
+  avgFeeXlm: number;
+  missingRateCount: number;
+}
+
+/** Per-calendar-month sums of COLLECTED fees for a year (UTC months). The EUR
+ *  column sums the receipt-time values stored on each row - never recomputed. */
+export async function monthlyFeeSummary(year: number): Promise<MonthlyFeeSummary[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("y", sql.Int, year)
+    .query<{
+      m: number;
+      feeXlm: number;
+      feeEur: number | null;
+      txCount: number;
+      missingRate: number;
+    }>(
+      `SELECT MONTH(collectedAt) AS m,
+              SUM(feeXlm) AS feeXlm,
+              SUM(feeEur) AS feeEur,
+              COUNT(*) AS txCount,
+              SUM(CASE WHEN xlmEurRate IS NULL THEN 1 ELSE 0 END) AS missingRate
+         FROM dbo.FeeLedger
+        WHERE network = @net AND status = 'collected' AND YEAR(collectedAt) = @y
+        GROUP BY MONTH(collectedAt)
+        ORDER BY m;`,
+    );
+  return res.recordset.map((r) => ({
+    month: `${year}-${String(r.m).padStart(2, "0")}`,
+    feeXlm: Number(r.feeXlm ?? 0),
+    feeEur: Number(r.feeEur ?? 0),
+    txCount: Number(r.txCount ?? 0),
+    avgFeeXlm: r.txCount > 0 ? Number(r.feeXlm ?? 0) / Number(r.txCount) : 0,
+    missingRateCount: Number(r.missingRate ?? 0),
+  }));
+}
+
+/** How many distinct PAYING users per tier in a year (year-end breakdown). */
+export async function feeTierBreakdown(year: number): Promise<Record<string, number>> {
+  if (!dbReady()) return {};
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("y", sql.Int, year)
+    .query<{ tier: string; users: number }>(
+      `SELECT tier, COUNT(DISTINCT userId) AS users FROM dbo.FeeLedger
+        WHERE network = @net AND status = 'collected' AND YEAR(collectedAt) = @y
+        GROUP BY tier;`,
+    );
+  return Object.fromEntries(res.recordset.map((r) => [r.tier, Number(r.users)]));
+}
+
+export interface AdminUserRow {
+  id: string;
+  createdAt: string;
+  lastLoginAt: string | null;
+  volumeTier: string;
+  tierOverride: boolean;
+  isPremium: boolean;
+  subscriptionStatus: string | null;
+  flaggedForReview: boolean;
+  disabledByAdmin: boolean;
+  totalVolumeXlm: number;
+}
+
+/** Every account, anonymized (id only) + lifetime XLM-leg volume traded. */
+export async function listUsersForAdmin(): Promise<AdminUserRow[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .query<{
+      id: string;
+      createdAt: Date | string;
+      lastLoginAt: Date | string | null;
+      volumeTier: string | null;
+      tierOverride: boolean;
+      isPremium: boolean;
+      subscriptionStatus: string | null;
+      flaggedForReview: boolean;
+      disabledByAdmin: boolean;
+      totalVolumeXlm: number | null;
+    }>(
+      `SELECT u.id, u.createdAt, u.lastLoginAt, u.volumeTier, u.tierOverride,
+              u.isPremium, u.subscriptionStatus, u.flaggedForReview, u.disabledByAdmin,
+              v.vol AS totalVolumeXlm
+         FROM dbo.Users u
+         OUTER APPLY (
+           SELECT SUM(CASE WHEN t.baseAsset = 'XLM' THEN t.amount
+                           WHEN t.quoteAsset = 'XLM' THEN t.totalValue
+                           ELSE 0 END) AS vol
+             FROM dbo.TradeLog t
+            WHERE t.userId = u.id AND t.network = @net
+              AND t.status IN ('FILLED', 'PARTIAL')
+         ) v
+        ORDER BY u.createdAt DESC;`,
+    );
+  return res.recordset.map((r) => ({
+    id: r.id,
+    createdAt: toIso(r.createdAt),
+    lastLoginAt: r.lastLoginAt ? toIso(r.lastLoginAt) : null,
+    volumeTier: r.volumeTier || "Bronze",
+    tierOverride: Boolean(r.tierOverride),
+    isPremium: Boolean(r.isPremium),
+    subscriptionStatus: r.subscriptionStatus ?? null,
+    flaggedForReview: Boolean(r.flaggedForReview),
+    disabledByAdmin: Boolean(r.disabledByAdmin),
+    totalVolumeXlm: Number(r.totalVolumeXlm ?? 0),
+  }));
+}
+
+/** Admin tier pin: sets the tier AND the override flag (the daily job skips
+ *  overridden users). Clearing restores automatic daily recalculation. */
+export async function setUserTierOverride(userId: string, tier: string | null): Promise<void> {
+  if (!dbReady()) return;
+  if (tier == null) {
+    await getPool()
+      .request()
+      .input("id", sql.NVarChar(64), userId)
+      .query(`UPDATE dbo.Users SET tierOverride = 0 WHERE id = @id;`);
+    return;
+  }
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("tier", sql.NVarChar(12), tier)
+    .query(`UPDATE dbo.Users SET volumeTier = @tier, tierOverride = 1 WHERE id = @id;`);
+}
+
+export async function setUserDisabledByAdmin(userId: string, disabled: boolean): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("d", sql.Bit, disabled)
+    .query(`UPDATE dbo.Users SET disabledByAdmin = @d WHERE id = @id;`);
+}
+
+/** Subscription overview numbers (active premium, new/cancelled this month). */
+export async function subscriptionStats(monthStartMs: number): Promise<{
+  activePremium: number;
+  newThisMonth: number;
+  cancelledThisMonth: number;
+}> {
+  if (!dbReady()) return { activePremium: 0, newThisMonth: 0, cancelledThisMonth: 0 };
+  const res = await getPool()
+    .request()
+    .input("monthStart", sql.DateTime2, new Date(monthStartMs))
+    .query<{ activePremium: number; newThisMonth: number; cancelledThisMonth: number }>(
+      `SELECT
+         SUM(CASE WHEN isPremium = 1 THEN 1 ELSE 0 END) AS activePremium,
+         SUM(CASE WHEN isPremium = 1 AND subscriptionStart >= @monthStart THEN 1 ELSE 0 END) AS newThisMonth,
+         SUM(CASE WHEN subscriptionStatus = 'canceled' AND subscriptionEnd >= @monthStart THEN 1 ELSE 0 END) AS cancelledThisMonth
+       FROM dbo.Users;`,
+    );
+  const r = res.recordset[0];
+  return {
+    activePremium: Number(r?.activePremium ?? 0),
+    newThisMonth: Number(r?.newThisMonth ?? 0),
+    cancelledThisMonth: Number(r?.cancelledThisMonth ?? 0),
+  };
+}
+
+/* ---- AdminAudit (append-only) -------------------------------------------- */
+
+export interface AdminAuditEntry {
+  id: string;
+  ts: string;
+  admin: string;
+  action: string;
+  target: string | null;
+  detail: string | null;
+}
+
+export async function insertAdminAudit(
+  admin: string,
+  action: string,
+  target?: string | null,
+  detail?: string | null,
+): Promise<void> {
+  if (!dbReady()) return;
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), randomUUID())
+    .input("ts", sql.DateTime2, new Date())
+    .input("net", sql.NVarChar(16), config.network)
+    .input("admin", sql.NVarChar(256), admin)
+    .input("action", sql.NVarChar(48), action)
+    .input("target", sql.NVarChar(128), target ?? null)
+    .input("detail", sql.NVarChar(sql.MAX), detail ?? null)
+    .query(
+      `INSERT INTO dbo.AdminAudit (id, ts, network, admin, action, target, detail)
+       VALUES (@id, @ts, @net, @admin, @action, @target, @detail);`,
+    );
+}
+
+export async function listAdminAudit(limit = 100): Promise<AdminAuditEntry[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("lim", sql.Int, Math.max(1, Math.min(500, limit)))
+    .query<{ id: string; ts: Date | string; admin: string; action: string; target: string | null; detail: string | null }>(
+      `SELECT TOP (@lim) id, ts, admin, action, target, detail
+         FROM dbo.AdminAudit WHERE network = @net ORDER BY ts DESC;`,
+    );
+  return res.recordset.map((r) => ({
+    id: r.id,
+    ts: toIso(r.ts),
+    admin: r.admin,
+    action: r.action,
+    target: r.target ?? null,
+    detail: r.detail ?? null,
+  }));
 }

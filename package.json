@@ -15,7 +15,10 @@
     "build": "npm --prefix web install && npm --prefix web run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "admin:totp-setup": "tsx scripts/admin-setup.ts totp",
+    "admin:hash-password": "tsx scripts/admin-setup.ts hash",
+    "build:admin": "npm --prefix admin-web run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
