@@ -20,6 +20,7 @@
  */
 import { config } from "../config";
 import { store } from "../trading/store";
+import * as repo from "../db/repo";
 import { hashPassword, verifyPassword } from "../users/password";
 import { signJwt, verifyJwt } from "./jwt";
 import { validatePasswordOrError } from "./passwordPolicy";
@@ -34,6 +35,9 @@ import { buildLink, sendMail, smtpConfigured } from "./mailer";
 import * as authStore from "./store";
 import type { User } from "../users/types";
 import { verifyTotp, generateTotpSecret, otpauthUri } from "../admin/totp";
+import { coerceRiskProfile } from "../types";
+import { getUserAiKeyMeta } from "../ai/userKeys";
+import { cancelSubscription } from "../billing/stripeClient";
 
 /** The neutral message the spec mandates for every login failure. */
 const GENERIC_LOGIN_ERROR = "Invalid email or password";
@@ -504,4 +508,147 @@ export async function getAccount(userId: string): Promise<User | null> {
 
 export async function setOnboardingCompleted(userId: string, completed: boolean): Promise<void> {
   await authStore.setOnboardingCompleted(userId, completed);
+}
+
+// --- GDPR data export --------------------------------------------------------
+// Runs INSIDE the authenticated request (requireAuth already scoped
+// currentUserId() via runWithUserId), so every repo call below reads exactly
+// this user's rows without any extra userId plumbing. Large append-only
+// streams (trades, trade log, AI log) are capped to a recent window rather
+// than dumped in full - the caps are documented on the payload itself so the
+// user knows the export is a recent-history snapshot, not a full archive.
+// Portfolio snapshots are bucketed to daily points for the same reason (the
+// raw table can be tens of thousands of rows for an old account).
+const EXPORT_RECENT_LIMIT = 500;
+const EXPORT_TRUSTLINE_SCAN_DATES = 12; // ~12 weeks, matching the Suggestions UI window
+
+export async function exportUserData(userId: string): Promise<Record<string, unknown> | null> {
+  const user = await authStore.findUserById(userId);
+  if (!user) return null;
+
+  const [
+    wallet,
+    settings,
+    trades,
+    tradeLog,
+    aiLog,
+    priceAlerts,
+    stopLosses,
+    portfolioSnapshots,
+    aiKey,
+  ] = await Promise.all([
+    repo.getActiveWallet(),
+    repo.getSettings(["riskProfile", "aiEnabled", "tradingMode", "killSwitch"]),
+    repo.listTrades({ limit: EXPORT_RECENT_LIMIT, offset: 0 }),
+    repo.listTradeLog({ limit: EXPORT_RECENT_LIMIT, offset: 0 }),
+    repo.listAiLog({ limit: EXPORT_RECENT_LIMIT, offset: 0 }),
+    repo.listActivePriceAlerts(),
+    repo.listActiveStopLosses(),
+    // Daily buckets, full history: a coarse but complete value-over-time series
+    // rather than the raw ~5-minute-cadence table.
+    repo.getPortfolioSnapshots(null, 24 * 60),
+    getUserAiKeyMeta(userId).catch(() => null),
+  ]);
+
+  const trustlineScanDates = await repo.distinctTrustlineScanDates(EXPORT_TRUSTLINE_SCAN_DATES);
+  const trustlineScans = (
+    await Promise.all(trustlineScanDates.map((d) => repo.listTrustlineScansForDate(d)))
+  ).flat();
+
+  const riskProfileRaw = settings.get("riskProfile");
+
+  return {
+    exportedAt: new Date().toISOString(),
+    notes: {
+      caps: `Trades, trade log, and AI log are capped to the most recent ${EXPORT_RECENT_LIMIT} entries each. ` +
+        `Price alerts and stop-losses include only currently ACTIVE entries. ` +
+        `Trustline scans cover the most recent ${EXPORT_TRUSTLINE_SCAN_DATES} scan dates. ` +
+        `Portfolio value history is bucketed to one point per day.`,
+    },
+    profile: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName ?? null,
+      createdAt: user.createdAt,
+      onboardingCompleted: user.onboardingCompleted,
+      isPremium: user.isPremium,
+      subscriptionStatus: user.subscriptionStatus,
+    },
+    settings: {
+      riskProfile: riskProfileRaw ? coerceRiskProfile(JSON.parse(riskProfileRaw)) : null,
+      aiEnabled: settings.get("aiEnabled") ?? null,
+      tradingMode: settings.get("tradingMode") ?? null,
+      killSwitch: settings.get("killSwitch") ?? null,
+    },
+    wallet: wallet
+      ? {
+          publicKey: wallet.publicKey,
+          status: wallet.status,
+          network: config.network,
+          createdAt: wallet.createdAt,
+        }
+      : null,
+    aiKey: aiKey ? { provider: aiKey.provider, keyLast4: aiKey.keyLast4, updatedAt: aiKey.updatedAt } : null,
+    trades,
+    tradeLog,
+    aiLog,
+    priceAlerts,
+    stopLosses,
+    trustlineScans,
+    portfolioSnapshots,
+  };
+}
+
+// --- GDPR account deletion (anonymize) ---------------------------------------
+// The schema FK-references dbo.Users(id) from every per-user table INCLUDING
+// the retained tax/legal ledgers (dbo.FeeLedger, dbo.AdminAudit references it
+// only as an opaque string, not an FK - see below), so a hard DELETE of the
+// Users row would either violate those FKs or require cascading deletes across
+// a dozen tables. Anonymizing the Users row instead (tombstone email, blank
+// credential, wipe 2FA) satisfies GDPR ("this identity is no longer linkable
+// to the person") while keeping every FK intact and leaving the retained
+// financial/audit trail (FeeLedger, Proposals, TradeLog, AiLog, AdminAudit)
+// keyed by an now-orphaned, non-PII userId - exactly the "opaque userId, no
+// PII" shape the admin router already relies on.
+//
+// Auth-owned secret material (sessions, link tokens, login-attempt rows tied
+// to this user, the BYO AI key, and the wallet's encrypted signing key) IS
+// hard-deleted: none of it is needed for tax/legal retention, and the wallet's
+// encrypted secret in particular must not survive account deletion.
+const GENERIC_DELETE_PW_ERROR = "Current password is incorrect.";
+
+export type DeleteAccountResult = { ok: true } | { ok: false; status: number; error: string };
+
+export async function deleteAccount(input: {
+  userId: string;
+  password: unknown;
+}): Promise<DeleteAccountResult> {
+  const password = String(input.password ?? "");
+  const account = await authStore.findUserById(input.userId);
+  const cred = account ? await authStore.findCredentialByEmail(account.email) : null;
+  if (!cred || !(await verifyPassword(password, cred.passwordHash))) {
+    return { ok: false, status: 400, error: GENERIC_DELETE_PW_ERROR };
+  }
+
+  // Best-effort Stripe cleanup: never let a Stripe hiccup block the user's
+  // deletion right.
+  const { stripeSubscriptionId } = await authStore.getStripeIds(input.userId);
+  if (stripeSubscriptionId) {
+    try {
+      await cancelSubscription(stripeSubscriptionId);
+    } catch (err) {
+      store.log("warn", "Failed to cancel Stripe subscription during account deletion (continuing)", {
+        userId: input.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Revoke every session BEFORE anonymizing, so a concurrent request racing
+  // this one still resolves against the (about-to-be-gone) real credential
+  // rather than a half-anonymized row.
+  await authStore.revokeAllSessionsForUser(input.userId);
+  await authStore.deleteUserAndData(input.userId);
+  store.log("info", "Account deleted (anonymized) by the user", { userId: input.userId });
+  return { ok: true };
 }

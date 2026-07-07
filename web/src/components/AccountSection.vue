@@ -126,6 +126,58 @@ async function submit(): Promise<void> {
     submitting.value = false;
   }
 }
+
+// --- GDPR: data export ---
+const exporting = ref(false);
+const exportError = ref("");
+async function downloadMyData(): Promise<void> {
+  exportError.value = "";
+  exporting.value = true;
+  try {
+    await authApi.exportData();
+  } catch {
+    exportError.value = t("account.gdpr.exportError");
+  } finally {
+    exporting.value = false;
+  }
+}
+
+// --- GDPR: account deletion ---
+// Gated behind BOTH a typed confirmation phrase (DELETE) AND the current
+// password - mirrors the change-password/2FA-disable convention of never
+// trusting a single factor for an irreversible action. The wallet warning is
+// deliberately shown unconditionally (a wallet may hold funds even if the UI
+// doesn't currently know its balance), matching the server-side comment in
+// src/auth/store.ts deleteUserAndData.
+const deleteConfirmText = ref("");
+const deletePassword = ref("");
+const deleting = ref(false);
+const deleteError = ref("");
+const CONFIRM_PHRASE = "DELETE";
+const canDelete = computed(
+  () => deleteConfirmText.value.trim() === CONFIRM_PHRASE && deletePassword.value.length > 0 && !deleting.value,
+);
+
+async function deleteAccount(): Promise<void> {
+  deleteError.value = "";
+  if (!canDelete.value) return;
+  deleting.value = true;
+  try {
+    const r = await authApi.deleteAccount(deletePassword.value);
+    if (!r.ok) {
+      deleteError.value = r.data?.error || r.data?.message || t("account.gdpr.deleteGenericError");
+      deleting.value = false;
+      return;
+    }
+    // The server already cleared the session cookies. Hard-reload to /login so
+    // every in-memory store/SSE/poll timer resets cleanly (same pattern as the
+    // Sidebar logout action), rather than trying to unwind app state in place.
+    window.location.href = "/login";
+  } catch {
+    deleteError.value = t("account.gdpr.deleteGenericError");
+    deleting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -221,6 +273,38 @@ async function submit(): Promise<void> {
         {{ submitting ? t("account.submitting") : t("account.submit") }}
       </button>
     </form>
+
+    <!-- GDPR: data export + account deletion. -->
+    <h3 class="acct-sub">{{ t("account.gdpr.title") }}</h3>
+
+    <p class="acct-hint">{{ t("account.gdpr.exportHint") }}</p>
+    <p v-if="exportError" class="violations" role="alert">{{ exportError }}</p>
+    <button class="btn acct-restart" type="button" :disabled="exporting" @click="downloadMyData">
+      {{ exporting ? t("account.gdpr.exporting") : t("account.gdpr.exportButton") }}
+    </button>
+
+    <div class="acct-danger">
+      <h4 class="acct-danger-title">{{ t("account.gdpr.deleteTitle") }}</h4>
+      <p class="acct-hint">{{ t("account.gdpr.deleteHint") }}</p>
+      <p class="violations acct-wallet-warning" role="alert">{{ t("account.gdpr.walletWarning") }}</p>
+
+      <form class="acct-form" @submit.prevent="deleteAccount">
+        <label class="acct-field">
+          <span>{{ t("account.gdpr.confirmPhraseLabel", { phrase: CONFIRM_PHRASE }) }}</span>
+          <input v-model="deleteConfirmText" type="text" class="acct-input" autocomplete="off" />
+        </label>
+        <label class="acct-field">
+          <span>{{ t("account.gdpr.confirmPasswordLabel") }}</span>
+          <input v-model="deletePassword" type="password" class="acct-input" autocomplete="current-password" />
+        </label>
+
+        <p v-if="deleteError" class="violations" role="alert">{{ deleteError }}</p>
+
+        <button class="btn danger acct-submit" type="submit" :disabled="!canDelete">
+          {{ deleting ? t("account.gdpr.deleting") : t("account.gdpr.deleteButton") }}
+        </button>
+      </form>
+    </div>
   </section>
 </template>
 
@@ -304,5 +388,20 @@ async function submit(): Promise<void> {
 .acct-restart {
   min-height: 44px;
   margin-bottom: 18px;
+}
+.acct-danger {
+  margin-top: 20px;
+  padding: 14px 16px;
+  border: 1px solid #5e1f28;
+  border-radius: 10px;
+  background: #1a0e11;
+}
+.acct-danger-title {
+  margin: 0 0 6px;
+  color: var(--neg);
+  font-size: 14px;
+}
+.acct-wallet-warning {
+  font-weight: 600;
 }
 </style>

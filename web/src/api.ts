@@ -217,6 +217,13 @@ export const authApi = {
   enable2fa: (code: string) => authRequest<{}>("/api/auth/2fa/enable", { code }),
   // Turn 2FA off - requires BOTH the current password and a valid code.
   disable2fa: (password: string, code: string) => authRequest<{}>("/api/auth/2fa/disable", { password, code }),
+  // --- GDPR (data export / account deletion) ---
+  // Downloads the export as an attachment via the session cookie + blob (same
+  // pattern as the Logs CSV export) - nothing is buffered into a JS variable.
+  exportData: () => downloadFile("/api/auth/export", `atrium-data-export-${Date.now()}.json`),
+  // Account deletion (anonymize server-side). Requires the current password;
+  // on success the server has already cleared the session cookies.
+  deleteAccount: (password: string) => authRequest<{}>("/api/auth/delete-account", { password }),
 };
 
 // --- AI API key (Feature 3) ---------------------------------------------------

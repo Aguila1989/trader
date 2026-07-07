@@ -244,6 +244,31 @@ works in production:
    (instructions are in the comments at the top of each file) and fill in the
    contact/notification placeholders at the top of the runbook.
 
+## A2. Also implemented (second pass)
+
+Verified with `tsc` + `vue-tsc` + `vitest` (411) + admin-web build.
+
+8. **404 / not-found page (no setup).** Unknown URLs now render a real
+   `NotFound.vue` with re-orientation links instead of silently redirecting to
+   the dashboard.
+9. **GDPR data export + account deletion (no setup).** Account → "Your data
+   (GDPR)": "Download my data" (`GET /api/auth/export`, bounded/bucketed) and
+   "Delete account" (`POST /api/auth/delete-account`, password + typed `DELETE`).
+   Deletion **anonymizes** the user (keeps the FK-linked, opaque, tax-retained
+   fee ledger + audit) and **destroys the wallet's encrypted key** — the UI
+   warns the user to move funds out first.
+10. **Platform-wide emergency stop (rebuild admin-web).** An admin toggle
+    (backoffice → Overview) that freezes AI trading, new subscription checkouts,
+    and fee collection for ALL users at once — the in-app global halt the
+    incident runbook referenced. Per-user kill switches and manual trading are
+    unaffected.
+11. **Real health check.** `/api/health` now probes DB + Horizon and returns
+    **503 when the DB is down**. **Operator:** point an external uptime monitor
+    at `GET /api/health` and alert on non-200.
+12. **CI.** `.github/workflows/ci.yml` runs backend tsc + tests, web `vue-tsc`,
+    and the admin-web build on every push/PR. **Operator:** it runs automatically
+    once pushed to GitHub.
+
 ## B. Still blocking launch — 🔴 must fix (not yet implemented)
 
 Legal is the dominant blocker; see report Section 6.
@@ -263,18 +288,16 @@ Legal is the dominant blocker; see report Section 6.
 - **Database backups.** The DB holds encrypted wallet secrets + the tax-critical
   fee ledger + loss-halt counters; there is no backup/restore today. Add
   scheduled `BACKUP DATABASE` + offsite copy + a tested restore.
-- **404 / not-found page** (unknown URLs silently redirect to the dashboard) and
-  **GDPR data export + account deletion** (Art. 17/20).
 
 ## C. Fix soon after launch — 🟡 important (not yet implemented)
 
-- **Error monitoring (Sentry)** on backend + frontend, and **uptime monitoring**
-  with a real health check (`/api/health` is a 200 stub even when the DB is down).
+- **Error monitoring (Sentry)** on backend + frontend, and register an
+  **external uptime monitor** against the new `/api/health` (the endpoint itself
+  now reports DB/Horizon health — see A2 #11).
 - **Blanket API rate limiting** across money-moving / state-changing routes
   (only auth + LLM endpoints are throttled today).
-- **Platform-wide admin emergency stop** (only per-user kill switches exist).
-- **CI/CD** running `tsc` + `vue-tsc` + `vitest` on every PR (deploys are manual;
-  the 369 tests never run pre-deploy) and a documented **rollback procedure**.
+- **Documented rollback procedure** (CI now runs tsc + vue-tsc + vitest on every
+  push/PR — see A2 #12 — but there is no documented rollback/redeploy playbook).
 - **2FA backup/recovery codes** (prerequisite to hard-requiring 2FA for funded
   accounts), and **wallet-setup "I saved my secret" acknowledgement**.
 - **UX polish:** first-screen value proposition; trading-access mode badge on the

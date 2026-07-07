@@ -28,6 +28,7 @@ import { formatAmount } from "../stellar/amounts";
 import * as authStore from "../auth/store";
 import { currentUserId, runWithUserId } from "../users/context";
 import * as billing from "../db/billingRepo";
+import { isPlatformHalted } from "../db/billingRepo";
 import { dbReady } from "../db/pool";
 import { computeFeeXlm, feeRateFor, type FeeTradeType, type VolumeTier } from "./engine";
 import { currentXlmEurRate, historicalXlmEurRate } from "./priceFeed";
@@ -139,6 +140,11 @@ export async function accrueFillFee(fill: FillFee): Promise<void> {
     if (fill.paper || fill.tradeTxHash === "paper") return;
     if (!dbReady()) return;
     if ((await feeWalletAddress()) == null) return;
+    if (await isPlatformHalted()) {
+      const { store } = await import("../trading/store");
+      store.log("info", `Platform halted by admin — skipping fee accrual for fill ${fill.idKey}.`);
+      return;
+    }
     const userId = currentUserId();
     const volumeXlm = await xlmEquivalentOfFill(
       fill.baseAsset,
@@ -198,6 +204,11 @@ export interface SwapFeePlan {
  */
 export async function planSwapFee(volumeXlm: number, tradeType: FeeTradeType): Promise<SwapFeePlan | null> {
   if (!dbReady() || !(volumeXlm > 0)) return null;
+  if (await isPlatformHalted()) {
+    const { store } = await import("../trading/store");
+    store.log("info", "Platform halted by admin — skipping platform fee collection for this swap.");
+    return null;
+  }
   const feeWallet = await feeWalletAddress();
   if (!feeWallet) return null;
   const userId = currentUserId();
@@ -247,7 +258,8 @@ let collecting = false;
 /**
  * Submit the XLM fee Payment for pending ledger rows, each signed with the fee
  * payer's own stored wallet (runWithUserId -> keyProvider). Skips entirely
- * while the kill switch is on - the rows simply stay pending. Never throws.
+ * while the kill switch is on, or while the platform is admin-halted - the
+ * rows simply stay pending. Never throws.
  */
 export async function collectPendingFees(): Promise<void> {
   if (collecting) return;
@@ -258,6 +270,10 @@ export async function collectPendingFees(): Promise<void> {
     if (!feeWallet) return;
     const { store } = await import("../trading/store");
     if (store.killSwitch) return;
+    if (await isPlatformHalted()) {
+      store.log("info", "Platform halted by admin — skipping platform fee collection this tick.");
+      return;
+    }
     const pending = await billing.listPendingFees(25);
     if (pending.length === 0) return;
     // Lazy import to keep module init cycle-free (transfers -> collector).

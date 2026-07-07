@@ -33,6 +33,7 @@ export const PLATFORM_KEYS = {
   premiumPriceAnnualEur: "premiumPriceAnnualEur",
   stripePriceIdMonthly: "stripePriceIdMonthly",
   stripePriceIdAnnual: "stripePriceIdAnnual",
+  platformHalted: "platformHalted",
 } as const;
 
 export async function getPlatformSetting(key: string): Promise<string | null> {
@@ -63,6 +64,39 @@ export async function upsertPlatformSetting(key: string, value: string): Promise
        WHEN NOT MATCHED THEN INSERT (network, keyName, value, updatedAt)
          VALUES (@net, @k, @v, @ts);`,
     );
+}
+
+/* ---- platform-wide emergency stop --------------------------------------- */
+/* A single admin-controlled flag that freezes AI trading, new subscription
+ * checkouts and fee collection across ALL users - the platform-wide stop the
+ * incident runbook references (previously the only option was killing the OS
+ * process). Cached in-module (mirrors fees/collector.ts's feeWalletCache) so
+ * the hot paths (every scan/propose/execute/fee tick) don't hit the DB each
+ * time; setPlatformHalted() invalidates the cache immediately so the change
+ * takes effect on the very next check. Defaults false, and - like the rest of
+ * this file's DB-only tables - degrades to "not halted" with no database
+ * (there's nothing to persist, but the platform must not fail-open into a
+ * state an admin can't see or clear, so we default to running rather than
+ * silently pretending to be halted). */
+
+let platformHaltedCache: boolean | null = null;
+
+export async function isPlatformHalted(): Promise<boolean> {
+  if (platformHaltedCache != null) return platformHaltedCache;
+  if (!dbReady()) {
+    platformHaltedCache = false;
+    return false;
+  }
+  const raw = await getPlatformSetting(PLATFORM_KEYS.platformHalted);
+  const halted = raw === "true";
+  platformHaltedCache = halted;
+  return halted;
+}
+
+export async function setPlatformHalted(halted: boolean): Promise<void> {
+  platformHaltedCache = halted;
+  if (!dbReady()) return;
+  await upsertPlatformSetting(PLATFORM_KEYS.platformHalted, String(halted));
 }
 
 /* ---- FeeLedger --------------------------------------------------------- */

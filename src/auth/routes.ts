@@ -273,5 +273,37 @@ export function createAuthRouter(): Router {
     res.json({ ok: true, onboardingCompleted: completed });
   });
 
+  // GET /api/auth/export - GDPR data export. Assembles everything the app
+  // stores for the signed-in user into one JSON object and returns it as a
+  // downloadable attachment (never inline - the browser always saves it).
+  router.get("/export", async (_req: Request, res: Response) => {
+    const data = await auth.exportUserData(currentUserId());
+    if (!data) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="atrium-data-export-${Date.now()}.json"`);
+    res.send(JSON.stringify(data, null, 2));
+  });
+
+  // POST /api/auth/delete-account {password} - GDPR account deletion
+  // (anonymize; see auth/store.ts deleteUserAndData for why). Requires the
+  // current password (generic error on mismatch, mirroring /change-password).
+  // On success every cookie is cleared so the client is logged out immediately
+  // - there is no account left to hold a session for.
+  router.post("/delete-account", async (req: Request, res: Response) => {
+    const r = await auth.deleteAccount({
+      userId: currentUserId(),
+      password: req.body?.password,
+    });
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    clearSessionCookies(res);
+    res.json({ ok: true });
+  });
+
   return router;
 }

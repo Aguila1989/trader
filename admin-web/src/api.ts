@@ -55,6 +55,7 @@ export interface Overview {
   dbReady: boolean;
   feeWallet: string | null;
   feeWalletBalanceXlm: string | null;
+  platformHalted: boolean;
   subscriptions: {
     activePremium: number;
     newThisMonth: number;
@@ -136,6 +137,8 @@ export const api = {
   logout: () => post<{ ok: true }>("/logout"),
 
   overview: () => get<Overview>("/overview"),
+  setPlatformHalted: (halted: boolean) =>
+    post<{ ok: true; platformHalted: boolean }>("/platform-halt", { halted }),
 
   fees: (params: { from: string; to: string; limit: number; offset: number }) =>
     get<FeesPage>(

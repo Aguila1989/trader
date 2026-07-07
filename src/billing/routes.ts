@@ -84,6 +84,10 @@ export function createBillingRouter(): Router {
       res.status(503).json({ error: "Billing is not configured on this server." });
       return;
     }
+    if (await billing.isPlatformHalted()) {
+      res.status(503).json({ error: "The platform is temporarily halted. Please try again later." });
+      return;
+    }
     try {
       const userId = currentUserId();
       const user = await auth.getAccount(userId);

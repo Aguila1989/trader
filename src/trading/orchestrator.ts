@@ -30,6 +30,7 @@ import {
 } from "../stellar/signer";
 import { resolveTradingAccountOrNull } from "../stellar/keyProvider";
 import { accrueFillFee } from "../fees/collector";
+import { isPlatformHalted } from "../db/billingRepo";
 import { setXlmRate } from "./positions";
 import {
   explainNoEntry,
@@ -163,6 +164,10 @@ export async function runAnalysis(
   baseAsset: string,
   quoteAsset: string,
 ): Promise<AnalysisOutcome> {
+  if (await isPlatformHalted()) {
+    store.log("warn", "Platform halted by admin — skipping AI analysis.");
+    return { reasoning: "Platform is halted by admin.", proposals: [] };
+  }
   store.log("ai", `Analyzing ${baseAsset}/${quoteAsset}...`);
   const held = await walletHeld();
   if (held) logWalletFit(baseAsset, quoteAsset, held);
@@ -308,6 +313,10 @@ export async function runChainScan(): Promise<ScanOutcome> {
 }
 
 async function runChainScanInner(): Promise<ScanOutcome> {
+  if (await isPlatformHalted()) {
+    store.log("warn", "Platform halted by admin — skipping chain scan.");
+    return { reasoning: "Platform is halted by admin.", proposals: [], scanned: 0 };
+  }
   const assets = config.scanAssets;
   const crossPairs = config.scanPairs;
   store.log(
@@ -1064,6 +1073,19 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
       "warn",
       `Skipping ${shortId(id)}: already ${p.status} (duplicate execute ignored).`,
     );
+    return;
+  }
+
+  // Platform-wide emergency stop (admin-controlled): freezes AI/system trade
+  // execution for every user. Manual orders (initiator "manual") and the kill
+  // switch's own handling are deliberately untouched - this is an AI-trading
+  // freeze, not a full halt of the user's own wallet actions.
+  if (p.initiator !== "manual" && (await isPlatformHalted())) {
+    store.updateProposal(id, {
+      status: "blocked",
+      policyViolations: ["Platform halted by admin - AI trading is temporarily suspended."],
+    });
+    store.log("warn", `Platform halted by admin — skipping AI execute for ${shortId(id)}.`);
     return;
   }
 

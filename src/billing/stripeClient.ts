@@ -48,7 +48,7 @@ function encodeForm(params: Record<string, unknown>, prefix = ""): string[] {
 }
 
 async function stripeRequest<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   params?: Record<string, unknown>,
 ): Promise<T> {
@@ -161,4 +161,13 @@ export async function createBillingPortalSession(input: {
     customer: input.customerId,
     return_url: input.returnUrl,
   });
+}
+
+/**
+ * Cancel a subscription immediately (GDPR account deletion). Best-effort by
+ * design: the caller (src/auth/service.ts deleteAccount) catches and logs any
+ * failure rather than blocking the user's deletion right on a Stripe hiccup.
+ */
+export async function cancelSubscription(id: string): Promise<void> {
+  await stripeRequest<unknown>("DELETE", `/subscriptions/${encodeURIComponent(id)}`);
 }

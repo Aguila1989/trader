@@ -100,6 +100,7 @@ export function createAdminRouter(): Router {
       dbReady: dbReady(),
       feeWallet: wallet,
       feeWalletBalanceXlm: xlmBalance,
+      platformHalted: await billing.isPlatformHalted(),
       subscriptions: {
         ...subs,
         // Monthly-equivalent approximation: plan intervals aren't stored
@@ -108,6 +109,22 @@ export function createAdminRouter(): Router {
         mrrEurApprox: Math.round(subs.activePremium * monthlyEur * 100) / 100,
       },
     });
+  });
+
+  // Platform-wide emergency stop: freezes AI trading, new subscription
+  // checkouts and fee collection for EVERY user (src/trading/orchestrator.ts,
+  // src/billing/routes.ts, src/fees/collector.ts). Distinct from the per-user
+  // kill switch - this is the admin-controlled incident-runbook lever that
+  // previously required killing the OS process.
+  router.post("/platform-halt", async (req: Request, res: Response) => {
+    if (typeof req.body?.halted !== "boolean") {
+      res.status(400).json({ error: "halted (boolean) is required" });
+      return;
+    }
+    const halted = req.body.halted as boolean;
+    await billing.setPlatformHalted(halted);
+    await billing.insertAdminAudit(adminOf(req), "platform-halt", undefined, String(halted));
+    res.json({ ok: true, platformHalted: halted });
   });
 
   // ---- fee ledger + tax reporting ---------------------------------------

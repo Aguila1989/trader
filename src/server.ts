@@ -89,6 +89,7 @@ import {
 } from "./stellar/keyProvider";
 import type { TradeProposal } from "./types";
 import { initDb, closeDb, dbReady } from "./db/pool";
+import { pingHorizon } from "./stellar/client";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Production serves the built Vue SPA from web/dist. In development you run the
@@ -266,8 +267,32 @@ app.post("/api/billing/webhook", async (req, res) => {
   }
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, network: config.network });
+app.get("/api/health", async (_req, res) => {
+  // Real liveness/readiness check for uptime monitors: DB down => 503 so a
+  // monitor actually pages someone, instead of the old unconditional 200.
+  // Horizon reachability is best-effort/non-fatal (the app can still serve
+  // reads/UI without it) so it only downgrades status, never the HTTP code.
+  let dbUp = false;
+  try {
+    dbUp = dbReady();
+  } catch {
+    dbUp = false;
+  }
+
+  let horizonUp = false;
+  try {
+    horizonUp = await pingHorizon();
+  } catch {
+    horizonUp = false;
+  }
+
+  const status = !dbUp ? "error" : !horizonUp ? "degraded" : "ok";
+  res.status(dbUp ? 200 : 503).json({
+    status,
+    db: dbUp,
+    horizon: horizonUp,
+    uptimeSec: Math.floor(process.uptime()),
+  });
 });
 
 app.get("/api/state", (_req, res) => {

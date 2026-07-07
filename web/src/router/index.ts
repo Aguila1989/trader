@@ -92,10 +92,18 @@ const router = createRouter({
           component: () => import("../academy/components/AcademyPage.vue"),
           meta: { public: true, standalone: true },
         },
+        {
+          // Any unmatched URL (broken/shared link, typo) shows a real 404 instead
+          // of silently bouncing to the dashboard. public+standalone like the
+          // Academy: reachable with no session, sidebar shown but no trading
+          // header. Nested here (not top-level) so it renders inside AppLayout.
+          path: "/:pathMatch(.*)*",
+          name: "not-found",
+          component: () => import("../components/NotFound.vue"),
+          meta: { public: true, standalone: true },
+        },
       ],
     },
-
-    { path: "/:pathMatch(.*)*", redirect: "/" },
   ],
   scrollBehavior() {
     return { top: 0 };

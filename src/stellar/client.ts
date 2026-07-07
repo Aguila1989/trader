@@ -29,3 +29,22 @@ export async function withHorizonRetry<T>(
     }
   }
 }
+
+/**
+ * Fast, best-effort reachability check for the Horizon server backing this
+ * app. Used by /api/health — intentionally a raw timed fetch (not the SDK
+ * client) so a slow/unreachable Horizon can never hang the health endpoint.
+ * Never throws: any error or timeout resolves to false.
+ */
+export async function pingHorizon(timeoutMs = 2500): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(config.horizonUrl, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}

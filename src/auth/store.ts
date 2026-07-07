@@ -693,6 +693,78 @@ export async function revokeAllSessionsForUser(userId: string, keepJti?: string)
   await req.query(`UPDATE dbo.AuthSessions SET revokedAt = @now WHERE ${where};`);
 }
 
+/**
+ * GDPR account deletion: ANONYMIZE the Users row (every per-user table,
+ * including the retained tax/legal ledgers, FK-references dbo.Users(id) - see
+ * ensureUserScoping in src/db/pool.ts - so a hard DELETE would either violate
+ * those FKs or require cascading deletes across a dozen tables). The email is
+ * replaced with a tombstone so the UNIQUE index never blocks a future
+ * registration by the real address, displayName/passwordHash/2FA are wiped,
+ * and isActive is cleared so the row can never log in again.
+ *
+ * Secret material tied to this user is HARD-DELETED / destroyed here:
+ *  - dbo.AuthSessions, dbo.AuthTokens, dbo.LoginAttempts (auth bookkeeping -
+ *    nothing here is needed for tax/legal retention once the account is gone);
+ *  - dbo.UserAiKeys (the user's BYO AI provider key);
+ *  - dbo.Wallets.encryptedSecret is NULLed (NOT the row itself - the row stays
+ *    for FK integrity with anything that references the wallet id, but the
+ *    AES-256-GCM ciphertext is destroyed so the signing key can never be
+ *    recovered again by anyone, including the operator). THIS IS IRREVERSIBLE:
+ *    any funds still held by that wallet become permanently inaccessible - the
+ *    caller (src/auth/service.ts deleteAccount) surfaces that warning to the
+ *    user BEFORE this runs.
+ *
+ * Callers are expected to have already revoked sessions and cancelled any
+ * Stripe subscription. Retained ledgers (dbo.Proposals, dbo.TradeLog,
+ * dbo.AiLog, dbo.FeeLedger, dbo.AdminAudit, dbo.StopLossAudit, ...) are left
+ * untouched, keyed by the now-orphaned, non-PII userId - the same "opaque
+ * userId, no PII" shape the admin router already relies on.
+ */
+export async function deleteUserAndData(userId: string): Promise<void> {
+  const tombstoneEmail = `deleted+${userId}@invalid`;
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (u) {
+      u.email = tombstoneEmail;
+      u.displayName = null;
+      u.passwordHash = NO_PASSWORD;
+      u.isActive = false;
+      u.totpSecret = null;
+      u.totpEnabled = false;
+    }
+    for (const s of mem.sessions.values()) if (s.userId === userId) mem.sessions.delete(s.id);
+    for (const t of mem.tokens.values()) if (t.userId === userId) mem.tokens.delete(t.id);
+    mem.attempts = mem.attempts.filter((a) => a.userId !== userId);
+    return;
+  }
+  const pool = getPool();
+  await pool
+    .request()
+    .input("userId", sql.NVarChar(64), userId)
+    .input("email", sql.NVarChar(256), tombstoneEmail)
+    .input("passwordHash", sql.NVarChar(256), NO_PASSWORD)
+    .query(
+      `UPDATE dbo.Users
+          SET email = @email,
+              displayName = NULL,
+              passwordHash = @passwordHash,
+              isActive = 0,
+              totpSecret = NULL,
+              totpEnabled = 0
+        WHERE id = @userId;`,
+    );
+  await pool
+    .request()
+    .input("userId", sql.NVarChar(64), userId)
+    .query(
+      `DELETE FROM dbo.AuthSessions WHERE userId = @userId;
+       DELETE FROM dbo.AuthTokens WHERE userId = @userId;
+       DELETE FROM dbo.LoginAttempts WHERE userId = @userId;
+       DELETE FROM dbo.UserAiKeys WHERE userId = @userId;
+       UPDATE dbo.Wallets SET encryptedSecret = '', updatedAt = SYSUTCDATETIME() WHERE userId = @userId;`,
+    );
+}
+
 // --- single-use link tokens (verify / reset) --------------------------------
 
 export interface NewLinkToken {
