@@ -230,6 +230,20 @@ works in production:
    wired today), and register **Universal Links (iOS) / App Links (Android)** so
    emailed verify/reset `https` links open the app, not the browser.
 
+6. **Immediate session kill on account disable (no setup needed).** Disabling a
+   user in the admin backoffice now revokes ALL of their active sessions on the
+   spot (`requireAuth` re-checks session validity on every request), so a
+   compromised or live session stops immediately instead of continuing to trade
+   until its token expires.
+
+7. **Incident-response runbook + process supervisor / auto-restart.** The bot no
+   longer stays dead after a crash. See [`INCIDENT-RESPONSE.md`](./INCIDENT-RESPONSE.md)
+   for the incident runbook, and `deploy/atrium.service` (systemd) or
+   `deploy/ecosystem.config.cjs` (PM2) for a supervisor that auto-restarts with a
+   crash-loop backstop. **Operator:** install ONE of the two supervisor configs
+   (instructions are in the comments at the top of each file) and fill in the
+   contact/notification placeholders at the top of the runbook.
+
 ## B. Still blocking launch — 🔴 must fix (not yet implemented)
 
 Legal is the dominant blocker; see report Section 6.
@@ -249,12 +263,6 @@ Legal is the dominant blocker; see report Section 6.
 - **Database backups.** The DB holds encrypted wallet secrets + the tax-critical
   fee ledger + loss-halt counters; there is no backup/restore today. Add
   scheduled `BACKUP DATABASE` + offsite copy + a tested restore.
-- **Disable-account must revoke live sessions.** Admin "disable" only blocks the
-  next login; a compromised session keeps trading for its full TTL. Call the
-  existing session-revocation path inside the admin disable action.
-- **Incident-response plan** (GDPR 72h breach notification, key-compromise, mass
-  ATO) and a **process supervisor / auto-restart** (systemd/PM2) — a crash
-  currently leaves the bot dead.
 - **404 / not-found page** (unknown URLs silently redirect to the dashboard) and
   **GDPR data export + account deletion** (Art. 17/20).
 

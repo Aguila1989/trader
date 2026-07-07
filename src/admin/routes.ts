@@ -229,6 +229,12 @@ export function createAdminRouter(): Router {
     }
     const id = String(req.params.id);
     await billing.setUserDisabledByAdmin(id, req.body.disabled);
+    // Disabling must take effect IMMEDIATELY. requireAuth checks isSessionActive
+    // on every request, so revoking all of the user's sessions here forces the
+    // next call from any live/compromised session to 401 - instead of letting it
+    // keep trading until its JWT TTL expires (previously disable only blocked the
+    // NEXT login). Re-enabling touches no sessions (there are none while disabled).
+    if (req.body.disabled) await authStore.revokeAllSessionsForUser(id);
     await billing.insertAdminAudit(adminOf(req), "account-disable", id, String(req.body.disabled));
     res.json({ ok: true });
   });

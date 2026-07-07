@@ -1,0 +1,46 @@
+# systemd unit for Atrium — gives the bot a supervisor with auto-restart so a
+# crash no longer leaves it dead. Install on the server (Linux):
+#
+#   sudo cp deploy/atrium.service /etc/systemd/system/atrium.service
+#   # edit WorkingDirectory / User / ExecStart paths below to match your box
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now atrium        # start now + on every boot
+#   systemctl status atrium                   # verify
+#   journalctl -u atrium -f                   # follow logs
+#
+# After a code deploy: rebuild (npm run build && npm run build:admin), then
+#   sudo systemctl restart atrium
+
+[Unit]
+Description=Atrium Stellar AI trading bot
+After=network-online.target
+Wants=network-online.target
+# Crash-loop backstop: if it dies >5 times in 60s, stop trying and mark failed
+# (so a broken deploy doesn't thrash forever). Clear with: systemctl reset-failed atrium
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# --- adjust these three to your deployment ---
+WorkingDirectory=/opt/atrium
+User=atrium
+Group=atrium
+# The app reads ./ .env itself; EnvironmentFile is optional/redundant but shown
+# for operators who prefer real env vars. Leave commented if you use the .env file.
+# EnvironmentFile=/opt/atrium/.env
+ExecStart=/usr/bin/env npm start
+# Restart on ANY exit (crash, OOM, unhandled rejection that exits the process).
+Restart=always
+RestartSec=5
+# Give a clean shutdown a moment before SIGKILL.
+TimeoutStopSec=20
+
+# --- hardening (safe defaults; loosen only if something legitimately needs it) ---
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
