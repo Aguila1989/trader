@@ -12,6 +12,7 @@ import type { ManualOrderInput, OpenOffer } from "../types";
 import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 import { LESSONS } from "../academy/deeplinks";
+import { billingState } from "../billing/premium";
 
 const store = useTraderStore();
 const { t } = useI18n();
@@ -79,6 +80,40 @@ const youBuyAmount = computed<number | null>(() => {
     ? amountNum.value * px
     : null;
 });
+
+// --- Pre-commit cost/impact summary (fund-safety UX fix) -------------------
+// Mirrors the slippage-bps resolution in placeOrder(): an explicitly typed
+// tolerance wins, otherwise the effective policy default already advertised
+// in the field's placeholder. Every manual order here is side:"sell" (base
+// for quote), so the worst case is always "you receive >= X {buyCode}".
+const effectiveSlippageBps = computed<number>(() => {
+  const typed = Number(slippagePct.value);
+  if (slippagePct.value.trim() && Number.isFinite(typed) && typed > 0) {
+    return Math.round(typed * 100);
+  }
+  return store.limits?.maxSlippageBps ?? 0;
+});
+// Fraction of the order's proceeds the platform takes on manual trades, when
+// billing/fees are actually turned on server-side (billing/premium.ts, same
+// source PricingPage.vue uses). 0 when fees are not configured/enabled.
+const feeFraction = computed(() =>
+  billingState.feesEnabled ? billingState.currentRates.manual : 0,
+);
+const estFeeAmount = computed<number | null>(() => {
+  const gross = youBuyAmount.value;
+  return gross != null && feeFraction.value > 0 ? gross * feeFraction.value : null;
+});
+// Worst-case proceeds: gross amount reduced by the full slippage tolerance,
+// then by the platform fee (if any). This is a client-side, conservative
+// estimate — the network's own base fee (a few stroops) is not itemized here.
+const worstCaseReceive = computed<number | null>(() => {
+  const gross = youBuyAmount.value;
+  if (gross == null) return null;
+  const afterSlippage = gross * (1 - effectiveSlippageBps.value / 10_000);
+  const afterFee = afterSlippage - (estFeeAmount.value ?? 0);
+  return afterFee > 0 ? afterFee : 0;
+});
+const showCommitSummary = computed(() => orderValid.value && worstCaseReceive.value != null);
 
 const pairValid = computed(
   () => !!sellToken.value && !!buyToken.value && sellToken.value !== buyToken.value,
@@ -468,6 +503,36 @@ async function submitModify(): Promise<void> {
           </label>
         </div>
 
+        <!-- Fund-safety UX fix: a concise pre-commit summary showing exactly
+             what the order will do and the worst-case proceeds after slippage
+             (+ platform fee, when billing is enabled) BEFORE the user can
+             submit an on-chain order. -->
+        <div v-if="showCommitSummary" class="commit-summary">
+          <div class="commit-row">
+            <span class="commit-label">{{ t("manualTrade.commitSummary.order") }}</span>
+            <span class="mono">
+              {{ t("manualTrade.commitSummary.sellFor", { amount: fmtNum(amountNum, 7), sellCode, buyCode }) }}
+              {{ t("manualTrade.commitSummary.atPrice", { price: fmtNum(effectivePrice, 7), buyCode, sellCode }) }}
+            </span>
+          </div>
+          <div class="commit-row">
+            <span class="commit-label">
+              {{ t("manualTrade.commitSummary.worstCase") }}<InfoTip :text="t('manualTrade.commitSummary.worstCaseTip')" :label="t('manualTrade.aria.worstCase')" />
+            </span>
+            <span class="mono commit-worst-case">
+              {{ t("manualTrade.commitSummary.youReceiveAtLeast", { amount: fmtNum(worstCaseReceive, 7), code: buyCode }) }}
+            </span>
+          </div>
+          <p class="muted commit-note">
+            {{ t("manualTrade.commitSummary.slippageBasis", { bps: fmtNum(effectiveSlippageBps, 0) }) }}
+            {{
+              estFeeAmount != null
+                ? t("manualTrade.commitSummary.feeIncluded", { amount: fmtNum(estFeeAmount, 7), code: buyCode, pct: fmtNum(feeFraction * 100, 2) })
+                : t("manualTrade.commitSummary.networkFeeNote")
+            }}
+          </p>
+        </div>
+
         <button
           class="btn primary order-submit"
           :disabled="!orderValid || store.placingOrder"
@@ -682,6 +747,38 @@ async function submitModify(): Promise<void> {
   font-size: 11px;
   margin: 0;
   align-self: end;
+}
+.commit-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.commit-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.commit-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.commit-worst-case {
+  font-weight: 700;
+}
+.commit-note {
+  font-size: 11px;
+  margin: 0;
 }
 .order-disclosure {
   align-self: flex-start;

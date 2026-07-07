@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { config, isReadOnly, dbConfigured } from "./config";
+import { config, isReadOnly, dbConfigured, smtpConfigured } from "./config";
 import { checkOrigin, isLoopbackBind } from "./csrf";
 import { createAuthRouter } from "./auth/routes";
 import { requireAuth, authRateLimiter } from "./auth/middleware";
@@ -2198,6 +2198,27 @@ async function start(): Promise<void> {
     console.error(
       "\n  REFUSING TO START: WALLET_ENCRYPTION_KEY is too short (< 32 chars).\n" +
         "  A short secret weakens AES key derivation. Use `openssl rand -hex 32`.\n",
+    );
+    process.exit(1);
+  }
+
+  // On mainnet, password-reset / verification links are account-takeover-grade
+  // credentials that MUST be delivered by email, never printed anywhere (see
+  // AUDIT-010 in src/auth/service.ts: the raw reset link is deliberately not
+  // logged on mainnet). Without SMTP configured, a user who loses their password
+  // can NEVER recover their account (and their funded wallet). Refuse to boot in
+  // that state unless the operator explicitly opts out.
+  if (
+    config.network === "public" &&
+    !smtpConfigured &&
+    !config.allowMainnetWithoutSmtp
+  ) {
+    console.error(
+      "\n  REFUSING TO START: network=public but SMTP is not configured.\n" +
+        "  Password-reset and verification emails cannot be delivered, and raw\n" +
+        "  reset links are never printed on mainnet, so accounts would be\n" +
+        "  unrecoverable. Set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/SMTP_FROM,\n" +
+        "  or set ALLOW_MAINNET_WITHOUT_SMTP=true to accept that risk.\n",
     );
     process.exit(1);
   }

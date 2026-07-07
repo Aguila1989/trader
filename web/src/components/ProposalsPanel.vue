@@ -1,11 +1,44 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum, shortKey, timeStr, explorerTx } from "../format";
 
 const { t } = useI18n();
 const store = useTraderStore();
+
+// Approve/reject each submit (or cancel) a REAL trade. Track the in-flight id so
+// the buttons disable while the call is out (no double-submit), and surface any
+// failure inline — a silent failure must never look like nothing happened.
+const busyId = ref<string | null>(null);
+const actionErrors = reactive<Record<string, string>>({});
+
+async function doApprove(id: string): Promise<void> {
+  if (busyId.value) return;
+  busyId.value = id;
+  delete actionErrors[id];
+  try {
+    const r = await store.approve(id);
+    if (r?.error) actionErrors[id] = r.error;
+  } catch (e) {
+    actionErrors[id] = (e as Error)?.message || t("proposals.actionFailed");
+  } finally {
+    busyId.value = null;
+  }
+}
+async function doReject(id: string): Promise<void> {
+  if (busyId.value) return;
+  busyId.value = id;
+  delete actionErrors[id];
+  try {
+    const r = await store.reject(id);
+    if (r?.error) actionErrors[id] = r.error;
+  } catch (e) {
+    actionErrors[id] = (e as Error)?.message || t("proposals.actionFailed");
+  } finally {
+    busyId.value = null;
+  }
+}
 
 // Bug 4A: the Bot-tab proposal feed / approval queue is for AI (and system)
 // proposals ONLY. Manual orders execute directly at placement and show up in
@@ -29,12 +62,16 @@ function statusText(s: string): string {
   gap: 8px;
 }
 .conf {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid var(--line);
+}
+.reason {
+  font-weight: 500;
 }
 .conf-high {
   color: var(--pos);
@@ -92,13 +129,18 @@ function statusText(s: string): string {
         <div v-if="p.status === 'pending_approval'" class="actions">
           <button
             class="btn ok"
-            :disabled="store.isReadOnly"
+            :disabled="store.isReadOnly || busyId === p.id"
             :title="store.isReadOnly ? t('proposals.readOnlyHint') : ''"
-            @click="store.approve(p.id)"
+            @click="doApprove(p.id)"
           >
-            {{ t("proposals.actions.approve") }}
+            {{ busyId === p.id ? t("proposals.actions.approving") : t("proposals.actions.approve") }}
           </button>
-          <button class="btn danger" @click="store.reject(p.id)">{{ t("proposals.actions.reject") }}</button>
+          <button class="btn danger" :disabled="busyId === p.id" @click="doReject(p.id)">
+            {{ t("proposals.actions.reject") }}
+          </button>
+        </div>
+        <div v-if="actionErrors[p.id]" class="violations" role="alert">
+          {{ t("proposals.error") }}: {{ actionErrors[p.id] }}
         </div>
 
         <div class="meta">

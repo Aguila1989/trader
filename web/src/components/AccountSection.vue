@@ -7,7 +7,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { authApi } from "../api";
+import { authApi, billingApi } from "../api";
 import { session } from "../auth/session";
 import { checkPassword } from "../auth/passwordPolicy";
 import { dateTimeStr } from "../format";
@@ -15,6 +15,7 @@ import { closeSettings } from "../ui/uiState";
 import { startTour } from "../onboarding/tour";
 import { billingState, loadBillingStatus } from "../billing/premium";
 import AiKeySection from "./AiKeySection.vue";
+import TwoFactorSection from "./TwoFactorSection.vue";
 import PasswordStrengthMeter from "./auth/PasswordStrengthMeter.vue";
 
 const { t } = useI18n();
@@ -37,6 +38,26 @@ onMounted(async () => {
 function goPricing(): void {
   closeSettings();
   void router.push("/pricing").catch(() => {});
+}
+
+// Self-service cancellation/management via the Stripe Billing Portal (Part 1).
+const openingPortal = ref(false);
+const portalError = ref("");
+async function openPortal(): Promise<void> {
+  portalError.value = "";
+  openingPortal.value = true;
+  try {
+    const r = await billingApi.portal();
+    if (r.ok && r.data?.url) {
+      window.location.href = r.data.url;
+    } else {
+      portalError.value = r.data?.error || r.data?.message || t("billing.account.portalError");
+    }
+  } catch {
+    portalError.value = t("billing.account.portalError");
+  } finally {
+    openingPortal.value = false;
+  }
 }
 
 // --- restart the onboarding tutorial (Feature 1) ---
@@ -147,9 +168,22 @@ async function submit(): Promise<void> {
     <button v-if="!billingState.isPremium" class="btn acct-restart" type="button" @click="goPricing">
       {{ t("billing.account.upgrade") }}
     </button>
+    <button
+      v-else
+      class="btn acct-restart"
+      type="button"
+      :disabled="openingPortal"
+      @click="openPortal"
+    >
+      {{ openingPortal ? t("billing.account.opening") : t("billing.account.manage") }}
+    </button>
+    <p v-if="portalError" class="violations" role="alert">{{ portalError }}</p>
 
     <!-- Feature 3: bring-your-own AI API key (premium AI trading). -->
     <AiKeySection />
+
+    <!-- End-user 2FA (TOTP), opt-in. -->
+    <TwoFactorSection />
 
     <h3 class="acct-sub">{{ t("onboarding.account.title") }}</h3>
     <p class="acct-hint">{{ t("onboarding.account.hint") }}</p>

@@ -519,11 +519,14 @@ export const useTraderStore = defineStore("trader", () => {
   }
 
   // --- proposal actions ---
-  async function approve(id: string): Promise<void> {
-    await api.approve(id);
+  // Return the result (which now carries `error` on any non-2xx/network failure,
+  // see api.ts postJSON) so the caller can surface a failed approve/reject — an
+  // approve submits a REAL trade, so a silent failure must never look like a no-op.
+  async function approve(id: string): Promise<TradeProposal & { error?: string }> {
+    return (await api.approve(id)) as TradeProposal & { error?: string };
   }
-  async function reject(id: string): Promise<void> {
-    await api.reject(id);
+  async function reject(id: string): Promise<TradeProposal & { error?: string }> {
+    return (await api.reject(id)) as TradeProposal & { error?: string };
   }
 
   // Place a manual limit order. Goes through the SAME risk gates as
@@ -698,11 +701,15 @@ export const useTraderStore = defineStore("trader", () => {
   }
 
   // --- data loads ---
+  // Leaves the previous balances in place on error (matching loadPortfolio).
+  // Zeroing them on a transient blip made held assets read as "insufficient
+  // balance" mid-Send — a fund-safety UX trap. An empty array is only ever set
+  // by a SUCCESSFUL response that genuinely returns no balances.
   async function loadBalances(): Promise<void> {
     try {
       balances.value = await api.balances();
     } catch {
-      balances.value = [];
+      /* leave previous data — do not fake an empty wallet on a transient error */
     }
   }
 

@@ -30,6 +30,19 @@ export default {
       accessHint:
         "Gates the AI only: Read-only = the AI observes; Paper = the AI simulates fills; Live = the AI can submit on-chain. Your manual orders and wallet actions are always allowed (in Paper they execute as paper trades).",
     },
+    errorBoundary: {
+      title: "Something went wrong",
+      body: "This screen hit an unexpected error. Your funds and open orders are unaffected — try again, or reload the app.",
+      reload: "Reload",
+      tryAgain: "Try again",
+    },
+    walletFunding: {
+      title: "Your wallet needs XLM.",
+      body: "It's set up but not funded yet, so trades will fail until you send it some XLM.",
+      copyTitle: "Copy your wallet address",
+      copied: "Copied!",
+      dismiss: "Dismiss",
+    },
   },
   nl: {
     appName: "Atrium",
@@ -58,6 +71,19 @@ export default {
       access: "Handelstoegang",
       accessHint:
         "Geldt alleen voor de AI: Alleen-lezen = de AI observeert; Paper = de AI simuleert fills; Live = de AI kan on-chain versturen. Je handmatige orders en wallet-acties zijn altijd toegestaan (in Paper worden ze als papieren trades uitgevoerd).",
+    },
+    errorBoundary: {
+      title: "Er ging iets mis",
+      body: "Dit scherm liep tegen een onverwachte fout aan. Je saldo en open orders zijn niet geraakt — probeer opnieuw, of herlaad de app.",
+      reload: "Herladen",
+      tryAgain: "Opnieuw proberen",
+    },
+    walletFunding: {
+      title: "Je wallet heeft XLM nodig.",
+      body: "Hij is aangemaakt maar nog niet gefinancierd, dus trades mislukken totdat je er XLM naartoe stuurt.",
+      copyTitle: "Kopieer je walletadres",
+      copied: "Gekopieerd!",
+      dismiss: "Verbergen",
     },
   },
   fr: {
@@ -88,6 +114,19 @@ export default {
       accessHint:
         "Ne s'applique qu'à l'IA : Lecture seule = l'IA observe ; Paper = l'IA simule les exécutions ; Live = l'IA peut soumettre on-chain. Vos ordres manuels et actions de portefeuille sont toujours autorisés (en Paper ils s'exécutent en trades simulés).",
     },
+    errorBoundary: {
+      title: "Un problème est survenu",
+      body: "Cet écran a rencontré une erreur inattendue. Vos fonds et ordres ouverts ne sont pas affectés — réessayez, ou rechargez l'application.",
+      reload: "Recharger",
+      tryAgain: "Réessayer",
+    },
+    walletFunding: {
+      title: "Votre portefeuille a besoin de XLM.",
+      body: "Il est configuré mais pas encore approvisionné, donc les transactions échoueront tant que vous ne lui envoyez pas de XLM.",
+      copyTitle: "Copier l'adresse de votre portefeuille",
+      copied: "Copié !",
+      dismiss: "Ignorer",
+    },
   },
   es: {
     appName: "Atrium",
@@ -116,6 +155,19 @@ export default {
       access: "Acceso al trading",
       accessHint:
         "Solo afecta a la IA: Solo lectura = la IA observa; Paper = la IA simula ejecuciones; Live = la IA puede enviar on-chain. Tus órdenes manuales y acciones de billetera siempre están permitidas (en Paper se ejecutan como operaciones simuladas).",
+    },
+    errorBoundary: {
+      title: "Algo salió mal",
+      body: "Esta pantalla encontró un error inesperado. Tus fondos y órdenes abiertas no se ven afectados — inténtalo de nuevo o recarga la aplicación.",
+      reload: "Recargar",
+      tryAgain: "Intentar de nuevo",
+    },
+    walletFunding: {
+      title: "Tu billetera necesita XLM.",
+      body: "Está configurada pero aún no tiene fondos, así que las operaciones fallarán hasta que le envíes XLM.",
+      copyTitle: "Copiar la dirección de tu billetera",
+      copied: "¡Copiado!",
+      dismiss: "Descartar",
     },
   },
 };

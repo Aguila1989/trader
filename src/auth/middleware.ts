@@ -35,6 +35,12 @@ export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
   "/api/auth/forgot-password",
   "/api/auth/reset-password",
   "/api/auth/verify-email",
+  // End-user 2FA: this runs pre-session, with the pending-2FA challenge (from
+  // a successful password check) carried in the request BODY, never a cookie
+  // - so it can never be satisfied by a copied/forged session cookie. Notably
+  // NOT here: /api/auth/2fa/setup|enable|disable (those require an existing
+  // session, like /change-password).
+  "/api/auth/2fa/verify",
   // Feature 2: Stripe calls this without any session cookie; authenticity is
   // the HMAC signature over the raw body, verified in the handler itself.
   "/api/billing/webhook",

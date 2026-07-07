@@ -17,7 +17,13 @@ import * as billing from "../db/billingRepo";
 import { dbReady } from "../db/pool";
 import { FEE_RATES, feeRateFor, type VolumeTier } from "../fees/engine";
 import { feeWalletAddress } from "../fees/collector";
-import { createCustomer, createSubscriptionCheckout, stripeConfigured, StripeError } from "./stripeClient";
+import {
+  createBillingPortalSession,
+  createCustomer,
+  createSubscriptionCheckout,
+  stripeConfigured,
+  StripeError,
+} from "./stripeClient";
 import { store } from "../trading/store";
 
 function baseUrl(): string {
@@ -120,6 +126,36 @@ export function createBillingRouter(): Router {
         `Checkout session failed: ${err instanceof StripeError ? `${err.status} ${err.message}` : (err as Error).message}`,
       );
       res.status(502).json({ error: "Could not start checkout. Please try again." });
+    }
+  });
+
+  // POST /api/billing/portal - self-service Stripe Billing Portal (Part 1):
+  // cancel/manage the existing subscription. Requires a prior checkout (no
+  // Stripe customer yet => nothing to manage).
+  router.post("/portal", async (_req: Request, res: Response) => {
+    if (!dbReady() || !stripeConfigured()) {
+      res.status(503).json({ error: "Billing is not configured on this server." });
+      return;
+    }
+    try {
+      const userId = currentUserId();
+      const { stripeCustomerId } = await authStore.getStripeIds(userId);
+      if (!stripeCustomerId) {
+        res.status(404).json({ error: "No billing account found. Subscribe first." });
+        return;
+      }
+      const session = await createBillingPortalSession({
+        customerId: stripeCustomerId,
+        returnUrl: `${baseUrl()}/#/pricing`,
+      });
+      res.json({ url: session.url });
+    } catch (err) {
+      // Never leak Stripe internals to the client; log server-side.
+      store.log(
+        "error",
+        `Billing portal session failed: ${err instanceof StripeError ? `${err.status} ${err.message}` : (err as Error).message}`,
+      );
+      res.status(502).json({ error: "Could not open the billing portal. Please try again." });
     }
   });
 

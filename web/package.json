@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "atrium": "file:..",
     "chart.js": "^4.5.1",
     "pinia": "^3.0.4",
     "stellar-claude-trader": "file:..",

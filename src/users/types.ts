@@ -48,6 +48,13 @@ export interface User {
    * previous calendar month's platform volume. New users start Bronze.
    */
   volumeTier: string;
+  /**
+   * End-user 2FA (TOTP), OPT-IN. False for every account until the user
+   * completes the setup+confirm flow (POST /api/auth/2fa/setup then
+   * /2fa/enable). When true, login requires a valid 6-digit code in addition
+   * to the password (see src/auth/service.ts login()/verifyTwoFactor()).
+   */
+  totpEnabled: boolean;
 }
 
 /** Fields required to create a new account. */

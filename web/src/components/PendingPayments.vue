@@ -25,6 +25,24 @@ function isNative(c: ClaimableBalanceInfo): boolean {
   return c.asset === "XLM";
 }
 
+// Claim submits a real on-chain transaction. Track the in-flight id so the
+// button disables (no double-claim on a slow network) and surface a failure
+// inline — store.claim() now returns false with store.walletError set on any
+// non-2xx/network error (see api.ts postJSON).
+const claimingId = ref<string | null>(null);
+const claimError = ref("");
+async function doClaim(id: string): Promise<void> {
+  if (claimingId.value) return;
+  claimingId.value = id;
+  claimError.value = "";
+  try {
+    const ok = await store.claim(id);
+    if (!ok) claimError.value = store.walletError || t("pending.claimFailed");
+  } finally {
+    claimingId.value = null;
+  }
+}
+
 // --- single swap (with value-loss pre-check) ---
 const swap = ref<{
   open: boolean;
@@ -183,8 +201,12 @@ function toggleRejected(ev: Event): void {
             </button>
           </template>
           <template v-else>
-            <button class="btn pp-btn" :disabled="store.isReadOnly" @click="store.claim(c.id)">
-              {{ t("pending.claim") }}
+            <button
+              class="btn pp-btn"
+              :disabled="store.isReadOnly || claimingId === c.id"
+              @click="doClaim(c.id)"
+            >
+              {{ claimingId === c.id ? t("pending.claiming") : t("pending.claim") }}
             </button>
             <button
               v-if="swapEnabled && !isNative(c)"
@@ -201,6 +223,8 @@ function toggleRejected(ev: Event): void {
         </div>
       </li>
     </ul>
+
+    <p v-if="claimError" class="pp-warn" role="alert">{{ claimError }}</p>
 
     <label class="pp-showrejected">
       <input type="checkbox" :checked="store.showRejectedClaimables" @change="toggleRejected" />

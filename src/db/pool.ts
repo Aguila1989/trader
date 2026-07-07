@@ -562,6 +562,11 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // after dbo.Users exists so the foreign keys resolve.
   await ensureAuthSchema(p);
 
+  // End-user 2FA (TOTP): opt-in per-account columns on dbo.Users. Runs
+  // immediately after ensureAuthSchema so every login-related migration lands
+  // together.
+  await ensureTwoFactorSchema(p);
+
   // User profile flags (2026-07 Feature 1: onboarding tutorial). Additive and
   // idempotent like every other migration here.
   await ensureProfileSchema(p);
@@ -688,6 +693,26 @@ async function ensureAuthSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_LoginAttempts_ts ON dbo.LoginAttempts (ts DESC);
       CREATE INDEX IX_LoginAttempts_email ON dbo.LoginAttempts (email, ts DESC);
     END
+  `);
+}
+
+/**
+ * End-user two-factor authentication (TOTP), OPT-IN. `totpSecret` holds the
+ * base32 secret (set at /2fa/setup, before it is confirmed); `totpEnabled`
+ * flips to 1 only after the user proves possession with a valid code at
+ * /2fa/enable. Login only asks for a code when totpEnabled = 1, so an account
+ * that never opted in is never blocked out - there are no backup codes, so a
+ * hard requirement would risk permanently locking a user out of a funded
+ * wallet. A locked-out user is recovered via the admin "reset 2FA" action
+ * (src/admin/routes.ts), which clears both columns.
+ */
+async function ensureTwoFactorSchema(p: sql.ConnectionPool): Promise<void> {
+  await p.request().batch(`
+    IF COL_LENGTH('dbo.Users', 'totpSecret') IS NULL
+      ALTER TABLE dbo.Users ADD totpSecret NVARCHAR(64) NULL;
+    IF COL_LENGTH('dbo.Users', 'totpEnabled') IS NULL
+      ALTER TABLE dbo.Users ADD totpEnabled BIT NOT NULL
+        CONSTRAINT DF_Users_totpEnabled DEFAULT 0;
   `);
 }
 

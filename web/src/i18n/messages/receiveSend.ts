@@ -1,6 +1,11 @@
 // Receive & Send page chrome: the QR hint and the (trade-log–derived) XLM
 // Conversion History section. The Send / Receive / Swap field labels reuse the
 // existing `wallet.*` namespace. Auto-merged under `receiveSend.*`.
+//
+// sendConfirm: fund-safety review step shown before store.pay() fires (Stellar
+// payments are irreversible) — includes the memo-required warning/ack gate.
+// swapImpact: worst-case (destMin) + slippage tolerance shown before a swap
+// commits, alongside the existing mid-price quote line.
 export default {
   en: {
     pageTitle: "Receive & Send",
@@ -16,6 +21,24 @@ export default {
       from: "From",
       to: "To",
       status: "Status",
+    },
+    sendConfirm: {
+      title: "Confirm send",
+      summary: "Send {amount} {code} to {destination}",
+      memoLine: "Memo: {memo}",
+      noMemoLine: "No memo attached.",
+      irreversible: "Stellar transfers cannot be reversed or recalled once sent.",
+      memoWarning:
+        "This destination has no memo. Many exchange and custodial deposit addresses REQUIRE a memo to credit your account — sending without one can permanently lose these funds.",
+      memoAck: "I confirm this address does not require a memo.",
+      ackRequired: "Please confirm the address does not require a memo before sending.",
+      confirm: "Send",
+      cancel: "Cancel",
+    },
+    swapImpact: {
+      minReceived: "Minimum received: {amount} {code}",
+      label: "Slippage tolerance",
+      tip: "Your swap executes as a strict-send path payment with a {pct}% slippage tolerance. If the price moves against you before the transaction settles, this is the worst-case amount you will still receive; otherwise you get the quoted amount above.",
     },
   },
   nl: {
@@ -33,6 +56,24 @@ export default {
       to: "Naar",
       status: "Status",
     },
+    sendConfirm: {
+      title: "Verzending bevestigen",
+      summary: "Verstuur {amount} {code} naar {destination}",
+      memoLine: "Memo: {memo}",
+      noMemoLine: "Geen memo toegevoegd.",
+      irreversible: "Stellar-overschrijvingen kunnen na verzending niet worden teruggedraaid of teruggeroepen.",
+      memoWarning:
+        "Deze bestemming heeft geen memo. Veel stortingsadressen van exchanges en custodial diensten VEREISEN een memo om je account te crediteren — versturen zonder memo kan deze fondsen permanent doen verliezen.",
+      memoAck: "Ik bevestig dat dit adres geen memo vereist.",
+      ackRequired: "Bevestig dat het adres geen memo vereist voordat je verstuurt.",
+      confirm: "Verstuur",
+      cancel: "Annuleren",
+    },
+    swapImpact: {
+      minReceived: "Minimaal ontvangen: {amount} {code}",
+      label: "Slippage-tolerantie",
+      tip: "Je swap wordt uitgevoerd als een strict-send path payment met een slippage-tolerantie van {pct}%. Als de prijs tegen je beweegt voordat de transactie wordt afgerond, is dit het worst-case bedrag dat je nog steeds ontvangt; anders krijg je het hierboven geciteerde bedrag.",
+    },
   },
   fr: {
     pageTitle: "Recevoir et envoyer",
@@ -49,6 +90,24 @@ export default {
       to: "Vers",
       status: "Statut",
     },
+    sendConfirm: {
+      title: "Confirmer l'envoi",
+      summary: "Envoyer {amount} {code} à {destination}",
+      memoLine: "Mémo : {memo}",
+      noMemoLine: "Aucun mémo joint.",
+      irreversible: "Les transferts Stellar ne peuvent pas être annulés ni rappelés une fois envoyés.",
+      memoWarning:
+        "Cette destination n'a pas de mémo. De nombreuses adresses de dépôt d'exchanges ou de services custodial EXIGENT un mémo pour créditer votre compte — envoyer sans mémo peut faire perdre ces fonds définitivement.",
+      memoAck: "Je confirme que cette adresse ne nécessite pas de mémo.",
+      ackRequired: "Veuillez confirmer que l'adresse ne nécessite pas de mémo avant d'envoyer.",
+      confirm: "Envoyer",
+      cancel: "Annuler",
+    },
+    swapImpact: {
+      minReceived: "Minimum reçu : {amount} {code}",
+      label: "Tolérance de slippage",
+      tip: "Votre swap s'exécute comme un paiement de chemin strict-send avec une tolérance de slippage de {pct} %. Si le prix évolue en votre défaveur avant le règlement de la transaction, voici le montant minimum que vous recevrez malgré tout ; sinon vous recevez le montant indiqué ci-dessus.",
+    },
   },
   es: {
     pageTitle: "Recibir y enviar",
@@ -64,6 +123,24 @@ export default {
       from: "De",
       to: "A",
       status: "Estado",
+    },
+    sendConfirm: {
+      title: "Confirmar envío",
+      summary: "Enviar {amount} {code} a {destination}",
+      memoLine: "Memo: {memo}",
+      noMemoLine: "Sin memo adjunto.",
+      irreversible: "Las transferencias de Stellar no se pueden revertir ni recuperar una vez enviadas.",
+      memoWarning:
+        "Este destino no tiene memo. Muchas direcciones de depósito de exchanges o servicios custodiales REQUIEREN un memo para acreditar tu cuenta — enviar sin memo puede hacer que pierdas estos fondos de forma permanente.",
+      memoAck: "Confirmo que esta dirección no requiere memo.",
+      ackRequired: "Confirma que la dirección no requiere memo antes de enviar.",
+      confirm: "Enviar",
+      cancel: "Cancelar",
+    },
+    swapImpact: {
+      minReceived: "Mínimo a recibir: {amount} {code}",
+      label: "Tolerancia de slippage",
+      tip: "Tu swap se ejecuta como un pago de ruta strict-send con una tolerancia de slippage del {pct}%. Si el precio se mueve en tu contra antes de que se liquide la transacción, este es el importe mínimo que aún recibirás; en caso contrario recibirás el importe indicado arriba.",
     },
   },
 };

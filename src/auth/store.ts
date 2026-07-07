@@ -32,6 +32,10 @@ export interface Credential {
   lockedUntil: number | null;
   /** Feature 4: blocked by the admin backoffice (login refused). */
   disabledByAdmin: boolean;
+  /** End-user 2FA (opt-in): the base32 TOTP secret, or null until setup. */
+  totpSecret: string | null;
+  /** End-user 2FA (opt-in): true once the user has confirmed enrollment. */
+  totpEnabled: boolean;
 }
 
 export interface NewAccount {
@@ -68,6 +72,8 @@ interface MemUser {
   subscriptionStart: number | null;
   subscriptionEnd: number | null;
   volumeTier: string;
+  totpSecret: string | null;
+  totpEnabled: boolean;
 }
 interface MemSession {
   id: string;
@@ -103,6 +109,7 @@ function memUserToUser(u: MemUser): User {
     subscriptionStatus: u.subscriptionStatus,
     subscriptionEnd: u.subscriptionEnd ? new Date(u.subscriptionEnd).toISOString() : null,
     volumeTier: u.volumeTier,
+    totpEnabled: u.totpEnabled,
     ...(u.displayName ? { displayName: u.displayName } : {}),
   };
 }
@@ -132,6 +139,8 @@ interface CredentialRow {
   subscriptionStatus: string | null;
   subscriptionEnd: Date | string | null;
   volumeTier: string | null;
+  totpSecret: string | null;
+  totpEnabled: boolean;
 }
 
 function rowToCredential(r: CredentialRow): Credential {
@@ -146,6 +155,7 @@ function rowToCredential(r: CredentialRow): Credential {
     subscriptionStatus: r.subscriptionStatus ?? null,
     subscriptionEnd: r.subscriptionEnd ? toIso(r.subscriptionEnd) : null,
     volumeTier: r.volumeTier || "Bronze",
+    totpEnabled: Boolean(r.totpEnabled),
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
   return {
@@ -156,10 +166,12 @@ function rowToCredential(r: CredentialRow): Credential {
     failedLoginAttempts: Number(r.failedLoginAttempts ?? 0),
     lockedUntil: toMs(r.lockedUntil),
     disabledByAdmin: Boolean(r.disabledByAdmin),
+    totpSecret: r.totpSecret ?? null,
+    totpEnabled: Boolean(r.totpEnabled),
   };
 }
 
-const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, disabledByAdmin, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
+const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, disabledByAdmin, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier, totpSecret, totpEnabled`;
 
 // --- accounts ---------------------------------------------------------------
 
@@ -191,6 +203,8 @@ export async function createAccount(a: NewAccount): Promise<User | null> {
       subscriptionStart: null,
       subscriptionEnd: null,
       volumeTier: "Bronze",
+      totpSecret: null,
+      totpEnabled: false,
     };
     mem.users.set(u.id, u);
     return memUserToUser(u);
@@ -230,6 +244,8 @@ export async function findCredentialByEmail(email: string): Promise<Credential |
           failedLoginAttempts: u.failedLoginAttempts,
           lockedUntil: u.lockedUntil,
           disabledByAdmin: false, // admin backoffice requires a DB
+          totpSecret: u.totpSecret,
+          totpEnabled: u.totpEnabled,
         };
       }
     }
@@ -329,6 +345,58 @@ export async function setEmailVerified(userId: string): Promise<void> {
     .request()
     .input("id", sql.NVarChar(64), userId)
     .query(`UPDATE dbo.Users SET emailVerified = 1 WHERE id = @id;`);
+}
+
+// --- end-user 2FA (TOTP), opt-in --------------------------------------------
+
+/**
+ * Store a freshly-generated TOTP secret for the pending setup flow.
+ * `totpEnabled` is explicitly reset to 0 here: generating a new secret always
+ * starts a fresh, unconfirmed enrollment (e.g. the user re-ran setup before
+ * confirming), so a stale enabled flag from a previous secret can never survive.
+ */
+export async function setTotpSecret(userId: string, secret: string): Promise<void> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (u) {
+      u.totpSecret = secret;
+      u.totpEnabled = false;
+    }
+    return;
+  }
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("secret", sql.NVarChar(64), secret)
+    .query(`UPDATE dbo.Users SET totpSecret = @secret, totpEnabled = 0 WHERE id = @id;`);
+}
+
+/**
+ * Flip the enabled flag. Enabling requires the caller to have already verified
+ * a code against the pending secret (see enableTwoFactor in service.ts).
+ * Disabling also NULLs the secret so a later re-enrollment always starts from
+ * a fresh secret (never resurrects an old one).
+ */
+export async function setTotpEnabled(userId: string, enabled: boolean): Promise<void> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (u) {
+      u.totpEnabled = enabled;
+      if (!enabled) u.totpSecret = null;
+    }
+    return;
+  }
+  if (enabled) {
+    await getPool()
+      .request()
+      .input("id", sql.NVarChar(64), userId)
+      .query(`UPDATE dbo.Users SET totpEnabled = 1 WHERE id = @id;`);
+  } else {
+    await getPool()
+      .request()
+      .input("id", sql.NVarChar(64), userId)
+      .query(`UPDATE dbo.Users SET totpEnabled = 0, totpSecret = NULL WHERE id = @id;`);
+  }
 }
 
 /**

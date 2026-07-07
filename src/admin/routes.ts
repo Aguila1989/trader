@@ -15,6 +15,7 @@ import { dbReady } from "../db/pool";
 import { runWithUserId, DEFAULT_USER_ID } from "../users/context";
 import { feeWalletAddress, invalidateFeeWalletCache } from "../fees/collector";
 import { runTierRecalc } from "../fees/tierScheduler";
+import * as authStore from "../auth/store";
 import {
   adminLogin,
   clearAdminCookie,
@@ -240,6 +241,19 @@ export function createAdminRouter(): Router {
     const id = String(req.params.id);
     await billing.setUserFlaggedForReview(id, req.body.flagged);
     await billing.insertAdminAudit(adminOf(req), "flag-review", id, String(req.body.flagged));
+    res.json({ ok: true });
+  });
+
+  // End-user 2FA has no backup codes by design (see src/auth/service.ts), so a
+  // user who loses their authenticator app is otherwise permanently locked out
+  // of a funded account. This is the ONLY recovery path: it clears totpEnabled
+  // (and the secret) so the user can log in with just their password and,
+  // if they want, re-enroll from scratch. Referenced by opaque userId only -
+  // no email in the payload, per the GDPR convention of this router.
+  router.post("/users/:id/reset-2fa", async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    await authStore.setTotpEnabled(id, false);
+    await billing.insertAdminAudit(adminOf(req), "reset-2fa", id);
     res.json({ ok: true });
   });
 

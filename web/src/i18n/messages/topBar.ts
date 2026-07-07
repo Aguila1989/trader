@@ -28,6 +28,30 @@ export default {
     autoTrade: "Auto-trade",
     killSwitchOn: "Kill switch ON",
     killSwitch: "Kill switch",
+    liveConfirm: {
+      title: "Enable Live trading?",
+      willTitle: "This will immediately:",
+      will: {
+        realTrades: "Allow the bot to submit REAL orders on-chain — trades will move actual funds",
+        realFunds: "Put your wallet funds at real market risk (fills, slippage, and losses are real, not simulated)",
+        policyStillApplies: "Still enforce your policy limits and whitelist — but those are risk limits, not a guarantee against loss",
+      },
+      note: "You can switch back to Read-only or Paper at any time — that takes effect instantly, with no confirmation needed.",
+      cancel: "Cancel",
+      confirm: "Enable live trading",
+    },
+    autoApproveConfirm: {
+      title: "Enable Auto-trade?",
+      willTitle: "This will immediately:",
+      will: {
+        noAsk: "The bot will place REAL trades with your funds without asking you each time",
+        unattended: "Remove the per-trade approval step — proposals that pass policy execute automatically",
+        killSwitchStillWorks: "The kill switch and your policy limits still apply and can stop it",
+      },
+      note: "You can switch back to \"Approve every trade\" at any time — that takes effect instantly, with no confirmation needed.",
+      cancel: "Cancel",
+      confirm: "Enable auto-trade",
+    },
   },
   nl: {
     brand: "Atrium",
@@ -55,6 +79,30 @@ export default {
     autoTrade: "Auto-trade",
     killSwitchOn: "Noodstop AAN",
     killSwitch: "Noodstop",
+    liveConfirm: {
+      title: "Live trading inschakelen?",
+      willTitle: "Dit gebeurt onmiddellijk:",
+      will: {
+        realTrades: "De bot mag ECHTE orders on-chain versturen — trades verplaatsen echte tegoeden",
+        realFunds: "Je wallet-tegoeden lopen echt marktrisico (fills, slippage en verliezen zijn echt, niet gesimuleerd)",
+        policyStillApplies: "Je beleidslimieten en whitelist blijven gelden — maar dat zijn risicolimieten, geen garantie tegen verlies",
+      },
+      note: "Je kunt op elk moment terug naar Alleen-lezen of Paper — dat werkt meteen, zonder bevestiging.",
+      cancel: "Annuleren",
+      confirm: "Live trading inschakelen",
+    },
+    autoApproveConfirm: {
+      title: "Auto-trade inschakelen?",
+      willTitle: "Dit gebeurt onmiddellijk:",
+      will: {
+        noAsk: "De bot plaatst ECHTE trades met je tegoeden zonder je telkens te vragen",
+        unattended: "De goedkeuringsstap per trade vervalt — voorstellen die de regels doorstaan worden automatisch uitgevoerd",
+        killSwitchStillWorks: "De noodstop en je beleidslimieten blijven gelden en kunnen dit stoppen",
+      },
+      note: "Je kunt op elk moment terug naar \"Elke trade goedkeuren\" — dat werkt meteen, zonder bevestiging.",
+      cancel: "Annuleren",
+      confirm: "Auto-trade inschakelen",
+    },
   },
   fr: {
     brand: "Atrium",
@@ -82,6 +130,30 @@ export default {
     autoTrade: "Auto-trade",
     killSwitchOn: "Coupe-circuit ACTIVÉ",
     killSwitch: "Coupe-circuit",
+    liveConfirm: {
+      title: "Activer le live trading ?",
+      willTitle: "Ceci prend effet immédiatement :",
+      will: {
+        realTrades: "Le bot pourra envoyer des ordres RÉELS on-chain — les trades déplaceront des fonds réels",
+        realFunds: "Vos fonds seront exposés à un risque de marché réel (exécutions, slippage et pertes réels, non simulés)",
+        policyStillApplies: "Vos limites de politique et votre whitelist restent appliquées — mais ce sont des limites de risque, pas une garantie contre la perte",
+      },
+      note: "Vous pouvez revenir à Lecture seule ou Paper à tout moment — cela prend effet immédiatement, sans confirmation.",
+      cancel: "Annuler",
+      confirm: "Activer le live trading",
+    },
+    autoApproveConfirm: {
+      title: "Activer l'auto-trade ?",
+      willTitle: "Ceci prend effet immédiatement :",
+      will: {
+        noAsk: "Le bot placera des trades RÉELS avec vos fonds sans vous demander à chaque fois",
+        unattended: "L'étape d'approbation par trade disparaît — les propositions conformes à la politique s'exécutent automatiquement",
+        killSwitchStillWorks: "Le coupe-circuit et vos limites de politique restent actifs et peuvent l'arrêter",
+      },
+      note: "Vous pouvez revenir à « Approuver chaque trade » à tout moment — cela prend effet immédiatement, sans confirmation.",
+      cancel: "Annuler",
+      confirm: "Activer l'auto-trade",
+    },
   },
   es: {
     brand: "Atrium",
@@ -109,5 +181,29 @@ export default {
     autoTrade: "Auto-trade",
     killSwitchOn: "Interruptor de emergencia ACTIVADO",
     killSwitch: "Interruptor de emergencia",
+    liveConfirm: {
+      title: "¿Activar el live trading?",
+      willTitle: "Esto sucede de inmediato:",
+      will: {
+        realTrades: "El bot podrá enviar órdenes REALES on-chain — los trades moverán fondos reales",
+        realFunds: "Tus fondos quedarán expuestos a riesgo de mercado real (ejecuciones, slippage y pérdidas reales, no simuladas)",
+        policyStillApplies: "Tus límites de política y whitelist se siguen aplicando — pero son límites de riesgo, no una garantía contra pérdidas",
+      },
+      note: "Puedes volver a Solo lectura o Paper en cualquier momento — eso surte efecto de inmediato, sin confirmación.",
+      cancel: "Cancelar",
+      confirm: "Activar live trading",
+    },
+    autoApproveConfirm: {
+      title: "¿Activar el auto-trade?",
+      willTitle: "Esto sucede de inmediato:",
+      will: {
+        noAsk: "El bot colocará trades REALES con tus fondos sin pedirte confirmación cada vez",
+        unattended: "Se elimina el paso de aprobación por trade — las propuestas que cumplen la política se ejecutan automáticamente",
+        killSwitchStillWorks: "El interruptor de emergencia y tus límites de política siguen activos y pueden detenerlo",
+      },
+      note: "Puedes volver a \"Aprobar cada trade\" en cualquier momento — eso surte efecto de inmediato, sin confirmación.",
+      cancel: "Cancelar",
+      confirm: "Activar auto-trade",
+    },
   },
 };

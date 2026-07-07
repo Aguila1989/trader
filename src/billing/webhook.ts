@@ -146,6 +146,44 @@ export async function handleStripeEvent(evt: StripeEvent): Promise<void> {
       return;
     }
 
+    // Payment-integrity: a refund is treated as an immediate premium
+    // revocation PLUS a manual-review flag (unlike a simple cancellation,
+    // a refund after service was rendered is worth a human look).
+    case "charge.refunded": {
+      const charge = evt.data.object as { customer?: string | null; id?: string; amount_refunded?: number };
+      const userId = await userIdForCustomer(charge.customer);
+      if (!userId) {
+        store.log("warn", `Stripe charge.refunded for unresolved customer ${String(charge.customer)}.`);
+        return;
+      }
+      const detail = `charge=${charge.id ?? "?"} amount_refunded=${charge.amount_refunded ?? "?"}`;
+      await authStore.setSubscriptionState(userId, { isPremium: false, subscriptionStatus: "refunded" });
+      await billing.setUserFlaggedForReview(userId, true);
+      await billing.insertAdminAudit("stripe-webhook", "charge.refunded", userId, detail);
+      store.log("warn", `Premium revoked + flagged for review: user ${userId.slice(0, 8)}… (Stripe charge refunded, ${detail}).`);
+      return;
+    }
+
+    // Payment-integrity: a dispute (chargeback) also revokes premium + flags
+    // for review. NOTE: depending on the Stripe API version, the Dispute
+    // object may NOT include `customer` directly - fully resolving it in that
+    // case would need a follow-up getCharge(object.charge) call to read the
+    // charge's customer id (future follow-up; not implemented here).
+    case "charge.dispute.created": {
+      const dispute = evt.data.object as { id?: string; charge?: string; reason?: string; amount?: number; customer?: string | null };
+      const userId = await userIdForCustomer(dispute.customer);
+      if (!userId) {
+        store.log("warn", `Stripe charge.dispute.created for unresolved customer (charge ${String(dispute.charge)}).`);
+        return;
+      }
+      const detail = `dispute=${dispute.id ?? "?"} charge=${dispute.charge ?? "?"} reason=${dispute.reason ?? "?"} amount=${dispute.amount ?? "?"}`;
+      await authStore.setSubscriptionState(userId, { isPremium: false, subscriptionStatus: "disputed" });
+      await billing.setUserFlaggedForReview(userId, true);
+      await billing.insertAdminAudit("stripe-webhook", "charge.dispute.created", userId, detail);
+      store.log("error", `Premium revoked + flagged for review: user ${userId.slice(0, 8)}… (Stripe dispute created, ${detail}).`);
+      return;
+    }
+
     default:
       return; // benign: Stripe sends more event types than we subscribe to
   }

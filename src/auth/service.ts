@@ -21,7 +21,7 @@
 import { config } from "../config";
 import { store } from "../trading/store";
 import { hashPassword, verifyPassword } from "../users/password";
-import { signJwt } from "./jwt";
+import { signJwt, verifyJwt } from "./jwt";
 import { validatePasswordOrError } from "./passwordPolicy";
 import {
   generateLinkToken,
@@ -33,6 +33,7 @@ import {
 import { buildLink, sendMail, smtpConfigured } from "./mailer";
 import * as authStore from "./store";
 import type { User } from "../users/types";
+import { verifyTotp, generateTotpSecret, otpauthUri } from "../admin/totp";
 
 /** The neutral message the spec mandates for every login failure. */
 const GENERIC_LOGIN_ERROR = "Invalid email or password";
@@ -120,9 +121,41 @@ export async function registerUser(input: {
 
 // --- login ------------------------------------------------------------------
 
+/** Audience claim for the short-lived pending-2FA challenge token. */
+const TWO_FA_PENDING_AUD = "atrium-2fa-pending";
+/** The challenge is deliberately short-lived: it is a "prove you also have the
+ *  password" ticket, not a session, and is never set as a cookie. */
+const TWO_FA_CHALLENGE_TTL_SEC = 300;
+
 export type LoginResult =
   | { ok: true; user: User; jwt: string; jti: string; ttlSec: number; expSec: number }
+  | { ok: "2fa"; challenge: string }
   | { ok: false; status: number; error: string };
+
+/**
+ * Mint a real session (JWT + dbo.AuthSessions row) for an already-fully-
+ * authenticated user. Shared by login() (the no-2FA path) and
+ * verifyTwoFactor() (after a correct code), so the two paths can never drift
+ * apart on TTL/claims/bookkeeping.
+ */
+async function mintSession(
+  user: User,
+  rememberMe: boolean | undefined,
+  ip: string | null,
+): Promise<Extract<LoginResult, { ok: true }>> {
+  const ttlSec = rememberMe ? config.auth.rememberMeDays * 86_400 : config.auth.sessionHours * 3_600;
+  const issued = nowSec();
+  const jti = newId();
+  await authStore.createSession({
+    id: jti,
+    userId: user.id,
+    expiresAt: (issued + ttlSec) * 1000,
+    ip: ip ?? undefined,
+  });
+  const jwt = signJwt({ sub: user.id, email: user.email, jti }, config.jwtSecret, { nowSec: issued, ttlSec });
+  await authStore.recordSuccessfulLogin(user.id);
+  return { ok: true, user, jwt, jti, ttlSec, expSec: issued + ttlSec };
+}
 
 export async function login(input: {
   email: unknown;
@@ -184,23 +217,136 @@ export async function login(input: {
     return { ok: false, status: 403, error: "Please verify your email address before logging in. Check your inbox for the verification link." };
   }
 
-  // Success: mint a session + JWT.
-  const ttlSec = input.rememberMe
-    ? config.auth.rememberMeDays * 86_400
-    : config.auth.sessionHours * 3_600;
-  const issued = nowSec();
-  const jti = newId();
-  await authStore.createSession({
-    id: jti,
-    userId: cred.user.id,
-    expiresAt: (issued + ttlSec) * 1000,
-    ip: ip ?? undefined,
-  });
-  const jwt = signJwt({ sub: cred.user.id, email: cred.user.email, jti }, config.jwtSecret, { nowSec: issued, ttlSec });
-  await authStore.recordSuccessfulLogin(cred.user.id);
-  await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: true, reason: input.rememberMe ? "ok-remember" : "ok" });
+  // End-user 2FA (opt-in): the password is correct and every other check has
+  // passed, but the account has TOTP enabled. Do NOT create a session or set
+  // any cookies yet - mint a short-lived, narrowly-scoped challenge token
+  // (aud="atrium-2fa-pending") that only proves "this request already knew the
+  // correct password"; verifyTwoFactor() below is the only thing that can turn
+  // it into a real session, and only after a correct code.
+  if (cred.totpEnabled) {
+    const challenge = signJwt(
+      { sub: cred.user.id, email: cred.user.email, jti: newId(), aud: TWO_FA_PENDING_AUD },
+      config.jwtSecret,
+      { nowSec: nowSec(), ttlSec: TWO_FA_CHALLENGE_TTL_SEC },
+    );
+    await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: false, reason: "2fa-required" });
+    return { ok: "2fa", challenge };
+  }
 
-  return { ok: true, user: cred.user, jwt, jti, ttlSec, expSec: issued + ttlSec };
+  // Success: mint a session + JWT.
+  const result = await mintSession(cred.user, input.rememberMe, ip);
+  await authStore.recordLoginAttempt({ email, userId: cred.user.id, ip, success: true, reason: input.rememberMe ? "ok-remember" : "ok" });
+  return result;
+}
+
+// --- end-user 2FA (TOTP), opt-in --------------------------------------------
+
+export type TwoFactorVerifyResult = LoginResult;
+
+/**
+ * Complete login for an account with 2FA enabled: verify the pending-2FA
+ * challenge minted by login(), then the user-entered code, then mint the real
+ * session exactly like the no-2FA path (mintSession is shared). A bad code
+ * records a failed login attempt, same as a bad password.
+ */
+export async function verifyTwoFactor(input: {
+  challenge: unknown;
+  code: unknown;
+  rememberMe?: boolean;
+  ip: string | null;
+}): Promise<TwoFactorVerifyResult> {
+  const challenge = String(input.challenge ?? "");
+  const code = String(input.code ?? "");
+  const ip = input.ip;
+
+  const v = verifyJwt(challenge, config.jwtSecret, nowSec());
+  if (!v.ok || v.claims.aud !== TWO_FA_PENDING_AUD) {
+    return { ok: false, status: 401, error: "This code challenge is invalid or has expired. Please sign in again." };
+  }
+
+  const user = await authStore.findUserById(v.claims.sub);
+  const cred = user ? await authStore.findCredentialByEmail(user.email) : null;
+  if (!cred || !cred.totpEnabled || !cred.totpSecret) {
+    // The account's 2FA state changed (e.g. an admin reset it) between login
+    // and this call - fail closed rather than silently skipping the check.
+    return { ok: false, status: 401, error: "This code challenge is invalid or has expired. Please sign in again." };
+  }
+
+  if (!verifyTotp(cred.totpSecret, code)) {
+    await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: false, reason: "bad-2fa-code" });
+    return { ok: false, status: 401, error: "Invalid authentication code." };
+  }
+
+  const result = await mintSession(cred.user, input.rememberMe, ip);
+  await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: true, reason: input.rememberMe ? "ok-remember-2fa" : "ok-2fa" });
+  return result;
+}
+
+export type TwoFactorSetupResult =
+  | { ok: true; secret: string; otpauthUri: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Start (or restart) enrollment: generate a fresh secret, persist it as
+ * PENDING (totpEnabled stays false until enableTwoFactor confirms a code),
+ * and return it plus the otpauth:// URI for the authenticator-app QR code.
+ * Safe to call again before confirming - each call replaces the pending secret.
+ */
+export async function setupTwoFactor(userId: string): Promise<TwoFactorSetupResult> {
+  const user = await authStore.findUserById(userId);
+  if (!user) return { ok: false, status: 404, error: "Account not found." };
+  const secret = generateTotpSecret();
+  await authStore.setTotpSecret(userId, secret);
+  return { ok: true, secret, otpauthUri: otpauthUri(secret, user.email, "Atrium") };
+}
+
+export type TwoFactorEnableResult = { ok: true } | { ok: false; status: number; error: string };
+
+/**
+ * Confirm enrollment: the user must prove possession of the authenticator by
+ * submitting a valid code for the secret setupTwoFactor() just stored. Only
+ * then does totpEnabled flip to true and login start requiring a code.
+ */
+export async function enableTwoFactor(userId: string, code: unknown): Promise<TwoFactorEnableResult> {
+  const cred = await authStore.findCredentialByEmail((await authStore.findUserById(userId))?.email ?? "");
+  if (!cred || !cred.totpSecret) {
+    return { ok: false, status: 400, error: "Start 2FA setup before confirming a code." };
+  }
+  if (!verifyTotp(cred.totpSecret, String(code ?? ""))) {
+    return { ok: false, status: 400, error: "Invalid authentication code." };
+  }
+  await authStore.setTotpEnabled(userId, true);
+  store.log("info", "User enabled 2FA", { userId });
+  return { ok: true };
+}
+
+export type TwoFactorDisableResult = { ok: true } | { ok: false; status: number; error: string };
+
+/**
+ * Turn 2FA off. Requires BOTH the current password AND a valid code - either
+ * alone is not enough to remove a security factor. (There is no backup-code
+ * recovery path by design; a user who loses their authenticator and can still
+ * pass this check is proving they still control the account the safe way.)
+ */
+export async function disableTwoFactor(input: {
+  userId: string;
+  password: unknown;
+  code: unknown;
+}): Promise<TwoFactorDisableResult> {
+  const user = await authStore.findUserById(input.userId);
+  const cred = user ? await authStore.findCredentialByEmail(user.email) : null;
+  if (!cred) return { ok: false, status: 400, error: "Account not found." };
+  if (!cred.totpEnabled || !cred.totpSecret) {
+    return { ok: false, status: 400, error: "2FA is not enabled on this account." };
+  }
+  const passwordOk = await verifyPassword(String(input.password ?? ""), cred.passwordHash);
+  const codeOk = verifyTotp(cred.totpSecret, String(input.code ?? ""));
+  if (!passwordOk || !codeOk) {
+    return { ok: false, status: 400, error: "Incorrect password or authentication code." };
+  }
+  await authStore.setTotpEnabled(cred.user.id, false);
+  store.log("info", "User disabled 2FA", { userId: cred.user.id });
+  return { ok: true };
 }
 
 // --- logout -----------------------------------------------------------------

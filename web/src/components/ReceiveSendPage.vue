@@ -15,6 +15,7 @@ import AssetSelect from "./AssetSelect.vue";
 import InfoTip from "./InfoTip.vue";
 import ReceiveQr from "./wallet/ReceiveQr.vue";
 import ConversionHistory from "./ConversionHistory.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -74,8 +75,37 @@ const sendValid = computed(
     Number(sendAmount.value) > 0 &&
     !sendInsufficient.value,
 );
-async function send(): Promise<void> {
+// FIX 1/2: Stellar payments are irreversible, and many exchange/custodial
+// deposit addresses REQUIRE a memo — sending without one when it's required
+// permanently loses the funds (the classic Stellar footgun). Client-side we
+// can't know whether a given destination needs a memo, so instead of
+// signing straight away we insert a review step: a clear summary of what's
+// about to be sent, and — only when the memo field is empty — an explicit
+// "this address doesn't need a memo" acknowledgement that gates the confirm
+// button. A provided memo needs no acknowledgement.
+const showSendConfirm = ref(false);
+const memoAck = ref(false);
+const sendConfirmError = ref(false);
+const sendMemoEmpty = computed(() => !sendMemo.value.trim());
+
+function openSendConfirm(): void {
   if (sending.value || !sendValid.value) return;
+  memoAck.value = false;
+  sendConfirmError.value = false;
+  showSendConfirm.value = true;
+}
+
+function cancelSendConfirm(): void {
+  showSendConfirm.value = false;
+  sendConfirmError.value = false;
+}
+
+async function confirmSend(): Promise<void> {
+  if (sendMemoEmpty.value && !memoAck.value) {
+    sendConfirmError.value = true;
+    return;
+  }
+  showSendConfirm.value = false;
   sending.value = true;
   try {
     const ok = await store.pay({
@@ -101,6 +131,21 @@ const swapAmount = ref("");
 const quoting = ref(false);
 const swapping = ref(false);
 const quote = computed(() => store.swapQuoteResult);
+// FIX 3: the quote only carries the expected destAmount, not a worst-case
+// figure. The swap executes with slippageBps defaulting server-side to
+// store.limits.maxSlippageBps (see server.ts /api/swap + stellar/transfers.ts
+// executeSwap, which floors destMin = destAmount * (1 - bps/10000)); mirror
+// that exact formula here so the user sees the real worst-case before
+// committing, not just the quoted mid-price amount.
+const slippageBps = computed(() => store.limits?.maxSlippageBps ?? 0);
+const slippagePct = computed(() => (slippageBps.value / 100).toString());
+const swapDestMin = computed(() => {
+  if (!quote.value) return null;
+  const dest = Number(quote.value.destAmount);
+  if (!Number.isFinite(dest)) return null;
+  const min = Math.floor(dest * (1 - slippageBps.value / 10000) * 1e7) / 1e7;
+  return min > 0 ? min : 0;
+});
 const swapHeld = computed(() => store.heldBalance(swapFrom.value));
 const swapInsufficient = computed(
   () => Number(swapAmount.value) > 0 && Number(swapAmount.value) > swapHeld.value,
@@ -186,7 +231,7 @@ async function doSwap(): Promise<void> {
              only). PAPER is the one exception: sends move REAL funds and have
              no simulation, so they are disabled while simulating (the backend
              refuses too). Wallet + kill switch stay enforced server-side. -->
-        <button class="btn primary" :disabled="sending || store.isPaper || !sendValid" @click="send">
+        <button class="btn primary" :disabled="sending || store.isPaper || !sendValid" @click="openSendConfirm">
           {{ sending ? t("wallet.sending") : t("wallet.send") }}
         </button>
       </div>
@@ -198,6 +243,40 @@ async function doSwap(): Promise<void> {
         {{ t("wallet.insufficient", { code: store.tokenFor(sendAsset).code, held: fmtNum(sendHeld) }) }}
       </p>
     </section>
+
+    <!-- SEND CONFIRMATION: FIX 1 (review step, irreversible on-chain transfer)
+         + FIX 2 (memo-required warning / acknowledgement gate). -->
+    <ConfirmDialog
+      v-if="showSendConfirm"
+      :title="t('receiveSend.sendConfirm.title')"
+      :confirm-label="t('receiveSend.sendConfirm.confirm')"
+      :cancel-label="t('receiveSend.sendConfirm.cancel')"
+      destructive
+      @confirm="confirmSend"
+      @cancel="cancelSendConfirm"
+    >
+      <p>
+        {{
+          t("receiveSend.sendConfirm.summary", {
+            amount: fmtNum(sendAmount),
+            code: store.tokenFor(sendAsset).code,
+            destination: sendTo.trim(),
+          })
+        }}
+      </p>
+      <p class="cd-muted">
+        {{ sendMemo.trim() ? t("receiveSend.sendConfirm.memoLine", { memo: sendMemo.trim() }) : t("receiveSend.sendConfirm.noMemoLine") }}
+      </p>
+      <p class="cd-muted">{{ t("receiveSend.sendConfirm.irreversible") }}</p>
+      <template v-if="sendMemoEmpty">
+        <p class="sc-warning">{{ t("receiveSend.sendConfirm.memoWarning") }}</p>
+        <label class="sc-ack">
+          <input type="checkbox" v-model="memoAck" @change="sendConfirmError = false" />
+          {{ t("receiveSend.sendConfirm.memoAck") }}
+        </label>
+        <p v-if="sendConfirmError" class="violations">{{ t("receiveSend.sendConfirm.ackRequired") }}</p>
+      </template>
+    </ConfirmDialog>
 
     <!-- SWAP -->
     <section class="panel">
@@ -231,6 +310,19 @@ async function doSwap(): Promise<void> {
         ≈ <span class="mono">{{ fmtNum(quote.destAmount) }}</span> {{ code(quote.destAsset) }}
         {{ t("wallet.for") }} {{ fmtNum(quote.sendAmount) }} {{ code(quote.sendAsset) }}
         <span v-if="quote.path.length">{{ t("wallet.via") }} {{ quote.path.map(code).join(" → ") }}</span>
+      </p>
+      <!-- FIX 3: the quote line above is the expected mid-price fill; show the
+           worst-case (destMin) the swap will actually accept, per the
+           slippage tolerance that store.limits.maxSlippageBps applies
+           server-side, before the user commits. -->
+      <p v-if="quote && swapDestMin !== null" class="muted w-quote w-impact">
+        {{
+          t("receiveSend.swapImpact.minReceived", {
+            amount: fmtNum(swapDestMin),
+            code: code(quote.destAsset),
+          })
+        }}
+        <InfoTip :text="t('receiveSend.swapImpact.tip', { pct: slippagePct })" :label="t('receiveSend.swapImpact.label')" />
       </p>
       <p v-if="store.walletError" class="violations">{{ store.walletError }}</p>
     </section>
@@ -316,5 +408,35 @@ async function doSwap(): Promise<void> {
 }
 .w-quote {
   font-size: 12px;
+}
+.w-impact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* FIX 2: the memo-required warning needs to read as "stop and check this",
+   not blend in with the routine .muted copy in the dialog body. */
+.sc-warning {
+  background: #2a1e05;
+  border: 1px solid #5e4a1f;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--warn);
+  font-weight: 600;
+}
+.sc-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.sc-ack input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin-top: 1px;
+  accent-color: var(--accent);
 }
 </style>

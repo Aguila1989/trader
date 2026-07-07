@@ -80,6 +80,40 @@ export function createAuthRouter(): Router {
       rememberMe: Boolean(req.body?.rememberMe),
       ip: req.ip ?? null,
     });
+    if (r.ok === "2fa") {
+      // Deliberately 200, not a session: the challenge lives ONLY in the
+      // response body (never a cookie), so it can never pass requireAuth.
+      res.json({ twoFactorRequired: true, challenge: r.challenge });
+      return;
+    }
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    setSessionCookies(res, r);
+    res.json({
+      user: { id: r.user.id, email: r.user.email, displayName: r.user.displayName ?? null },
+    });
+  });
+
+  // POST /api/auth/2fa/verify - PUBLIC (runs pre-session; see PUBLIC_API_PATHS).
+  // Completes login for an account with 2FA enabled: the challenge from
+  // /login plus the authenticator code. On success this sets the SAME session
+  // cookies /login would have set.
+  router.post("/2fa/verify", async (req, res) => {
+    const r = await auth.verifyTwoFactor({
+      challenge: req.body?.challenge,
+      code: req.body?.code,
+      rememberMe: Boolean(req.body?.rememberMe),
+      ip: req.ip ?? null,
+    });
+    // verifyTwoFactor never actually returns the "2fa" variant (that only
+    // comes out of login()) - narrow it away so the success branch below has
+    // the same shape setSessionCookies expects from /login.
+    if (r.ok === "2fa") {
+      res.status(500).json({ error: "Unexpected 2FA state." });
+      return;
+    }
     if (!r.ok) {
       res.status(r.status).json({ error: r.error });
       return;
@@ -182,8 +216,47 @@ export function createAuthRouter(): Router {
         displayName: user.displayName ?? null,
         createdAt: user.createdAt,
         onboardingCompleted: user.onboardingCompleted,
+        totpEnabled: user.totpEnabled,
       },
     });
+  });
+
+  // --- end-user 2FA (TOTP), opt-in - all three are authenticated (requireAuth
+  // already ran; NOT in PUBLIC_API_PATHS), mirroring /change-password. ---
+
+  // POST /api/auth/2fa/setup - (re)start enrollment: generates + persists a
+  // pending secret and returns it plus the otpauth:// URI for the QR code.
+  router.post("/2fa/setup", async (_req: Request, res: Response) => {
+    const r = await auth.setupTwoFactor(currentUserId());
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    res.json({ secret: r.secret, otpauthUri: r.otpauthUri });
+  });
+
+  // POST /api/auth/2fa/enable {code} - confirm enrollment with a valid code.
+  router.post("/2fa/enable", async (req: Request, res: Response) => {
+    const r = await auth.enableTwoFactor(currentUserId(), req.body?.code);
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  // POST /api/auth/2fa/disable {password, code} - requires BOTH.
+  router.post("/2fa/disable", async (req: Request, res: Response) => {
+    const r = await auth.disableTwoFactor({
+      userId: currentUserId(),
+      password: req.body?.password,
+      code: req.body?.code,
+    });
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   // POST /api/auth/onboarding {completed: boolean} - mark the interactive tour

@@ -10,6 +10,7 @@ import { useTraderStore } from "./stores/trader";
 import { setUnauthorizedHandler } from "./api";
 import { isLoggedIn, session, refreshSession } from "./auth/session";
 import { resetWalletState } from "./wallet/walletState";
+import ErrorBoundary from "./components/ErrorBoundary.vue";
 
 const store = useTraderStore();
 const router = useRouter();
@@ -50,6 +51,10 @@ watch(
 <template>
   <!-- The shell (sidebar + header) is provided by AppLayout for the
        authenticated/Academy routes; auth screens render standalone. The live log
-       is scoped to the Trading page (see TradingPage.vue). -->
-  <router-view />
+       is scoped to the Trading page (see TradingPage.vue). Fix 1: wrap the whole
+       routed tree in an error boundary so a render error in any one screen (auth
+       or authenticated) shows a recoverable panel instead of a blank app. -->
+  <ErrorBoundary>
+    <router-view />
+  </ErrorBoundary>
 </template>

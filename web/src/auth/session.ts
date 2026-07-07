@@ -8,7 +8,7 @@
 // The marker is advisory only: every protected API call is still validated
 // server-side against the signed JWT + the session record.
 import { reactive } from "vue";
-import { authApi, type AuthApiResult } from "../api";
+import { authApi } from "../api";
 
 const SESSION_COOKIE = "trader_session";
 
@@ -70,8 +70,25 @@ export function refreshSession(): void {
 // Initialise from whatever cookie is present at load (survives a page refresh).
 refreshSession();
 
-export async function login(email: string, password: string, rememberMe: boolean): Promise<AuthApiResult> {
+export async function login(
+  email: string,
+  password: string,
+  rememberMe: boolean,
+): ReturnType<typeof authApi.login> {
   const r = await authApi.login(email, password, rememberMe);
+  // A 2FA-required response carries no session cookie yet, so there is
+  // nothing to refresh - the caller (LoginPage) switches to the code step.
+  if (r.ok && !r.data.twoFactorRequired) refreshSession();
+  return r;
+}
+
+/** Completes login for an account with 2FA enabled (see LoginPage's totp step). */
+export async function verifyTwoFactor(
+  challenge: string,
+  code: string,
+  rememberMe: boolean,
+): ReturnType<typeof authApi.verify2fa> {
+  const r = await authApi.verify2fa(challenge, code, rememberMe);
   if (r.ok) refreshSession();
   return r;
 }

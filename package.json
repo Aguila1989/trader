@@ -18,7 +18,12 @@
     "test:watch": "vitest",
     "admin:totp-setup": "tsx scripts/admin-setup.ts totp",
     "admin:hash-password": "tsx scripts/admin-setup.ts hash",
-    "build:admin": "npm --prefix admin-web run build"
+    "build:admin": "npm --prefix admin-web run build",
+    "cap:add:ios": "cap add ios",
+    "cap:add:android": "cap add android",
+    "cap:sync": "npm run build && cap sync",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
@@ -27,9 +32,14 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "helmet": "^8.2.0",
-    "mssql": "^12.5.5"
+    "mssql": "^12.5.5",
+    "nodemailer": "^6.9.16"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0",
     "@types/express": "^5.0.0",
     "@types/mssql": "^12.3.0",
     "@types/node": "^22.10.0",

@@ -57,6 +57,10 @@ function confirmReactivate(): void {
   void store.setKill(false);
 }
 
+// (Arming confirmation for Live / Auto-Approve lives in AiToggle.vue, where the
+// toggle buttons are — gating there is robust; monkey-patching the store from
+// here risked double-wrapping on a remount.)
+
 // Mobile: secondary status badges collapse behind a "More" toggle so the header
 // never wraps into disorganised rows. Desktop shows everything inline.
 const showMore = ref(false);
@@ -182,6 +186,32 @@ const showMore = ref(false);
 </template>
 
 <style scoped>
+/* Feature 6 follow-up: the paused/kill-switch banner had NO styling at all,
+   so a halted bot (whose stop losses will NOT fire) could render as an
+   unstyled, easy-to-miss element. Give it full-width, high-contrast,
+   danger-weight treatment — heavier than the informational .tl-banner
+   (trustline warnings) since this state means protective stops are off. */
+.ks-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: rgba(255, 93, 108, 0.16);
+  border: none;
+  border-bottom: 1px solid #5e1f28;
+  color: var(--neg);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-align: center;
+  cursor: pointer;
+}
+.ks-banner:hover {
+  background: rgba(255, 93, 108, 0.24);
+}
+
 .net-badge {
   flex-shrink: 0;
 }

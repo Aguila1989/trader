@@ -436,6 +436,14 @@ export const config = {
    */
   allowMainnetWithoutDb: bool("ALLOW_MAINNET_WITHOUT_DB", false),
   /**
+   * Opt out of the mainnet "SMTP not configured" boot guard. Without SMTP on
+   * mainnet, password-reset/verification emails cannot be delivered and (per
+   * AUDIT-010) the raw link is never printed as a fallback, so a user who loses
+   * their password can never recover their account. Set true only if you
+   * knowingly accept that risk (e.g. a single-operator deployment).
+   */
+  allowMainnetWithoutSmtp: bool("ALLOW_MAINNET_WITHOUT_SMTP", false),
+  /**
    * SEC-12: opt out of the mainnet "insecure DB TLS" boot guard. The guard only
    * fires for a REMOTE DB (a loopback/local docker DB has no wire to MITM, so it
    * is always exempt). Set true only if you knowingly accept an unencrypted /

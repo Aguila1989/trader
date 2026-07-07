@@ -1,0 +1,21 @@
+{
+  "name": "Atrium — Stellar AI Trading",
+  "short_name": "Atrium",
+  "description": "Non-custodial AI-assisted trading on the Stellar DEX. You hold your keys.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "categories": ["finance"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -146,3 +146,19 @@ export function subscriptionPeriod(sub: StripeSubscription): { startMs: number |
 export function isPremiumStatus(status: string): boolean {
   return status === "active" || status === "trialing";
 }
+
+export interface StripeBillingPortalSession {
+  id: string;
+  url: string;
+}
+
+/** Self-service cancellation/management (Billing Portal), returned to /#/pricing. */
+export async function createBillingPortalSession(input: {
+  customerId: string;
+  returnUrl: string;
+}): Promise<StripeBillingPortalSession> {
+  return stripeRequest<StripeBillingPortalSession>("POST", "/billing_portal/sessions", {
+    customer: input.customerId,
+    return_url: input.returnUrl,
+  });
+}

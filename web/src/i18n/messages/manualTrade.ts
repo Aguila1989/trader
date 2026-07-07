@@ -57,6 +57,18 @@ export default {
     marketOrderNote: "Market order — fills at the current best price",
     orderHint:
       "Manual orders bypass the AI size, daily-volume and exposure caps — trade any amount you hold. The safety gates (slippage, balance, kill switch) still apply.",
+    commitSummary: {
+      order: "Order",
+      sellFor: "Sell {amount} {sellCode} for {buyCode}",
+      atPrice: "@ {price} {buyCode}/{sellCode}",
+      worstCase: "Worst case",
+      worstCaseTip:
+        "The lowest amount you could receive if the price moves against you by the full slippage tolerance before the order fills, minus the estimated platform fee (if any). Actual results are usually better than this.",
+      youReceiveAtLeast: "You receive ≈ {amount} {code} or more",
+      slippageBasis: "Based on a {bps} bps slippage tolerance.",
+      feeIncluded: "Includes an estimated {pct}% platform fee (≈ {amount} {code}).",
+      networkFeeNote: "Network fees are minimal and added by the Stellar network at submission.",
+    },
     actions: {
       refresh: "Refresh",
       cancel: "Cancel",
@@ -85,6 +97,7 @@ export default {
       slippageTolerancePercent: "slippage tolerance percent",
       targetPrice: "Target price",
       invalidationPrice: "Invalidation price",
+      worstCase: "What does worst case mean?",
     },
     result: {
       blocked: "Blocked: {reasons}",
@@ -163,6 +176,18 @@ export default {
     marketOrderNote: "Market-order — vult tegen de huidige beste prijs",
     orderHint:
       "Handmatige orders omzeilen de AI-limieten voor omvang, dagvolume en blootstelling — verhandel elk bedrag dat je bezit. De veiligheidsgrenzen (slippage, saldo, kill switch) blijven van kracht.",
+    commitSummary: {
+      order: "Order",
+      sellFor: "Verkoop {amount} {sellCode} voor {buyCode}",
+      atPrice: "@ {price} {buyCode}/{sellCode}",
+      worstCase: "Slechtste geval",
+      worstCaseTip:
+        "Het minimale bedrag dat je kunt ontvangen als de prijs vóór het vullen van de order volledig tegen je beweegt binnen de slippage-tolerantie, min de geschatte platformkosten (indien van toepassing). Het werkelijke resultaat is meestal beter dan dit.",
+      youReceiveAtLeast: "Je ontvangt ≈ {amount} {code} of meer",
+      slippageBasis: "Gebaseerd op een slippage-tolerantie van {bps} bps.",
+      feeIncluded: "Inclusief een geschatte platformvergoeding van {pct}% (≈ {amount} {code}).",
+      networkFeeNote: "Netwerkkosten zijn minimaal en worden bij indiening door het Stellar-netwerk toegevoegd.",
+    },
     actions: {
       refresh: "Vernieuwen",
       cancel: "Annuleren",
@@ -191,6 +216,7 @@ export default {
       slippageTolerancePercent: "slippage-tolerantie percentage",
       targetPrice: "Doelprijs",
       invalidationPrice: "Invalidatieprijs",
+      worstCase: "Wat betekent slechtste geval?",
     },
     result: {
       blocked: "Geblokkeerd: {reasons}",
@@ -269,6 +295,18 @@ export default {
     marketOrderNote: "Ordre Market — exécuté au meilleur prix actuel",
     orderHint:
       "Les ordres manuels contournent les plafonds de taille, de volume quotidien et d'exposition de l'IA — vous pouvez trader n'importe quel montant que vous détenez. Les garde-fous de sécurité (slippage, solde, kill switch) restent actifs.",
+    commitSummary: {
+      order: "Ordre",
+      sellFor: "Vendre {amount} {sellCode} contre {buyCode}",
+      atPrice: "@ {price} {buyCode}/{sellCode}",
+      worstCase: "Pire cas",
+      worstCaseTip:
+        "Le montant minimum que vous pourriez recevoir si le prix évolue entièrement contre vous, dans la limite de la tolérance de slippage, avant l'exécution de l'ordre, moins les frais de plateforme estimés (le cas échéant). Le résultat réel est généralement meilleur que cela.",
+      youReceiveAtLeast: "Vous recevez ≈ {amount} {code} ou plus",
+      slippageBasis: "Basé sur une tolérance de slippage de {bps} points de base.",
+      feeIncluded: "Inclut des frais de plateforme estimés de {pct}% (≈ {amount} {code}).",
+      networkFeeNote: "Les frais de réseau sont minimes et ajoutés par le réseau Stellar lors de la soumission.",
+    },
     actions: {
       refresh: "Actualiser",
       cancel: "Annuler",
@@ -297,6 +335,7 @@ export default {
       slippageTolerancePercent: "tolérance de slippage en pourcentage",
       targetPrice: "Prix cible",
       invalidationPrice: "Prix d'invalidation",
+      worstCase: "Que signifie « pire cas » ?",
     },
     result: {
       blocked: "Bloqué : {reasons}",
@@ -375,6 +414,18 @@ export default {
     marketOrderNote: "Orden Market — se ejecuta al mejor precio actual",
     orderHint:
       "Las órdenes manuales omiten los límites de la IA de tamaño, volumen diario y exposición — opera con cualquier importe que tengas. Las protecciones de seguridad (slippage, saldo, kill switch) siguen aplicando.",
+    commitSummary: {
+      order: "Orden",
+      sellFor: "Vender {amount} {sellCode} por {buyCode}",
+      atPrice: "@ {price} {buyCode}/{sellCode}",
+      worstCase: "Peor caso",
+      worstCaseTip:
+        "El importe mínimo que podrías recibir si el precio se mueve totalmente en tu contra dentro de la tolerancia de slippage antes de que se ejecute la orden, menos la comisión de plataforma estimada (si aplica). El resultado real suele ser mejor que este.",
+      youReceiveAtLeast: "Recibes ≈ {amount} {code} o más",
+      slippageBasis: "Basado en una tolerancia de slippage de {bps} puntos básicos.",
+      feeIncluded: "Incluye una comisión de plataforma estimada del {pct}% (≈ {amount} {code}).",
+      networkFeeNote: "Las comisiones de red son mínimas y las añade la red Stellar al enviar la orden.",
+    },
     actions: {
       refresh: "Actualizar",
       cancel: "Cancelar",
@@ -403,6 +454,7 @@ export default {
       slippageTolerancePercent: "tolerancia de slippage en porcentaje",
       targetPrice: "Precio objetivo",
       invalidationPrice: "Precio de invalidación",
+      worstCase: "¿Qué significa peor caso?",
     },
     result: {
       blocked: "Bloqueado: {reasons}",

@@ -12,13 +12,22 @@
 //   Live trading: AI can trade.    Manual trades: allowed, submitted on-chain.
 // The mode only ever changes here (user click); it persists and is restored at
 // boot exactly as last set (Bug 3).
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
 import { billingState } from "../billing/premium";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const { t } = useI18n();
 const store = useTraderStore();
+
+// Fund-safety: enabling Live trading or Auto-Approve each arms unattended,
+// on-chain, real-money order submission — an inverted risk gate compared to the
+// kill switch (which only PAUSES) already having a full consequences dialog.
+// Gate the ENABLE direction here (where the buttons are); disabling / going
+// read-only stays an instant, one-click action.
+const showLiveConfirm = ref(false);
+const showAutoApproveConfirm = ref(false);
 
 // Feature 2: ENABLING the AI (and auto-trade) is premium-only; pausing and the
 // trading-access mode stay free. The server re-checks on every call - these
@@ -31,19 +40,32 @@ function set(on: boolean): void {
 }
 function setMode(auto: boolean): void {
   if (auto && premiumLocked.value) return;
-  if (store.isAutoTrade !== auto) void store.setAutoApprove(auto);
+  if (store.isAutoTrade === auto) return;
+  if (auto) {
+    showAutoApproveConfirm.value = true; // confirm before arming unattended trading
+    return;
+  }
+  void store.setAutoApprove(false);
+}
+function confirmAutoApprove(): void {
+  showAutoApproveConfirm.value = false;
+  if (!store.isAutoTrade) void store.setAutoApprove(true);
 }
 // Read-only / Paper / Live are mutually exclusive access modes; the backend
 // enforces exclusivity too, this just routes the click to the right toggle.
 function setAccess(mode: "readonly" | "paper" | "live"): void {
   if (mode === "live") {
-    if (!store.isLive) void store.setLiveTrading(true);
+    if (!store.isLive) showLiveConfirm.value = true; // confirm before arming real trading
   } else if (mode === "paper") {
     if (!store.isPaper) void store.setPaperTrading(true);
   } else {
     if (store.isLive) void store.setLiveTrading(false);
     if (store.isPaper) void store.setPaperTrading(false);
   }
+}
+function confirmLiveTrading(): void {
+  showLiveConfirm.value = false;
+  if (!store.isLive) void store.setLiveTrading(true);
 }
 </script>
 
@@ -141,6 +163,48 @@ function setAccess(mode: "readonly" | "paper" | "live"): void {
       </div>
     </div>
   </section>
+
+  <!-- Fund-safety: enabling Live trading arms real, on-chain, real-money order
+       submission — same weight as the kill switch. -->
+  <ConfirmDialog
+    v-if="showLiveConfirm"
+    :title="t('topBar.liveConfirm.title')"
+    :confirm-label="t('topBar.liveConfirm.confirm')"
+    :cancel-label="t('topBar.liveConfirm.cancel')"
+    destructive
+    :countdown-sec="2"
+    @confirm="confirmLiveTrading"
+    @cancel="showLiveConfirm = false"
+  >
+    <p><strong>{{ t("topBar.liveConfirm.willTitle") }}</strong></p>
+    <ul>
+      <li>{{ t("topBar.liveConfirm.will.realTrades") }}</li>
+      <li>{{ t("topBar.liveConfirm.will.realFunds") }}</li>
+      <li>{{ t("topBar.liveConfirm.will.policyStillApplies") }}</li>
+    </ul>
+    <p class="cd-muted">{{ t("topBar.liveConfirm.note") }}</p>
+  </ConfirmDialog>
+
+  <!-- Fund-safety: enabling Auto-Approve lets the AI submit real trades
+       unattended — no per-trade approval step remains. -->
+  <ConfirmDialog
+    v-if="showAutoApproveConfirm"
+    :title="t('topBar.autoApproveConfirm.title')"
+    :confirm-label="t('topBar.autoApproveConfirm.confirm')"
+    :cancel-label="t('topBar.autoApproveConfirm.cancel')"
+    destructive
+    :countdown-sec="2"
+    @confirm="confirmAutoApprove"
+    @cancel="showAutoApproveConfirm = false"
+  >
+    <p><strong>{{ t("topBar.autoApproveConfirm.willTitle") }}</strong></p>
+    <ul>
+      <li>{{ t("topBar.autoApproveConfirm.will.noAsk") }}</li>
+      <li>{{ t("topBar.autoApproveConfirm.will.unattended") }}</li>
+      <li>{{ t("topBar.autoApproveConfirm.will.killSwitchStillWorks") }}</li>
+    </ul>
+    <p class="cd-muted">{{ t("topBar.autoApproveConfirm.note") }}</p>
+  </ConfirmDialog>
 </template>
 
 <style scoped>

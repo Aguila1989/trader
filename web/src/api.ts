@@ -89,15 +89,35 @@ async function getJSON<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+// Money-moving mutations are built on postJSON. It must NEVER let a failure look
+// like a success: a swallowed non-2xx (returning `{}`) or an unhandled network
+// throw both leave the user unsure whether an on-chain action happened and invite
+// a duplicate retry. So we (a) catch network-level failures and (b) synthesize an
+// `error` field on any non-2xx that didn't already carry one. Every caller already
+// checks `.error`/`.hash`, so populating `.error` surfaces the failure everywhere
+// without changing the (non-throwing) calling convention.
 async function postJSON<T>(url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    credentials: CREDENTIALS,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      credentials: CREDENTIALS,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch {
+    // Offline, DNS failure, CORS, timeout: return an error sentinel instead of
+    // throwing an unhandled rejection out of the caller's async action.
+    return { error: "Network error - please try again." } as T;
+  }
   handleStatus(res);
-  return (await res.json().catch(() => ({}))) as T;
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok && !data.error) {
+    // Non-2xx with no server-provided message (e.g. a proxy 502 HTML page):
+    // synthesize a generic error so this can never be read as a success.
+    (data as { error?: string }).error = `Request failed (HTTP ${res.status}). Please check your history before retrying.`;
+  }
+  return data;
 }
 
 // --- auth API ---------------------------------------------------------------
@@ -146,8 +166,15 @@ export interface SessionUser {
 }
 
 export const authApi = {
+  // Login now has a 2FA branch: when the account has TOTP enabled, the server
+  // returns twoFactorRequired + a short-lived challenge instead of a session
+  // (no user/cookie yet) - see verify2fa below.
   login: (email: string, password: string, rememberMe: boolean) =>
-    authRequest<{ user?: SessionUser }>("/api/auth/login", { email, password, rememberMe }),
+    authRequest<{ user?: SessionUser; twoFactorRequired?: boolean; challenge?: string }>("/api/auth/login", {
+      email,
+      password,
+      rememberMe,
+    }),
   register: (email: string, password: string, confirmPassword: string) =>
     authRequest<{ verificationRequired?: boolean }>("/api/auth/register", { email, password, confirmPassword }),
   logout: () => authRequest("/api/auth/logout", {}),
@@ -163,13 +190,33 @@ export const authApi = {
   // Account details for the Account screen. Same data as me() plus createdAt,
   // returned via the non-throwing AuthApiResult shape.
   account: () =>
-    authGet<{ user: { id: string; email: string; displayName?: string; createdAt: string; onboardingCompleted?: boolean } }>(
-      "/api/auth/me",
-    ),
+    authGet<{
+      user: {
+        id: string;
+        email: string;
+        displayName?: string;
+        createdAt: string;
+        onboardingCompleted?: boolean;
+        totpEnabled?: boolean;
+      };
+    }>("/api/auth/me"),
   // Onboarding tutorial flag (Feature 1). true = completed/skipped; false =
   // "Restart Tutorial" (the tour auto-starts again on the next shell load).
   setOnboarding: (completed: boolean) =>
     authRequest<{ onboardingCompleted?: boolean }>("/api/auth/onboarding", { completed }),
+  // --- end-user 2FA (TOTP), opt-in ---
+  // Completes login after login() returned twoFactorRequired: the challenge it
+  // returned, plus the 6-digit authenticator code. On success this behaves
+  // exactly like a successful login() (session cookies set server-side).
+  verify2fa: (challenge: string, code: string, rememberMe: boolean) =>
+    authRequest<{ user?: SessionUser }>("/api/auth/2fa/verify", { challenge, code, rememberMe }),
+  // (Re)start enrollment: returns a fresh pending secret + its otpauth:// URI
+  // (rendered as a QR code) for the authenticator app to scan.
+  setup2fa: () => authRequest<{ secret?: string; otpauthUri?: string }>("/api/auth/2fa/setup", {}),
+  // Confirm enrollment with a code generated from the pending secret.
+  enable2fa: (code: string) => authRequest<{}>("/api/auth/2fa/enable", { code }),
+  // Turn 2FA off - requires BOTH the current password and a valid code.
+  disable2fa: (password: string, code: string) => authRequest<{}>("/api/auth/2fa/disable", { password, code }),
 };
 
 // --- AI API key (Feature 3) ---------------------------------------------------
@@ -219,6 +266,8 @@ export const billingApi = {
   // cost acknowledgement - the server refuses without it.
   checkout: (plan: "monthly" | "annual", ack: boolean) =>
     authRequest<{ url?: string }>("/api/billing/checkout-session", { plan, ack }),
+  // Returns the Stripe Billing Portal URL (self-service cancel/manage).
+  portal: () => authRequest<{ url?: string }>("/api/billing/portal", {}),
 };
 
 // --- Risk profile: effective (resolved) values (FIX-PLAN Fix 7) ------------

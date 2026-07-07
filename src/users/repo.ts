@@ -28,6 +28,7 @@ interface UserRow {
   subscriptionStatus: string | null;
   subscriptionEnd: Date | string | null;
   volumeTier: string | null;
+  totpEnabled: boolean;
 }
 
 function toIso(v: Date | string): string {
@@ -46,11 +47,12 @@ function rowToUser(r: UserRow): User {
     subscriptionStatus: r.subscriptionStatus ?? null,
     subscriptionEnd: r.subscriptionEnd ? toIso(r.subscriptionEnd) : null,
     volumeTier: r.volumeTier || "Bronze",
+    totpEnabled: Boolean(r.totpEnabled),
     ...(r.displayName ? { displayName: r.displayName } : {}),
   };
 }
 
-const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier`;
+const SELECT_COLS = `id, email, displayName, createdAt, lastLoginAt, isActive, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier, totpEnabled`;
 
 /**
  * Create a new account (idempotent on the unique email). Returns the created -
