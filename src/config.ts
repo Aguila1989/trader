@@ -89,6 +89,16 @@ export const config = {
   stellarSecret: env("STELLAR_SECRET"),
 
   /**
+   * OPTIONAL error monitoring (Sentry). Blank (default) = fully disabled, zero
+   * network calls, zero behavior change - see src/monitoring/sentry.ts. Set to
+   * a project DSN (from sentry.io) to start reporting uncaught backend errors.
+   * The frontend uses a SEPARATE build-time var, VITE_SENTRY_DSN (see
+   * .env.example / web/.env), because Vite bakes it into the bundle at build
+   * time rather than reading it at server boot.
+   */
+  sentryDsn: env("SENTRY_DSN"),
+
+  /**
    * REQUIRED (Feature 3 - wallet creation/import). Master secret from which a
    * per-user key is derived (HKDF-SHA256, salted per wallet, userId bound in)
    * to AES-256-GCM-encrypt each user's Stellar secret AT REST in dbo.Wallets.

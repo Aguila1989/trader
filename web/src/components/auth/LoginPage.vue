@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter, useRoute } from "vue-router";
 import AuthLayout from "./AuthLayout.vue";
@@ -22,6 +22,22 @@ const loading = ref(false);
 const step = ref<"password" | "totp">("password");
 const challenge = ref("");
 const code = ref("");
+
+// Backup-code toggle: relaxes the input from a strict 6-digit authenticator
+// code to the "XXXXX-XXXXX" one-time recovery code format. Both submit
+// through the exact same verifyTwoFactor call - the server tells the two
+// formats apart (see auth/service.ts verifyTwoFactor).
+const usingBackupCode = ref(false);
+
+const canSubmitCode = computed(() =>
+  usingBackupCode.value ? code.value.trim().replace(/[\s-]/g, "").length >= 8 : code.value.length === 6,
+);
+
+function toggleBackupCode(): void {
+  usingBackupCode.value = !usingBackupCode.value;
+  code.value = "";
+  error.value = "";
+}
 
 // Open-redirect guard: only ever follow an INTERNAL absolute path.
 function safeRedirect(p: unknown): string {
@@ -62,6 +78,7 @@ function backToPassword(): void {
   code.value = "";
   error.value = "";
   challenge.value = "";
+  usingBackupCode.value = false;
 }
 </script>
 
@@ -104,12 +121,13 @@ function backToPassword(): void {
 
     <template v-else>
       <h1 class="auth-title">{{ t("twoFa.login.title") }}</h1>
-      <p class="auth-sub muted">{{ t("twoFa.login.subtitle") }}</p>
+      <p class="auth-sub muted">{{ usingBackupCode ? t("twoFa.login.backupSubtitle") : t("twoFa.login.subtitle") }}</p>
 
       <form class="auth-form" @submit.prevent="submitTotp">
         <label class="auth-field">
-          <span>{{ t("twoFa.login.codeLabel") }}</span>
+          <span>{{ usingBackupCode ? t("twoFa.login.backupCodeLabel") : t("twoFa.login.codeLabel") }}</span>
           <input
+            v-if="!usingBackupCode"
             v-model="code"
             type="text"
             inputmode="numeric"
@@ -119,16 +137,30 @@ function backToPassword(): void {
             required
             autofocus
           />
+          <input
+            v-else
+            v-model="code"
+            type="text"
+            inputmode="text"
+            autocomplete="one-time-code"
+            maxlength="11"
+            :placeholder="t('twoFa.login.backupCodePlaceholder')"
+            required
+            autofocus
+          />
         </label>
 
         <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
 
-        <button class="btn primary auth-submit" type="submit" :disabled="loading || code.length !== 6">
+        <button class="btn primary auth-submit" type="submit" :disabled="loading || !canSubmitCode">
           {{ loading ? t("twoFa.login.submitting") : t("twoFa.login.submit") }}
         </button>
       </form>
 
       <div class="auth-links">
+        <a href="#" @click.prevent="toggleBackupCode">
+          {{ usingBackupCode ? t("twoFa.login.useAuthenticator") : t("twoFa.login.useBackupCode") }}
+        </a>
         <a href="#" @click.prevent="backToPassword">{{ t("twoFa.login.back") }}</a>
       </div>
     </template>

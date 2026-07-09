@@ -701,10 +701,16 @@ async function ensureAuthSchema(p: sql.ConnectionPool): Promise<void> {
  * base32 secret (set at /2fa/setup, before it is confirmed); `totpEnabled`
  * flips to 1 only after the user proves possession with a valid code at
  * /2fa/enable. Login only asks for a code when totpEnabled = 1, so an account
- * that never opted in is never blocked out - there are no backup codes, so a
- * hard requirement would risk permanently locking a user out of a funded
- * wallet. A locked-out user is recovered via the admin "reset 2FA" action
- * (src/admin/routes.ts), which clears both columns.
+ * that never opted in is never blocked out. A locked-out user (authenticator
+ * lost AND every backup code used) is recovered via the admin "reset 2FA"
+ * action (src/admin/routes.ts), which clears all three columns.
+ *
+ * `totpBackupCodes` (added alongside the original two columns) holds a JSON
+ * array of SHA-256 hex hashes of the unused one-time backup codes minted at
+ * /2fa/enable (and replaced wholesale by /2fa/backup-codes). Only hashes are
+ * ever persisted - the plaintext codes are shown to the user exactly once, at
+ * generation time, and never stored or logged. NULL means "no codes issued"
+ * (2FA never enabled, or disabled since - setTotpEnabled(false) also nulls it).
  */
 async function ensureTwoFactorSchema(p: sql.ConnectionPool): Promise<void> {
   await p.request().batch(`
@@ -713,6 +719,8 @@ async function ensureTwoFactorSchema(p: sql.ConnectionPool): Promise<void> {
     IF COL_LENGTH('dbo.Users', 'totpEnabled') IS NULL
       ALTER TABLE dbo.Users ADD totpEnabled BIT NOT NULL
         CONSTRAINT DF_Users_totpEnabled DEFAULT 0;
+    IF COL_LENGTH('dbo.Users', 'totpBackupCodes') IS NULL
+      ALTER TABLE dbo.Users ADD totpBackupCodes NVARCHAR(MAX) NULL;
   `);
 }
 

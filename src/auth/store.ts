@@ -36,6 +36,10 @@ export interface Credential {
   totpSecret: string | null;
   /** End-user 2FA (opt-in): true once the user has confirmed enrollment. */
   totpEnabled: boolean;
+  /** End-user 2FA backup codes: JSON array of SHA-256 hex hashes of the
+   *  unused codes, or null when none have been issued (never enabled, or
+   *  disabled since - see setTotpEnabled). */
+  totpBackupCodes: string | null;
 }
 
 export interface NewAccount {
@@ -74,6 +78,7 @@ interface MemUser {
   volumeTier: string;
   totpSecret: string | null;
   totpEnabled: boolean;
+  totpBackupCodes: string | null;
 }
 interface MemSession {
   id: string;
@@ -141,6 +146,7 @@ interface CredentialRow {
   volumeTier: string | null;
   totpSecret: string | null;
   totpEnabled: boolean;
+  totpBackupCodes: string | null;
 }
 
 function rowToCredential(r: CredentialRow): Credential {
@@ -168,10 +174,11 @@ function rowToCredential(r: CredentialRow): Credential {
     disabledByAdmin: Boolean(r.disabledByAdmin),
     totpSecret: r.totpSecret ?? null,
     totpEnabled: Boolean(r.totpEnabled),
+    totpBackupCodes: r.totpBackupCodes ?? null,
   };
 }
 
-const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, disabledByAdmin, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier, totpSecret, totpEnabled`;
+const CRED_COLS = `id, email, passwordHash, displayName, createdAt, lastLoginAt, isActive, emailVerified, failedLoginAttempts, lockedUntil, disabledByAdmin, onboardingCompleted, isPremium, subscriptionStatus, subscriptionEnd, volumeTier, totpSecret, totpEnabled, totpBackupCodes`;
 
 // --- accounts ---------------------------------------------------------------
 
@@ -205,6 +212,7 @@ export async function createAccount(a: NewAccount): Promise<User | null> {
       volumeTier: "Bronze",
       totpSecret: null,
       totpEnabled: false,
+      totpBackupCodes: null,
     };
     mem.users.set(u.id, u);
     return memUserToUser(u);
@@ -246,6 +254,7 @@ export async function findCredentialByEmail(email: string): Promise<Credential |
           disabledByAdmin: false, // admin backoffice requires a DB
           totpSecret: u.totpSecret,
           totpEnabled: u.totpEnabled,
+          totpBackupCodes: u.totpBackupCodes,
         };
       }
     }
@@ -374,15 +383,19 @@ export async function setTotpSecret(userId: string, secret: string): Promise<voi
 /**
  * Flip the enabled flag. Enabling requires the caller to have already verified
  * a code against the pending secret (see enableTwoFactor in service.ts).
- * Disabling also NULLs the secret so a later re-enrollment always starts from
- * a fresh secret (never resurrects an old one).
+ * Disabling also NULLs the secret AND the backup codes, so a later
+ * re-enrollment always starts from a fresh secret and a fresh code set (never
+ * resurrects old ones).
  */
 export async function setTotpEnabled(userId: string, enabled: boolean): Promise<void> {
   if (!dbReady()) {
     const u = mem.users.get(userId);
     if (u) {
       u.totpEnabled = enabled;
-      if (!enabled) u.totpSecret = null;
+      if (!enabled) {
+        u.totpSecret = null;
+        u.totpBackupCodes = null;
+      }
     }
     return;
   }
@@ -395,8 +408,26 @@ export async function setTotpEnabled(userId: string, enabled: boolean): Promise<
     await getPool()
       .request()
       .input("id", sql.NVarChar(64), userId)
-      .query(`UPDATE dbo.Users SET totpEnabled = 0, totpSecret = NULL WHERE id = @id;`);
+      .query(`UPDATE dbo.Users SET totpEnabled = 0, totpSecret = NULL, totpBackupCodes = NULL WHERE id = @id;`);
   }
+}
+
+/**
+ * Replace the persisted backup-code hash set wholesale (issued at
+ * /2fa/enable, replaced by /2fa/backup-codes). `hashesJson` is a JSON array of
+ * SHA-256 hex hashes of the normalized codes, or null to clear it.
+ */
+export async function setTotpBackupCodes(userId: string, hashesJson: string | null): Promise<void> {
+  if (!dbReady()) {
+    const u = mem.users.get(userId);
+    if (u) u.totpBackupCodes = hashesJson;
+    return;
+  }
+  await getPool()
+    .request()
+    .input("id", sql.NVarChar(64), userId)
+    .input("codes", sql.NVarChar(sql.MAX), hashesJson)
+    .query(`UPDATE dbo.Users SET totpBackupCodes = @codes WHERE id = @id;`);
 }
 
 /**
@@ -731,6 +762,7 @@ export async function deleteUserAndData(userId: string): Promise<void> {
       u.isActive = false;
       u.totpSecret = null;
       u.totpEnabled = false;
+      u.totpBackupCodes = null;
     }
     for (const s of mem.sessions.values()) if (s.userId === userId) mem.sessions.delete(s.id);
     for (const t of mem.tokens.values()) if (t.userId === userId) mem.tokens.delete(t.id);
@@ -750,7 +782,8 @@ export async function deleteUserAndData(userId: string): Promise<void> {
               passwordHash = @passwordHash,
               isActive = 0,
               totpSecret = NULL,
-              totpEnabled = 0
+              totpEnabled = 0,
+              totpBackupCodes = NULL
         WHERE id = @userId;`,
     );
   await pool

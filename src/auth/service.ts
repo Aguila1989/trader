@@ -18,6 +18,7 @@
  *    account is auto-verified and a warning is logged (per spec).
  *  - Passwords are never logged and never returned; only bcrypt hashes persist.
  */
+import { createHash, randomBytes } from "node:crypto";
 import { config } from "../config";
 import { store } from "../trading/store";
 import * as repo from "../db/repo";
@@ -245,6 +246,60 @@ export async function login(input: {
 
 // --- end-user 2FA (TOTP), opt-in --------------------------------------------
 
+/**
+ * Backup codes: 10 single-use recovery codes minted at /2fa/enable (and
+ * wholesale-replaced by /2fa/backup-codes), shown to the user exactly once in
+ * plaintext at generation time. Only a SHA-256 hash of each NORMALIZED code
+ * (uppercased, dashes/spaces stripped) is ever persisted - see
+ * authStore.setTotpBackupCodes / the totpBackupCodes column.
+ *
+ * Codes are high-entropy and never user-chosen, so a fast cryptographic hash
+ * (not bcrypt's deliberately-slow KDF, which exists to blunt guessing of
+ * LOW-entropy user-chosen secrets) is the right tool - same reasoning as the
+ * link-token hashing in tokens.ts.
+ *
+ * The alphabet excludes visually-ambiguous characters (0/O, 1/I) and is
+ * exactly 32 characters - a power of two - so mapping one random byte to one
+ * character via a 5-bit mask (`byte & 0x1f`) is perfectly uniform with no
+ * modulo bias.
+ */
+const BACKUP_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 chars, no 0/O/1/I
+const BACKUP_CODE_COUNT = 10;
+const BACKUP_CODE_LENGTH = 10; // characters per code, before the "XXXXX-XXXXX" separator
+
+/** One fresh code, formatted "XXXXX-XXXXX" for readability. */
+function generateBackupCode(): string {
+  const bytes = randomBytes(BACKUP_CODE_LENGTH);
+  let raw = "";
+  for (let i = 0; i < BACKUP_CODE_LENGTH; i++) {
+    raw += BACKUP_CODE_ALPHABET[bytes[i]! & 0x1f];
+  }
+  return `${raw.slice(0, 5)}-${raw.slice(5)}`;
+}
+
+/** A fresh set of BACKUP_CODE_COUNT distinct plaintext codes. */
+function generateBackupCodes(): string[] {
+  const codes = new Set<string>();
+  while (codes.size < BACKUP_CODE_COUNT) codes.add(generateBackupCode());
+  return [...codes];
+}
+
+/** Canonical comparison/storage form: uppercase, no dashes or whitespace. */
+function normalizeBackupCode(raw: string): string {
+  return raw.toUpperCase().replace(/[\s-]/g, "");
+}
+
+/** SHA-256 hex hash of an already-normalized code. */
+function hashBackupCode(normalized: string): string {
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+/** Hash + persist a freshly-generated plaintext code set for a user. */
+async function persistBackupCodes(userId: string, codes: string[]): Promise<void> {
+  const hashes = codes.map((c) => hashBackupCode(normalizeBackupCode(c)));
+  await authStore.setTotpBackupCodes(userId, JSON.stringify(hashes));
+}
+
 export type TwoFactorVerifyResult = LoginResult;
 
 /**
@@ -252,6 +307,13 @@ export type TwoFactorVerifyResult = LoginResult;
  * challenge minted by login(), then the user-entered code, then mint the real
  * session exactly like the no-2FA path (mintSession is shared). A bad code
  * records a failed login attempt, same as a bad password.
+ *
+ * The code is EITHER a 6-digit TOTP code or a one-time backup code - a plain
+ * `/^\d{6}$/` check on the trimmed input picks the path (backup codes are
+ * 10 letters/digits, never all-digit-6, so the two formats never collide). A
+ * successful backup code is immediately removed from the stored set (single
+ * use) and logged as a security-relevant event, since it means the user's
+ * authenticator app was unavailable.
  */
 export async function verifyTwoFactor(input: {
   challenge: unknown;
@@ -260,7 +322,7 @@ export async function verifyTwoFactor(input: {
   ip: string | null;
 }): Promise<TwoFactorVerifyResult> {
   const challenge = String(input.challenge ?? "");
-  const code = String(input.code ?? "");
+  const code = String(input.code ?? "").trim();
   const ip = input.ip;
 
   const v = verifyJwt(challenge, config.jwtSecret, nowSec());
@@ -276,13 +338,40 @@ export async function verifyTwoFactor(input: {
     return { ok: false, status: 401, error: "This code challenge is invalid or has expired. Please sign in again." };
   }
 
-  if (!verifyTotp(cred.totpSecret, code)) {
-    await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: false, reason: "bad-2fa-code" });
-    return { ok: false, status: 401, error: "Invalid authentication code." };
+  const isTotpFormat = /^\d{6}$/.test(code);
+  let usedBackupCode = false;
+
+  if (isTotpFormat) {
+    if (!verifyTotp(cred.totpSecret, code)) {
+      await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: false, reason: "bad-2fa-code" });
+      return { ok: false, status: 401, error: "Invalid authentication code." };
+    }
+  } else {
+    const hashes: string[] = cred.totpBackupCodes ? JSON.parse(cred.totpBackupCodes) : [];
+    const hash = hashBackupCode(normalizeBackupCode(code));
+    const idx = hashes.indexOf(hash);
+    if (idx === -1) {
+      await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: false, reason: "bad-2fa-code" });
+      return { ok: false, status: 401, error: "Invalid authentication code." };
+    }
+    // Single-use: remove the consumed hash before minting the session.
+    const remaining = hashes.filter((_, i) => i !== idx);
+    await authStore.setTotpBackupCodes(cred.user.id, JSON.stringify(remaining));
+    usedBackupCode = true;
+    store.log("warn", `2FA backup code used to sign in (authenticator app was not used); ${remaining.length} backup code(s) remain.`, {
+      userId: cred.user.id,
+      remaining: remaining.length,
+    });
   }
 
   const result = await mintSession(cred.user, input.rememberMe, ip);
-  await authStore.recordLoginAttempt({ email: cred.user.email, userId: cred.user.id, ip, success: true, reason: input.rememberMe ? "ok-remember-2fa" : "ok-2fa" });
+  await authStore.recordLoginAttempt({
+    email: cred.user.email,
+    userId: cred.user.id,
+    ip,
+    success: true,
+    reason: usedBackupCode ? "ok-2fa-backup" : input.rememberMe ? "ok-remember-2fa" : "ok-2fa",
+  });
   return result;
 }
 
@@ -304,12 +393,19 @@ export async function setupTwoFactor(userId: string): Promise<TwoFactorSetupResu
   return { ok: true, secret, otpauthUri: otpauthUri(secret, user.email, "Atrium") };
 }
 
-export type TwoFactorEnableResult = { ok: true } | { ok: false; status: number; error: string };
+export type TwoFactorEnableResult =
+  | { ok: true; backupCodes: string[] }
+  | { ok: false; status: number; error: string };
 
 /**
  * Confirm enrollment: the user must prove possession of the authenticator by
  * submitting a valid code for the secret setupTwoFactor() just stored. Only
  * then does totpEnabled flip to true and login start requiring a code.
+ *
+ * A fresh set of 10 backup codes is minted and persisted (hashed) in the same
+ * call and returned in PLAINTEXT exactly once - the caller (the route) must
+ * hand them to the user immediately; they can never be retrieved again, only
+ * replaced via regenerateBackupCodes.
  */
 export async function enableTwoFactor(userId: string, code: unknown): Promise<TwoFactorEnableResult> {
   const cred = await authStore.findCredentialByEmail((await authStore.findUserById(userId))?.email ?? "");
@@ -320,17 +416,46 @@ export async function enableTwoFactor(userId: string, code: unknown): Promise<Tw
     return { ok: false, status: 400, error: "Invalid authentication code." };
   }
   await authStore.setTotpEnabled(userId, true);
-  store.log("info", "User enabled 2FA", { userId });
-  return { ok: true };
+  const backupCodes = generateBackupCodes();
+  await persistBackupCodes(userId, backupCodes);
+  store.log("info", "User enabled 2FA (10 backup codes issued)", { userId });
+  return { ok: true, backupCodes };
+}
+
+export type RegenerateBackupCodesResult =
+  | { ok: true; backupCodes: string[] }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Replace the entire backup-code set with a fresh one (e.g. after the user has
+ * used several, or suspects the old list leaked). Requires a valid CURRENT
+ * TOTP code - deliberately NOT a backup code itself, so a compromised backup
+ * code alone cannot be used to mint a whole new set for later use.
+ */
+export async function regenerateBackupCodes(userId: string, code: unknown): Promise<RegenerateBackupCodesResult> {
+  const user = await authStore.findUserById(userId);
+  const cred = user ? await authStore.findCredentialByEmail(user.email) : null;
+  if (!cred || !cred.totpEnabled || !cred.totpSecret) {
+    return { ok: false, status: 400, error: "2FA is not enabled on this account." };
+  }
+  if (!verifyTotp(cred.totpSecret, String(code ?? ""))) {
+    return { ok: false, status: 400, error: "Invalid authentication code." };
+  }
+  const backupCodes = generateBackupCodes();
+  await persistBackupCodes(cred.user.id, backupCodes);
+  store.log("info", "User regenerated 2FA backup codes (old codes invalidated)", { userId: cred.user.id });
+  return { ok: true, backupCodes };
 }
 
 export type TwoFactorDisableResult = { ok: true } | { ok: false; status: number; error: string };
 
 /**
- * Turn 2FA off. Requires BOTH the current password AND a valid code - either
- * alone is not enough to remove a security factor. (There is no backup-code
- * recovery path by design; a user who loses their authenticator and can still
- * pass this check is proving they still control the account the safe way.)
+ * Turn 2FA off. Requires BOTH the current password AND a valid TOTP code -
+ * either alone is not enough to remove a security factor, and a backup code
+ * deliberately does NOT satisfy this check (removing the factor entirely is a
+ * bigger step than a one-time login, so it requires the authenticator itself).
+ * A user who has lost BOTH the authenticator and every backup code is
+ * recovered via the admin "reset 2FA" action (src/admin/routes.ts).
  */
 export async function disableTwoFactor(input: {
   userId: string;

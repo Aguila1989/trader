@@ -213,10 +213,17 @@ export const authApi = {
   // (Re)start enrollment: returns a fresh pending secret + its otpauth:// URI
   // (rendered as a QR code) for the authenticator app to scan.
   setup2fa: () => authRequest<{ secret?: string; otpauthUri?: string }>("/api/auth/2fa/setup", {}),
-  // Confirm enrollment with a code generated from the pending secret.
-  enable2fa: (code: string) => authRequest<{}>("/api/auth/2fa/enable", { code }),
+  // Confirm enrollment with a code generated from the pending secret. Returns
+  // 10 one-time backup codes in PLAINTEXT exactly once - the caller must show
+  // them to the user immediately; they cannot be fetched again later.
+  enable2fa: (code: string) => authRequest<{ backupCodes?: string[] }>("/api/auth/2fa/enable", { code }),
   // Turn 2FA off - requires BOTH the current password and a valid code.
   disable2fa: (password: string, code: string) => authRequest<{}>("/api/auth/2fa/disable", { password, code }),
+  // Replace the entire backup-code set (invalidates every old code). Requires
+  // a valid CURRENT TOTP code, not a backup code. Same one-time-plaintext
+  // contract as enable2fa.
+  regenerateBackupCodes: (code: string) =>
+    authRequest<{ backupCodes?: string[] }>("/api/auth/2fa/backup-codes", { code }),
   // --- GDPR (data export / account deletion) ---
   // Downloads the export as an attachment via the session cookie + blob (same
   // pattern as the Logs CSV export) - nothing is buffered into a JS variable.

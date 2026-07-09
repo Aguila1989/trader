@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@sentry/vue": "^10.64.0",
     "atrium": "file:..",
     "chart.js": "^4.5.1",
     "pinia": "^3.0.4",

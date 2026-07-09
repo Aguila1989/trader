@@ -3,6 +3,14 @@
 // namespace (this file -> `manualTrade.*`).
 export default {
   en: {
+    modeBadge: {
+      aria: "Trading access mode",
+      hint: {
+        readonly: "This only limits the AI — your manual orders are still submitted directly. Change it on the Bot tab.",
+        paper: "This only limits the AI — your manual orders are still allowed, filled as simulated paper trades. Change it on the Bot tab.",
+        live: "This only limits the AI — your manual orders are still submitted on-chain with real funds. Change it on the Bot tab.",
+      },
+    },
     orderBook: "Order book",
     placeOrder: "Place order",
     placeOrderBtn: "Place Order",
@@ -122,6 +130,14 @@ export default {
     },
   },
   nl: {
+    modeBadge: {
+      aria: "Handelstoegangsmodus",
+      hint: {
+        readonly: "Dit beperkt alleen de AI — je handmatige orders worden nog steeds direct ingediend. Wijzig dit op het Bot-tabblad.",
+        paper: "Dit beperkt alleen de AI — je handmatige orders zijn nog steeds toegestaan en worden gevuld als gesimuleerde paper trades. Wijzig dit op het Bot-tabblad.",
+        live: "Dit beperkt alleen de AI — je handmatige orders worden nog steeds on-chain ingediend met echte tegoeden. Wijzig dit op het Bot-tabblad.",
+      },
+    },
     orderBook: "Orderboek",
     placeOrder: "Order plaatsen",
     placeOrderBtn: "Order plaatsen",
@@ -241,6 +257,14 @@ export default {
     },
   },
   fr: {
+    modeBadge: {
+      aria: "Mode d'accès au trading",
+      hint: {
+        readonly: "Ceci limite uniquement l'IA — vos ordres manuels sont toujours soumis directement. Modifiez-le dans l'onglet Bot.",
+        paper: "Ceci limite uniquement l'IA — vos ordres manuels restent autorisés, exécutés comme des paper trades simulés. Modifiez-le dans l'onglet Bot.",
+        live: "Ceci limite uniquement l'IA — vos ordres manuels sont toujours soumis on-chain avec des fonds réels. Modifiez-le dans l'onglet Bot.",
+      },
+    },
     orderBook: "Carnet d'ordres",
     placeOrder: "Passer un ordre",
     placeOrderBtn: "Passer l'ordre",
@@ -360,6 +384,14 @@ export default {
     },
   },
   es: {
+    modeBadge: {
+      aria: "Modo de acceso al trading",
+      hint: {
+        readonly: "Esto solo limita a la IA — tus órdenes manuales se siguen enviando directamente. Cámbialo en la pestaña Bot.",
+        paper: "Esto solo limita a la IA — tus órdenes manuales se siguen permitiendo, ejecutadas como paper trades simulados. Cámbialo en la pestaña Bot.",
+        live: "Esto solo limita a la IA — tus órdenes manuales se siguen enviando on-chain con fondos reales. Cámbialo en la pestaña Bot.",
+      },
+    },
     orderBook: "Libro de órdenes",
     placeOrder: "Colocar orden",
     placeOrderBtn: "Colocar orden",

@@ -166,6 +166,41 @@ next lever is strategy/prompt tuning, not bug-hunting.
 
 ---
 
+# Rollback procedure
+
+When a deploy goes bad, roll the **code** back — the database never needs to be
+rolled back for a code revert, because every migration in this repo is additive
+and idempotent (`IF COL_LENGTH(...) IS NULL ALTER TABLE ... ADD ...`): older
+code runs unmodified against a newer schema.
+
+```bash
+# 1. Pick the last-good commit (CI-green on main):
+git log --oneline -10
+
+# 2. Roll back — either revert (preferred: preserves history) ...
+git revert --no-edit <bad-commit>..HEAD
+# ... or, if you deploy by checkout, check out the last-good commit directly.
+
+# 3. Rebuild everything (dependencies may differ between commits):
+npm install
+npm run build           # main app  → web/dist
+npm run build:admin     # admin app → admin-web/dist
+
+# 4. Restart under the supervisor:
+sudo systemctl restart atrium     # or: pm2 restart atrium
+
+# 5. Verify:
+curl -s http://127.0.0.1:3000/api/health   # expect {"status":"ok",...}
+journalctl -u atrium -n 50                  # or: pm2 logs atrium
+```
+
+Then watch the app's Logs tab for a few minutes (no crash-loop, scans running,
+no repeated errors). If the bad deploy involved a **data**-corrupting bug (not
+just bad code), restore the DB from backup instead — see the backups item in
+the pre-launch list below; never "roll back" the schema by dropping columns.
+
+---
+
 # Pre-launch work — gap analysis follow-up (2026-07)
 
 This chapter tracks the outcome of the full competitive / UX / production-readiness
@@ -269,6 +304,34 @@ Verified with `tsc` + `vue-tsc` + `vitest` (411) + admin-web build.
     and the admin-web build on every push/PR. **Operator:** it runs automatically
     once pushed to GitHub.
 
+## A3. Also implemented (third pass)
+
+Verified with `tsc` + `vue-tsc` (web + admin-web) + `vitest` (429 tests).
+
+13. **Error monitoring (Sentry), opt-in.** Backend + frontend SDKs are wired but
+    a strict no-op by default. **Operator:** create a Sentry project and set
+    `SENTRY_DSN` (backend, `.env`) and `VITE_SENTRY_DSN` (frontend, set at build
+    time — see `.env.example`); leave blank to keep it fully disabled.
+14. **Blanket API rate limiting (no setup).** All state-changing `/api/` routes
+    are now throttled per user: money-moving routes (pay/swap/order/trustlines/
+    claimable/offers/stoploss/wallet) 12/min, other mutations 60/min. The kill
+    switch, auth (own limiter), admin, and the Stripe webhook are exempt.
+15. **2FA backup codes (no setup).** Enabling 2FA now issues 10 single-use
+    recovery codes (shown once, downloadable); login accepts a backup code in
+    place of a TOTP code; codes can be regenerated with a live TOTP code. This
+    **unblocks the product decision** on hard-requiring 2FA for funded accounts;
+    the admin reset remains the path of last resort.
+16. **Rollback playbook.** See the "Rollback procedure" chapter above.
+17. **UX/a11y polish (no setup).** Per-route page titles; benefit-led hero on
+    the login/register screen; Help & support section in the sidebar; realized
+    P&L + daily-loss-cap chips always visible in the header; secondary status
+    badges decluttered behind "More"; trading-mode badge on the Manual tab;
+    focus-trapped modals (Settings, Onboarding) with Escape; keyboard-operable
+    order-book rows; mandatory "I saved my secret key" acknowledgement in wallet
+    setup; friendly localized error messages for raw Stellar/HTTP errors.
+    **Operator:** replace the placeholder `SUPPORT_EMAIL` constant at the top of
+    `web/src/components/Sidebar.vue` with a real monitored mailbox before launch.
+
 ## B. Still blocking launch — 🔴 must fix (not yet implemented)
 
 Legal is the dominant blocker; see report Section 6.
@@ -291,23 +354,16 @@ Legal is the dominant blocker; see report Section 6.
 
 ## C. Fix soon after launch — 🟡 important (not yet implemented)
 
-- **Error monitoring (Sentry)** on backend + frontend, and register an
-  **external uptime monitor** against the new `/api/health` (the endpoint itself
-  now reports DB/Horizon health — see A2 #11).
-- **Blanket API rate limiting** across money-moving / state-changing routes
-  (only auth + LLM endpoints are throttled today).
-- **Documented rollback procedure** (CI now runs tsc + vue-tsc + vitest on every
-  push/PR — see A2 #12 — but there is no documented rollback/redeploy playbook).
-- **2FA backup/recovery codes** (prerequisite to hard-requiring 2FA for funded
-  accounts), and **wallet-setup "I saved my secret" acknowledgement**.
-- **UX polish:** first-screen value proposition; trading-access mode badge on the
-  Manual tab; standardize all confirmations on one dialog; confirm on
-  reject-proposal / cancel-alert / logout; friendly error-message translation
-  layer; P&L + daily caps above the fold; declutter the TopBar status hierarchy;
-  URL-driven Academy + Manual/Bot tab navigation; page titles / breadcrumbs; an
-  in-app support/help channel.
-- **Accessibility:** modal focus-trap + Escape (Settings, Onboarding); make the
-  order-book tap-to-fill rows keyboard-operable.
+- **Register an external uptime monitor** against `/api/health` (the endpoint
+  itself now reports DB/Horizon health — see A2 #11) and **set the Sentry DSNs**
+  (the wiring ships disabled — see A3 #13).
+- **Decide on hard-requiring 2FA for funded accounts** — now unblocked by backup
+  codes (A3 #15); currently 2FA stays opt-in.
+- **Remaining UX items (deferred from the polish pass):** standardize all
+  confirmations on one dialog component; confirm on reject-proposal /
+  cancel-alert / logout; URL-driven Academy + Manual/Bot tab navigation
+  (back/forward + deep-links into sub-tabs); friendly-error coverage for the
+  remaining refs (stop-loss/alert/settings errors, order results).
 - **GDPR sub-processor disclosure + DPAs** for the LLM providers (Anthropic /
   OpenAI / Google / DeepSeek) that receive trading data.
 - **App-store listing assets:** description, screenshots, age rating, Apple

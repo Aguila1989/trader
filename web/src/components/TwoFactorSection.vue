@@ -10,9 +10,14 @@
 // -> only THEN does the server flip totpEnabled on and login starts asking for
 // a code. Disabling requires BOTH the current password AND a valid code.
 //
-// There are no backup codes: losing the authenticator with 2FA enabled means
-// contacting an admin to reset it (src/admin/routes.ts reset-2fa) before the
-// account can be logged into again.
+// Confirming enrollment also mints 10 one-time BACKUP CODES, returned in
+// plaintext exactly once (never persisted or retrievable again - only their
+// SHA-256 hashes are stored server-side). They can be used instead of an
+// authenticator code at login (LoginPage's "Use a backup code instead"), and
+// regenerated at any time (invalidating the old set) with a current
+// authenticator code via "Regenerate backup codes" below. A user who has lost
+// BOTH the authenticator and every backup code still needs an admin reset
+// (src/admin/routes.ts reset-2fa).
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { authApi } from "../api";
@@ -90,6 +95,42 @@ const enabling = ref(false);
 const enableError = ref("");
 const enableSuccess = ref(false);
 
+// --- backup codes: shown ONCE, right after enable or a regenerate ----------
+// Held only in this component's memory - never persisted client-side either -
+// so a page refresh makes them disappear for good, exactly like the server
+// contract (the plaintext is never returned again after this response).
+const backupCodes = ref<string[] | null>(null);
+const copiedCodes = ref(false);
+
+async function copyBackupCodes(): Promise<void> {
+  if (!backupCodes.value) return;
+  try {
+    await navigator.clipboard.writeText(backupCodes.value.join("\n"));
+    copiedCodes.value = true;
+    setTimeout(() => (copiedCodes.value = false), 1500);
+  } catch {
+    /* clipboard blocked - ignore */
+  }
+}
+
+function downloadBackupCodes(): void {
+  if (!backupCodes.value) return;
+  const text = `Atrium two-factor backup codes\nEach code works once.\n\n${backupCodes.value.join("\n")}\n`;
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "atrium-2fa-backup-codes.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function dismissBackupCodes(): void {
+  backupCodes.value = null;
+}
+
 async function confirmEnable(): Promise<void> {
   if (confirmCode.value.trim().length !== 6 || enabling.value) return;
   enabling.value = true;
@@ -103,11 +144,48 @@ async function confirmEnable(): Promise<void> {
       otpauthUri.value = "";
       confirmCode.value = "";
       enableSuccess.value = true;
+      backupCodes.value = r.data.backupCodes ?? null;
     } else {
       enableError.value = r.data?.error || r.data?.message || t("twoFa.account.enableError");
     }
   } finally {
     enabling.value = false;
+  }
+}
+
+// --- regenerate backup codes (requires a CURRENT authenticator code) -------
+const regenerating = ref(false);
+const regenCode = ref("");
+const regenerateLoading = ref(false);
+const regenerateError = ref("");
+
+function startRegenerate(): void {
+  regenerateError.value = "";
+  regenCode.value = "";
+  regenerating.value = true;
+}
+
+function cancelRegenerate(): void {
+  regenerating.value = false;
+  regenCode.value = "";
+  regenerateError.value = "";
+}
+
+async function submitRegenerate(): Promise<void> {
+  if (regenCode.value.trim().length !== 6 || regenerateLoading.value) return;
+  regenerateLoading.value = true;
+  regenerateError.value = "";
+  try {
+    const r = await authApi.regenerateBackupCodes(regenCode.value.trim());
+    if (r.ok && r.data.backupCodes) {
+      backupCodes.value = r.data.backupCodes;
+      regenerating.value = false;
+      regenCode.value = "";
+    } else {
+      regenerateError.value = r.data?.error || r.data?.message || t("twoFa.account.regenerateError");
+    }
+  } finally {
+    regenerateLoading.value = false;
   }
 }
 
@@ -134,6 +212,7 @@ async function disable(): Promise<void> {
       disablePassword.value = "";
       disableCode.value = "";
       enableSuccess.value = false;
+      backupCodes.value = null; // the server nulled them too - nothing left to show
     } else {
       disableError.value = r.data?.error || r.data?.message || t("twoFa.account.disableError");
     }
@@ -168,11 +247,29 @@ function cancelDisable(): void {
 
     <p v-if="enableSuccess && enabled" class="acct-success" role="status">{{ t("twoFa.account.enableSuccess") }}</p>
 
-    <!-- Enabled, not editing: offer to turn it off -->
-    <template v-if="!loading && enabled && !showDisableForm">
-      <button class="btn twofa-action" type="button" @click="showDisableForm = true">
-        {{ t("twoFa.disable") }}
-      </button>
+    <!-- Backup codes: shown ONCE, right after enabling or regenerating. -->
+    <div v-if="backupCodes" class="twofa-backup-codes">
+      <p class="twofa-warning">{{ t("twoFa.account.backupCodesWarning") }}</p>
+      <pre class="twofa-codes-block" :aria-label="t('twoFa.account.backupCodesTitle')">{{ backupCodes.join("\n") }}</pre>
+      <div class="twofa-form-actions">
+        <button class="btn" type="button" @click="copyBackupCodes">
+          {{ copiedCodes ? t("twoFa.account.copied") : t("twoFa.account.copyCodes") }}
+        </button>
+        <button class="btn" type="button" @click="downloadBackupCodes">{{ t("twoFa.account.downloadCodes") }}</button>
+        <button class="btn primary" type="button" @click="dismissBackupCodes">{{ t("twoFa.account.backupCodesDone") }}</button>
+      </div>
+    </div>
+
+    <!-- Enabled, not editing: offer to turn it off or refresh backup codes -->
+    <template v-if="!loading && enabled && !showDisableForm && !regenerating && !backupCodes">
+      <div class="twofa-form-actions">
+        <button class="btn twofa-action" type="button" @click="showDisableForm = true">
+          {{ t("twoFa.disable") }}
+        </button>
+        <button class="btn twofa-action" type="button" @click="startRegenerate">
+          {{ t("twoFa.account.regenerateButton") }}
+        </button>
+      </div>
     </template>
 
     <!-- Disable form: password + code -->
@@ -200,6 +297,31 @@ function cancelDisable(): void {
           {{ disabling ? t("twoFa.account.disabling") : t("twoFa.disable") }}
         </button>
         <button class="btn" type="button" @click="cancelDisable">{{ t("twoFa.cancel") }}</button>
+      </div>
+    </form>
+
+    <!-- Regenerate backup codes: requires a CURRENT authenticator code -->
+    <form v-if="regenerating" class="acct-form twofa-form" @submit.prevent="submitRegenerate">
+      <p class="acct-hint">{{ t("twoFa.account.regenerateHint") }}</p>
+      <label class="acct-field">
+        <span>{{ t("twoFa.account.codeLabel") }}</span>
+        <input
+          v-model="regenCode"
+          type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="6"
+          pattern="[0-9]*"
+          class="acct-input"
+          autofocus
+        />
+      </label>
+      <p v-if="regenerateError" class="violations" role="alert">{{ regenerateError }}</p>
+      <div class="twofa-form-actions">
+        <button class="btn primary" type="submit" :disabled="regenCode.trim().length !== 6 || regenerateLoading">
+          {{ regenerateLoading ? t("twoFa.account.regenerating") : t("twoFa.account.regenerateSubmit") }}
+        </button>
+        <button class="btn" type="button" @click="cancelRegenerate">{{ t("twoFa.cancel") }}</button>
       </div>
     </form>
 
@@ -256,7 +378,7 @@ function cancelDisable(): void {
         </div>
       </form>
 
-      <p class="twofa-warning">{{ t("twoFa.account.noBackupWarning") }}</p>
+      <p class="twofa-warning">{{ t("twoFa.account.backupCodesNotice") }}</p>
     </div>
   </div>
 </template>
@@ -386,5 +508,26 @@ function cancelDisable(): void {
   font-size: 12.5px;
   line-height: 1.5;
   max-width: 420px;
+}
+.twofa-backup-codes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  max-width: 420px;
+}
+.twofa-codes-block {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
 }
 </style>

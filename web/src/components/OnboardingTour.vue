@@ -11,7 +11,7 @@
 // The tour is mounted by AppLayout (which persists across child routes), so it
 // survives the navigation some steps require. tourState (onboarding/tour.ts)
 // owns "active + step index"; this component owns everything DOM/step-machine.
-import { computed, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { authApi } from "../api";
@@ -99,6 +99,60 @@ const steps: StepDef[] = [
 ];
 
 const step = computed<StepDef>(() => steps[Math.min(tourState.step, steps.length - 1)]!);
+
+// --- Accessibility: focus management ----------------------------------------
+// The tour is a full-screen non-native dialog; treat it like a modal: focus
+// moves into the card on open and on every step change, Tab/Shift+Tab stay
+// inside the card, Escape skips the tour through the exact same path as the
+// Skip button, and focus returns to wherever it was before the tour started
+// once it ends.
+const cardRef = ref<HTMLElement | null>(null);
+let previouslyFocused: HTMLElement | null = null;
+
+const FOCUS_TRAP_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUS_TRAP_SELECTOR)).filter(
+    (el) => el.offsetParent !== null,
+  );
+}
+
+function trapTabKey(e: KeyboardEvent, container: HTMLElement | null): void {
+  if (e.key !== "Tab" || !container) return;
+  const focusables = focusableIn(container);
+  if (focusables.length === 0) {
+    e.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusables[0]!;
+  const last = focusables[focusables.length - 1]!;
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function focusCard(): void {
+  void nextTick(() => {
+    const container = cardRef.value;
+    if (!container) return;
+    const focusables = focusableIn(container);
+    (focusables[0] ?? container).focus();
+  });
+}
+
+function onKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    void finish();
+    return;
+  }
+  trapTabKey(e, cardRef.value);
+}
 
 // --- spotlight measurement -------------------------------------------------
 const rect = ref<{ top: number; left: number; width: number; height: number } | null>(null);
@@ -223,6 +277,8 @@ function setupStep(): void {
       },
     );
   }
+
+  focusCard();
 }
 
 function advance(): void {
@@ -253,6 +309,8 @@ watch(
 );
 
 onMounted(() => {
+  previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  document.addEventListener("keydown", onKey);
   setupStep();
   measureTimer = window.setInterval(measure, 250);
   window.addEventListener("resize", onResize);
@@ -260,8 +318,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cleanupStep();
+  document.removeEventListener("keydown", onKey);
   if (measureTimer !== null) window.clearInterval(measureTimer);
   window.removeEventListener("resize", onResize);
+  if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus();
 });
 
 // --- card content -------------------------------------------------------------
@@ -341,7 +401,7 @@ const px = (n: number): string => `${n}px`;
     </template>
     <div v-else class="tour-dim tour-dim-full"></div>
 
-    <section class="tour-card" :class="{ centered: !rect }" :style="cardStyle" aria-live="polite">
+    <section class="tour-card" ref="cardRef" tabindex="-1" :class="{ centered: !rect }" :style="cardStyle" aria-live="polite">
       <header class="tour-head">
         <span class="tour-progress">{{ t("onboarding.progress", { step: tourState.step + 1, total: TOUR_STEP_COUNT }) }}</span>
         <button class="tour-skip" type="button" @click="finish">{{ t("onboarding.skip") }}</button>
@@ -404,6 +464,9 @@ const px = (n: number): string => `${n}px`;
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(92vw, 380px);
+}
+.tour-card:focus {
+  outline: none;
 }
 
 .tour-head {

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
 import { api } from "../api";
+import { friendlyError } from "../errors";
 import type {
   Balance,
   Candle,
@@ -551,12 +552,12 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       const m = await api.market(base || "XLM", quote);
       if (m.error) {
-        marketError.value = m.error;
+        marketError.value = friendlyError(m.error);
         return;
       }
       market.value = m;
     } catch (err) {
-      marketError.value = (err as Error).message;
+      marketError.value = friendlyError((err as Error).message);
     }
   }
 
@@ -566,10 +567,10 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       const out = await api.analyze(base || "XLM", quote);
       reasoning.value = out.error
-        ? `Error: ${out.error}`
+        ? `Error: ${friendlyError(out.error)}`
         : out.reasoning || "(no commentary)";
     } catch (err) {
-      reasoning.value = `Request failed: ${(err as Error).message}`;
+      reasoning.value = `Request failed: ${friendlyError((err as Error).message)}`;
     } finally {
       analyzing.value = false;
     }
@@ -582,7 +583,7 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       const out = await api.scan();
       if (out.error) {
-        reasoning.value = `Error: ${out.error}`;
+        reasoning.value = `Error: ${friendlyError(out.error)}`;
         return;
       }
       const n = out.scanned ?? 0;
@@ -591,7 +592,7 @@ export const useTraderStore = defineStore("trader", () => {
         (out.reasoning || "(no commentary)") +
         `\n\n— scanned ${n} market(s), ${made} proposal(s).`;
     } catch (err) {
-      reasoning.value = `Scan failed: ${(err as Error).message}`;
+      reasoning.value = `Scan failed: ${friendlyError((err as Error).message)}`;
     } finally {
       scanning.value = false;
     }
@@ -624,7 +625,7 @@ export const useTraderStore = defineStore("trader", () => {
       const useQuote = tokenBook.value ? selectedQuote.value : undefined;
       const ob = await api.orderbook(base, useQuote);
       if (ob.error) {
-        tokenError.value = ob.error;
+        tokenError.value = friendlyError(ob.error);
         return;
       }
       tokenBook.value = ob;
@@ -636,7 +637,7 @@ export const useTraderStore = defineStore("trader", () => {
         void loadTokenCandles();
       }
     } catch (err) {
-      tokenError.value = (err as Error).message;
+      tokenError.value = friendlyError((err as Error).message);
     } finally {
       tokenLoading.value = false;
     }
@@ -793,7 +794,7 @@ export const useTraderStore = defineStore("trader", () => {
     trustlineError.value = "";
     const r = await api.addTrustline(body);
     if (r.error) {
-      trustlineError.value = r.error;
+      trustlineError.value = friendlyError(r.error);
       return false;
     }
     await loadTrustlines();
@@ -809,7 +810,7 @@ export const useTraderStore = defineStore("trader", () => {
     trustlineError.value = "";
     const r = await api.removeTrustline(body);
     if (r.error) {
-      trustlineError.value = r.error;
+      trustlineError.value = friendlyError(r.error);
       return false;
     }
     await loadTrustlines();
@@ -905,7 +906,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.pay(body);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     void loadBalances();
@@ -921,13 +922,13 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       const q = await api.swapQuote(send, dest, amount);
       if (q.error) {
-        walletError.value = q.error;
+        walletError.value = friendlyError(q.error);
         swapQuoteResult.value = null;
       } else {
         swapQuoteResult.value = q;
       }
     } catch (err) {
-      walletError.value = (err as Error).message;
+      walletError.value = friendlyError((err as Error).message);
       swapQuoteResult.value = null;
     }
     return swapQuoteResult.value;
@@ -942,7 +943,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.swap(body);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     swapQuoteResult.value = null;
@@ -954,7 +955,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.claimBalance(id);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     await loadClaimables();
@@ -969,7 +970,7 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       return await api.claimableSwapQuote(id);
     } catch (err) {
-      walletError.value = (err as Error).message;
+      walletError.value = friendlyError((err as Error).message);
       return null;
     }
   }
@@ -978,7 +979,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.swapClaimable(id, force);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     await loadClaimables();
@@ -991,7 +992,7 @@ export const useTraderStore = defineStore("trader", () => {
     try {
       return await api.swapAllQuote();
     } catch (err) {
-      walletError.value = (err as Error).message;
+      walletError.value = friendlyError((err as Error).message);
       return null;
     }
   }
@@ -1000,7 +1001,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.swapAll(force);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return null;
     }
     await loadClaimables();
@@ -1012,7 +1013,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.rejectClaimable(id, reason);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     await loadClaimables();
@@ -1023,7 +1024,7 @@ export const useTraderStore = defineStore("trader", () => {
     walletError.value = "";
     const r = await api.unrejectClaimable(id);
     if (r.error) {
-      walletError.value = r.error;
+      walletError.value = friendlyError(r.error);
       return false;
     }
     await loadClaimables();

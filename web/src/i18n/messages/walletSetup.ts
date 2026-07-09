@@ -23,6 +23,8 @@ export default {
     copied: "Copied",
     confirmPrompt: "To confirm you've saved it, type the LAST 4 characters of your secret key.",
     last4Placeholder: "last 4 characters",
+    secretSavedAck:
+      "I have saved my secret key somewhere safe and understand it cannot be recovered if lost.",
     confirmBtn: "Confirm & activate wallet",
 
     importTitle: "Import an existing wallet",
@@ -86,6 +88,8 @@ export default {
     copied: "Gekopieerd",
     confirmPrompt: "Typ ter bevestiging de LAATSTE 4 tekens van je geheime sleutel.",
     last4Placeholder: "laatste 4 tekens",
+    secretSavedAck:
+      "Ik heb mijn geheime sleutel op een veilige plek bewaard en begrijp dat hij niet kan worden hersteld als ik hem verlies.",
     confirmBtn: "Bevestigen & wallet activeren",
 
     importTitle: "Bestaande wallet importeren",
@@ -150,6 +154,8 @@ export default {
     confirmPrompt:
       "Pour confirmer que vous l'avez enregistrée, saisissez les 4 DERNIERS caractères de votre clé secrète.",
     last4Placeholder: "4 derniers caractères",
+    secretSavedAck:
+      "J'ai enregistré ma clé secrète en lieu sûr et je comprends qu'elle ne pourra pas être récupérée en cas de perte.",
     confirmBtn: "Confirmer et activer le wallet",
 
     importTitle: "Importer un wallet existant",
@@ -214,6 +220,8 @@ export default {
     confirmPrompt:
       "Para confirmar que la has guardado, escribe los ÚLTIMOS 4 caracteres de tu clave secreta.",
     last4Placeholder: "últimos 4 caracteres",
+    secretSavedAck:
+      "He guardado mi clave secreta en un lugar seguro y entiendo que no se puede recuperar si la pierdo.",
     confirmBtn: "Confirmar y activar el wallet",
 
     importTitle: "Importar un wallet existente",

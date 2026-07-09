@@ -267,12 +267,13 @@ export function createAdminRouter(): Router {
     res.json({ ok: true });
   });
 
-  // End-user 2FA has no backup codes by design (see src/auth/service.ts), so a
-  // user who loses their authenticator app is otherwise permanently locked out
-  // of a funded account. This is the ONLY recovery path: it clears totpEnabled
-  // (and the secret) so the user can log in with just their password and,
-  // if they want, re-enroll from scratch. Referenced by opaque userId only -
-  // no email in the payload, per the GDPR convention of this router.
+  // End-user 2FA recovery of last resort. Users get 10 single-use backup codes
+  // at enrollment (see src/auth/service.ts), so this admin reset is only for a
+  // user who lost BOTH the authenticator app AND every backup code. It clears
+  // totpEnabled (plus the secret and any remaining backup codes) so the user
+  // can log in with just their password and, if they want, re-enroll from
+  // scratch. Referenced by opaque userId only - no email in the payload, per
+  // the GDPR convention of this router.
   router.post("/users/:id/reset-2fa", async (req: Request, res: Response) => {
     const id = String(req.params.id);
     await authStore.setTotpEnabled(id, false);

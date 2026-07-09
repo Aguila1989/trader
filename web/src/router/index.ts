@@ -20,6 +20,7 @@ import PendingPaymentsPage from "../components/PendingPaymentsPage.vue";
 import LogsPage from "../components/LogsPage.vue";
 import { isLoggedIn } from "../auth/session";
 import { loadWalletStatus, walletState } from "../wallet/walletState";
+import i18n from "../i18n";
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -131,6 +132,48 @@ router.beforeEach(async (to) => {
     }
   }
   return true;
+});
+
+// --- Page titles (Fix 1) --------------------------------------------------
+// Deep pages showed no location in the tab title (document.title was
+// hardcoded "Atrium" everywhere). Map each route name to a translated label —
+// reusing the sidebar nav labels where they already describe the page, and
+// falling back to auth.ts strings / route params elsewhere — and set
+// `document.title` after every navigation. Non-throwing: a lookup miss just
+// falls back to the bare brand name. NotFound.vue also sets its own title on
+// mount (with the same "notFound.title" string); afterEach runs first, so
+// that's a same-value no-op, not a fight.
+const ROUTE_TITLE_KEYS: Record<string, string> = {
+  trading: "sidebar.trading",
+  receive: "sidebar.receiveSend",
+  pending: "sidebar.pending",
+  logs: "sidebar.logs",
+  pricing: "billing.upgradeNav",
+  academy: "sidebar.academy",
+  "academy-lesson": "sidebar.academy",
+  login: "auth.login.title",
+  register: "auth.register.title",
+  "forgot-password": "auth.forgot.title",
+  "reset-password": "auth.reset.title",
+  "verify-email": "auth.verify.title",
+  "wallet-setup": "wallet.title",
+  "not-found": "notFound.title",
+};
+
+router.afterEach((to) => {
+  try {
+    const brand = "Atrium";
+    if (to.name === "token") {
+      const code = typeof to.params.assetCode === "string" ? to.params.assetCode : "";
+      document.title = code ? `${code} · ${brand}` : brand;
+      return;
+    }
+    const key = typeof to.name === "string" ? ROUTE_TITLE_KEYS[to.name] : undefined;
+    const label = key ? i18n.global.t(key) : "";
+    document.title = label ? `${label} · ${brand}` : brand;
+  } catch {
+    document.title = "Atrium";
+  }
 });
 
 export default router;

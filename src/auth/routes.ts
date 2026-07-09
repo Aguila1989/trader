@@ -236,13 +236,28 @@ export function createAuthRouter(): Router {
   });
 
   // POST /api/auth/2fa/enable {code} - confirm enrollment with a valid code.
+  // Returns the 10 backup codes in PLAINTEXT exactly once - the client must
+  // show them to the user immediately; they cannot be retrieved again later.
   router.post("/2fa/enable", async (req: Request, res: Response) => {
     const r = await auth.enableTwoFactor(currentUserId(), req.body?.code);
     if (!r.ok) {
       res.status(r.status).json({ error: r.error });
       return;
     }
-    res.json({ ok: true });
+    res.json({ ok: true, backupCodes: r.backupCodes });
+  });
+
+  // POST /api/auth/2fa/backup-codes {code} - regenerate the backup-code set,
+  // invalidating every previously-issued code. Requires a valid CURRENT TOTP
+  // code (not a backup code - see regenerateBackupCodes). Returns the new
+  // codes in PLAINTEXT exactly once, same as /2fa/enable.
+  router.post("/2fa/backup-codes", async (req: Request, res: Response) => {
+    const r = await auth.regenerateBackupCodes(currentUserId(), req.body?.code);
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    res.json({ backupCodes: r.backupCodes });
   });
 
   // POST /api/auth/2fa/disable {password, code} - requires BOTH.

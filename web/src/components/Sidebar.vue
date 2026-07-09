@@ -11,13 +11,18 @@
 // the backdrop, or tap × to close). The Academy entry is set apart with a
 // divider, a secondary accent colour, and a "New" badge until the user has
 // opened at least one lesson.
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { session, logout } from "../auth/session";
 import { useAcademyStore } from "../academy/progress";
 import { uiState, toggleSidebar, openSettings } from "../ui/uiState";
 import { billingState } from "../billing/premium";
+
+// Fix 3: Help & support. PLACEHOLDER ADDRESS — the operator MUST replace this
+// with a real, monitored support mailbox before launch (there is currently no
+// other way for a user to reach anyone). Tracked in DEPLOY.md.
+const SUPPORT_EMAIL = "support@example.com";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -55,11 +60,13 @@ const mobileOpen = computed({
     uiState.mobileNavOpen = v;
   },
 });
-// Any navigation closes the drawer (tap-a-link behaviour).
+// Any navigation closes the drawer (tap-a-link behaviour) and the help panel.
+const helpOpen = ref(false);
 watch(
   () => route.fullPath,
   () => {
     mobileOpen.value = false;
+    helpOpen.value = false;
   },
 );
 
@@ -195,6 +202,34 @@ async function doLogout(): Promise<void> {
         </span>
         <span class="sb-label">{{ t("sidebar.logout") }}</span>
       </button>
+    </div>
+
+    <!-- Fix 3: Help & support — there was previously no way to get help
+         anywhere in the app. Shown regardless of auth state (a logged-out
+         visitor stuck on login needs it too), near the brand/footer area. A
+         simple expandable section: Academy link + a mailto support address. -->
+    <div class="sb-help">
+      <button
+        class="sb-link"
+        type="button"
+        :aria-expanded="helpOpen"
+        aria-controls="sb-help-panel"
+        :title="t('help.title')"
+        @click="helpOpen = !helpOpen"
+      >
+        <span class="sb-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" /><path d="M9.1 9a2.9 2.9 0 015.6 1c0 1.9-2.7 1.9-2.7 3.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><circle cx="12" cy="17" r="1" fill="currentColor" /></svg>
+        </span>
+        <span class="sb-label">{{ t("help.title") }}</span>
+        <svg class="sb-chevron" :class="{ open: helpOpen }" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <div v-if="helpOpen" id="sb-help-panel" class="sb-help-panel">
+        <p class="sb-help-intro">{{ t("help.intro") }}</p>
+        <RouterLink to="/academy" class="sb-help-item">{{ t("help.academyLink") }}</RouterLink>
+        <a class="sb-help-item" :href="`mailto:${SUPPORT_EMAIL}`">{{ t("help.emailLink") }}</a>
+      </div>
     </div>
   </aside>
 </template>
@@ -387,6 +422,55 @@ async function doLogout(): Promise<void> {
   color: var(--neg);
 }
 
+/* Fix 3: Help & support */
+.sb-help {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 6px;
+}
+.sb-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.sb-chevron.open {
+  transform: rotate(180deg);
+}
+.sidebar.collapsed .sb-chevron {
+  display: none;
+}
+.sb-help-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 4px 4px 10px;
+}
+.sb-help-intro {
+  margin: 4px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sb-help-item {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.sb-help-item:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* The panel needs the expanded label text; collapsed rail stays icon-only
+   like every other footer control. */
+.sidebar.collapsed .sb-help-panel {
+  display: none;
+}
+
 .hamburger,
 .sb-backdrop {
   display: none; /* desktop: no hamburger / backdrop */
@@ -434,6 +518,14 @@ async function doLogout(): Promise<void> {
     width: auto;
   }
   .sidebar.collapsed .sb-newbadge {
+    display: inline;
+  }
+  /* Help panel + chevron follow the same rule: the drawer is never icons-only,
+     so undo the desktop collapsed-state hiding. */
+  .sidebar.collapsed .sb-help-panel {
+    display: flex;
+  }
+  .sidebar.collapsed .sb-chevron {
     display: inline;
   }
   .sb-collapse {

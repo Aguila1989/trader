@@ -4,6 +4,12 @@ export default {
   en: {
     brand: "Atrium",
     tagline: "Stellar AI Trading",
+    hero: {
+      title: "Why traders choose Atrium",
+      custody: "You hold your keys — funds stay in your own Stellar wallet.",
+      aiAssist: "AI-assisted trading, but every trade needs your approval.",
+      manualFree: "Manual trading is free, always.",
+    },
     login: {
       title: "Welcome back",
       subtitle: "Sign in to your account to continue.",
@@ -48,6 +54,7 @@ export default {
       toLogin: "Continue to sign in",
     },
     verify: {
+      title: "Verify email",
       verifying: "Verifying your email…",
       success: "Your email is verified. You can now sign in.",
       failed: "This verification link is invalid or has expired.",
@@ -74,6 +81,12 @@ export default {
   nl: {
     brand: "Atrium",
     tagline: "Stellar AI-handel",
+    hero: {
+      title: "Waarom traders voor Atrium kiezen",
+      custody: "Jij beheert je sleutels — je geld blijft in je eigen Stellar-wallet.",
+      aiAssist: "AI-ondersteunde handel, maar elke transactie heeft jouw goedkeuring nodig.",
+      manualFree: "Handmatig handelen is altijd gratis.",
+    },
     login: {
       title: "Welkom terug",
       subtitle: "Meld je aan bij je account om verder te gaan.",
@@ -118,6 +131,7 @@ export default {
       toLogin: "Doorgaan naar aanmelden",
     },
     verify: {
+      title: "E-mail verifiëren",
       verifying: "Je e-mail verifiëren…",
       success: "Je e-mail is geverifieerd. Je kunt je nu aanmelden.",
       failed: "Deze verificatiekoppeling is ongeldig of verlopen.",
@@ -144,6 +158,12 @@ export default {
   fr: {
     brand: "Atrium",
     tagline: "Trading IA sur Stellar",
+    hero: {
+      title: "Pourquoi les traders choisissent Atrium",
+      custody: "Vous gardez vos clés — vos fonds restent dans votre propre portefeuille Stellar.",
+      aiAssist: "Trading assisté par IA, mais chaque transaction requiert votre approbation.",
+      manualFree: "Le trading manuel est toujours gratuit.",
+    },
     login: {
       title: "Bon retour",
       subtitle: "Connectez-vous à votre compte pour continuer.",
@@ -188,6 +208,7 @@ export default {
       toLogin: "Continuer vers la connexion",
     },
     verify: {
+      title: "Vérifier l'e-mail",
       verifying: "Vérification de votre e-mail…",
       success: "Votre e-mail est vérifié. Vous pouvez maintenant vous connecter.",
       failed: "Ce lien de vérification est invalide ou a expiré.",
@@ -214,6 +235,12 @@ export default {
   es: {
     brand: "Atrium",
     tagline: "Trading con IA en Stellar",
+    hero: {
+      title: "Por qué los traders eligen Atrium",
+      custody: "Tú controlas tus claves — tus fondos permanecen en tu propia billetera Stellar.",
+      aiAssist: "Trading asistido por IA, pero cada operación requiere tu aprobación.",
+      manualFree: "El trading manual es siempre gratuito.",
+    },
     login: {
       title: "Bienvenido de nuevo",
       subtitle: "Inicia sesión en tu cuenta para continuar.",
@@ -258,6 +285,7 @@ export default {
       toLogin: "Continuar al inicio de sesión",
     },
     verify: {
+      title: "Verificar correo",
       verifying: "Verificando tu correo…",
       success: "Tu correo está verificado. Ya puedes iniciar sesión.",
       failed: "Este enlace de verificación no es válido o ha caducado.",

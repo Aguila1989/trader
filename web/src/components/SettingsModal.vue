@@ -4,7 +4,7 @@
 // the Risk Settings panel (LOW/MED/HIGH + Expert Mode), plus the new Account
 // section (email, created date, change password). Overlay modal on desktop;
 // full-screen on mobile. Body scroll is locked while open.
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { acquireScrollLock, closeSettings, releaseScrollLock } from "../ui/uiState";
@@ -16,8 +16,47 @@ const { t } = useI18n();
 const router = useRouter();
 const tab = ref<"bot" | "risk" | "account">("bot");
 
+// --- Accessibility: focus management ---------------------------------------
+// This modal behaves like a native <dialog>: focus moves in on open, Tab /
+// Shift+Tab cannot escape it, Escape closes it, and focus is restored to
+// whatever triggered it (the header gear icon) once it's gone.
+const modalRef = ref<HTMLElement | null>(null);
+let previouslyFocused: HTMLElement | null = null;
+
+const FOCUS_TRAP_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUS_TRAP_SELECTOR)).filter(
+    (el) => el.offsetParent !== null,
+  );
+}
+
+function trapTabKey(e: KeyboardEvent, container: HTMLElement | null): void {
+  if (e.key !== "Tab" || !container) return;
+  const focusables = focusableIn(container);
+  if (focusables.length === 0) {
+    e.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusables[0]!;
+  const last = focusables[focusables.length - 1]!;
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") closeSettings();
+  if (e.key === "Escape") {
+    closeSettings();
+    return;
+  }
+  trapTabKey(e, modalRef.value);
 }
 
 // AUDIT-024: the modal is plain reactive state (not a route), so the mobile
@@ -33,6 +72,13 @@ let removeGuard: (() => void) | null = null;
 onMounted(() => {
   document.addEventListener("keydown", onKey);
   acquireScrollLock();
+  previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  void nextTick(() => {
+    const container = modalRef.value;
+    if (!container) return;
+    const focusables = focusableIn(container);
+    (focusables[0] ?? container).focus();
+  });
   removeGuard = router.beforeEach(() => {
     closeSettings();
     return false; // swallow this navigation; the modal closing IS the action
@@ -45,12 +91,13 @@ onBeforeUnmount(() => {
     removeGuard();
     removeGuard = null;
   }
+  if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus();
 });
 </script>
 
 <template>
   <div class="sm-back" @click.self="closeSettings">
-    <div class="sm-modal" role="dialog" aria-modal="true" :aria-label="t('settingsModal.title')">
+    <div class="sm-modal" ref="modalRef" tabindex="-1" role="dialog" aria-modal="true" :aria-label="t('settingsModal.title')">
       <header class="sm-head">
         <h2 class="sm-title">{{ t("settingsModal.title") }}</h2>
         <button class="sm-close" type="button" :aria-label="t('settingsModal.close')" @click="closeSettings">
@@ -102,6 +149,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 64px);
+}
+.sm-modal:focus {
+  outline: none;
 }
 .sm-head {
   display: flex;

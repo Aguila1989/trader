@@ -351,8 +351,13 @@ async function submitModify(): Promise<void> {
               v-for="(lv, i) in store.market?.bids ?? []"
               :key="'b' + i"
               class="book-level"
+              role="button"
+              tabindex="0"
               :title="t('manualTrade.aria.clickToFill')"
+              :aria-label="`${t('manualTrade.aria.clickToFill')}: ${fmtNum(lv.price, 7)}`"
               @click="fillFromBook(lv.price)"
+              @keydown.enter="fillFromBook(lv.price)"
+              @keydown.space.prevent="fillFromBook(lv.price)"
             >
               <span class="px">{{ fmtNum(lv.price, 7) }}</span>
               <span class="amt">{{ fmtNum(lv.amount) }}</span>
@@ -808,8 +813,13 @@ async function submitModify(): Promise<void> {
   cursor: pointer;
   border-radius: 4px;
 }
-.book-level:hover {
+.book-level:hover,
+.book-level:focus-visible {
   background: rgba(91, 140, 255, 0.1);
+}
+.book-level:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 /* --- Active Orders (Bug 4D) -------------------------------------------- */
 .ao-head {

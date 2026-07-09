@@ -24,6 +24,10 @@ const copied = ref("");
 // Create flow: the generated keypair (secret shown ONCE) + the last-4 confirm.
 const generated = ref<{ publicKey: string; secret: string } | null>(null);
 const last4 = ref("");
+// Fund-safety fix: the last-4 check alone is weak proof the secret was
+// actually saved somewhere recoverable. A mandatory acknowledgement checkbox
+// gates the confirm button in addition to (not instead of) the last-4 check.
+const secretSavedAck = ref(false);
 
 // Import / replace inputs.
 const importSecret = ref("");
@@ -59,6 +63,7 @@ function reset(): void {
 
 async function generate(): Promise<void> {
   reset();
+  secretSavedAck.value = false;
   loading.value = true;
   const r = await walletApi.create();
   loading.value = false;
@@ -77,6 +82,7 @@ async function confirmCreate(): Promise<void> {
   if (r.ok && r.data.publicKey) {
     generated.value = null;
     last4.value = "";
+    secretSavedAck.value = false;
     await loadWalletStatus(true);
     view.value = "manage";
   } else {
@@ -207,6 +213,10 @@ async function doReplace(): Promise<void> {
         </label>
 
         <form class="auth-form" @submit.prevent="confirmCreate">
+          <label class="ws-ack">
+            <input v-model="secretSavedAck" type="checkbox" />
+            <span>{{ t("walletSetup.secretSavedAck") }}</span>
+          </label>
           <label class="auth-field">
             <span>{{ t("walletSetup.confirmPrompt") }}</span>
             <input
@@ -221,7 +231,7 @@ async function doReplace(): Promise<void> {
           <button
             class="btn primary auth-submit"
             type="submit"
-            :disabled="loading || last4.trim().length !== 4"
+            :disabled="loading || last4.trim().length !== 4 || !secretSavedAck"
           >
             {{ t("walletSetup.confirmBtn") }}
           </button>
@@ -385,6 +395,27 @@ async function doReplace(): Promise<void> {
   margin: 6px 0 0;
   font-size: 13px;
   line-height: 1.5;
+}
+/* Fund-safety acknowledgement checkbox (create flow). The label supplies the
+   App/Play Store 44px touch-target floor so the small checkbox is easy to hit. */
+.ws-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+  padding: 6px 0;
+}
+.ws-ack input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 .ws-keyrow {
   display: flex;

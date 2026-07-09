@@ -8,6 +8,8 @@ import { config, isReadOnly, dbConfigured, smtpConfigured } from "./config";
 import { checkOrigin, isLoopbackBind } from "./csrf";
 import { createAuthRouter } from "./auth/routes";
 import { requireAuth, authRateLimiter } from "./auth/middleware";
+import { createGeneralRateLimiter } from "./rateLimit";
+import { initSentry, setupSentryErrorHandler } from "./monitoring/sentry";
 import { createWalletRouter } from "./wallet/routes";
 import { purgeExpiredSessions, purgeAuthArtifacts } from "./auth/store";
 import { aiReady, aiModel, aiProviderId } from "./ai";
@@ -100,6 +102,11 @@ const webBuilt = existsSync(join(webDist, "index.html"));
 // /admin - never bundled into, linked from, or routable within the main SPA.
 const adminDist = join(here, "..", "admin-web", "dist");
 const adminBuilt = existsSync(join(adminDist, "index.html"));
+
+// Optional error monitoring — a strict no-op unless SENTRY_DSN is set (see
+// src/monitoring/sentry.ts). Initialized before the app so early failures in
+// middleware/route setup are captured too.
+initSentry();
 
 const app = express();
 // SEC-20/22: when a proxy is explicitly trusted, trust EXACTLY ONE hop (the
@@ -238,6 +245,9 @@ app.use(authRateLimiter);
 // origin guard + per-IP rate limiter above still apply.
 app.use("/api/admin", createAdminRouter());
 app.use(requireAuth);
+// Blanket per-user rate limit on state-changing /api/* routes (money-moving
+// routes get a tighter budget); see src/rateLimit.ts for the design + exemptions.
+app.use(createGeneralRateLimiter());
 app.use("/api/auth", createAuthRouter());
 // Feature 3: wallet management. Mounted AFTER requireAuth so every route runs in
 // the authenticated user's scope (currentUserId()); absent from PUBLIC_API_PATHS.
@@ -2115,6 +2125,11 @@ if (webBuilt) {
     res.sendFile(join(webDist, "index.html"));
   });
 }
+
+// Optional Sentry error reporting (no-op unless SENTRY_DSN is set). Must be
+// registered after all routes and BEFORE the final error handler below: it
+// captures the exception, then passes it along via next(err).
+setupSentryErrorHandler(app);
 
 // SEC-23 + SEC-25: global error handler (4-arg middleware). Anything a route
 // throws synchronously, or passes to next(err), lands here instead of crashing
