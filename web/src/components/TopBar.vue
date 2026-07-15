@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
+import { scrollToSection } from "../lib/scroll";
 import LangSwitcher from "./LangSwitcher.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const store = useTraderStore();
+
+// Bug 2 (2026-07): the AI-trading pill is a real control now — tapping it
+// lands on the AI trading section (Bot sub-tab of "/", id="ai-trading"),
+// from any route, instead of doing nothing.
+async function goToAiTrading(): Promise<void> {
+  store.setActiveTab("bot");
+  if (route.path !== "/") await router.push("/");
+  await nextTick();
+  scrollToSection("ai-trading");
+}
 
 // Live total wallet value — USDC when priceable, else the XLM-equivalent.
 const totalUsd = computed(() => store.portfolio?.totalUsd ?? null);
@@ -167,10 +181,17 @@ const showMore = ref(false);
         <span class="vp-k">{{ t("topBar.dailyLoss") }}</span>
         <span class="vp-amt">{{ dailyLossText }}</span>
       </span>
-      <!-- Feature 1: AI trading master switch state. -->
-      <span class="badge" :class="store.aiEnabled ? 'live' : 'danger'">
+      <!-- Feature 1: AI trading master switch state. Bug 2 (2026-07): tappable —
+           jumps to the AI trading section from any route. -->
+      <button
+        type="button"
+        class="badge badge-btn"
+        :class="store.aiEnabled ? 'live' : 'danger'"
+        :title="t('topBar.aiJumpTitle')"
+        @click.prevent="goToAiTrading"
+      >
         {{ store.aiEnabled ? t("common.ai.active") : t("common.ai.paused") }}
-      </span>
+      </button>
       <!-- AI provider picker: lists every provider that has a key configured. -->
       <select
         v-if="providers.length"
@@ -267,6 +288,27 @@ const showMore = ref(false);
 </template>
 
 <style scoped>
+/* Bug 2 (2026-07): the AI pill is a <button> now. Inherit the .badge look,
+   stay compact on pointer devices, grow to a >=44px tap target on touch. */
+.badge-btn {
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.badge-btn:hover,
+.badge-btn:focus-visible {
+  filter: brightness(1.25);
+}
+@media (hover: none) {
+  .badge-btn {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 /* Feature 6 follow-up: the paused/kill-switch banner had NO styling at all,
    so a halted bot (whose stop losses will NOT fire) could render as an
    unstyled, easy-to-miss element. Give it full-width, high-contrast,

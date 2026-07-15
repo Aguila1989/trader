@@ -329,8 +329,26 @@ Verified with `tsc` + `vue-tsc` (web + admin-web) + `vitest` (429 tests).
     focus-trapped modals (Settings, Onboarding) with Escape; keyboard-operable
     order-book rows; mandatory "I saved my secret key" acknowledgement in wallet
     setup; friendly localized error messages for raw Stellar/HTTP errors.
-    **Operator:** replace the placeholder `SUPPORT_EMAIL` constant at the top of
-    `web/src/components/Sidebar.vue` with a real monitored mailbox before launch.
+    **Operator:** replace the placeholder `SUPPORT_EMAIL` constant in
+    `web/src/support.ts` with a real monitored mailbox before launch (one shared
+    constant — used by the sidebar Help section, the global footer's Contact
+    link, and the /transparency page).
+18. **Academy account-gating + transparency page (2026-07, no setup).**
+    Lessons now require an account (the first lesson stays a free preview);
+    per-user progress + quiz attempts live server-side in
+    `dbo.AcademyLessonProgress` / `dbo.AcademyQuizAttempts` (created by the
+    same idempotent `ensureSchema` migration that runs on boot /
+    `npm run db:migrate`). A public `/transparency` page shows the fee
+    structure, and a global footer links Academy · Privacy (placeholder) ·
+    Transparantie · Contact. Users can now also pick their AI **model** (not
+    just provider) in Settings > Account > AI API Key (`dbo.UserAiKeys.model`,
+    NULL = provider default).
+    **Operator:** the fee tables on `/transparency` (and the fee pill on the
+    Academy landing page) are hand-written copies of `TIER_RATES` in
+    `src/fees/engine.ts` — if you ever change the fee schedule, update that
+    page in the same commit. The page's whole promise is that those numbers
+    are the numbers the engine charges ("staat dat hier — vooraf, niet
+    achteraf").
 
 ## B. Still blocking launch — 🔴 must fix (not yet implemented)
 
@@ -349,8 +367,9 @@ Legal is the dominant blocker; see report Section 6.
 - **Belgian legal entity + KBO/VAT** displayed, and **VAT collection** on Stripe
   checkout (`automatic_tax` / `tax_id_collection`) for EU B2C SaaS.
 - **Database backups.** The DB holds encrypted wallet secrets + the tax-critical
-  fee ledger + loss-halt counters; there is no backup/restore today. Add
-  scheduled `BACKUP DATABASE` + offsite copy + a tested restore.
+  fee ledger + loss-halt counters + per-user Academy progress; there is no
+  backup/restore today. Add scheduled `BACKUP DATABASE` + offsite copy + a
+  tested restore.
 
 ## C. Fix soon after launch — 🟡 important (not yet implemented)
 

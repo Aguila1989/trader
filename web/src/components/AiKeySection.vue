@@ -58,6 +58,7 @@ onMounted(async () => {
     configured.value = !!m.configured;
     editing.value = !m.configured;
     if (m.provider) provider.value = m.provider;
+    model.value = m.model ?? "";
   } catch {
     // Leave the section in edit mode; the user can still try to save.
     editing.value = true;
@@ -86,6 +87,7 @@ async function deleteKey(): Promise<void> {
 
 function startReplace(): void {
   key.value = "";
+  model.value = meta.value?.model ?? "";
   testResult.value = null;
   saveError.value = "";
   saveSuccess.value = false;
@@ -103,8 +105,25 @@ function cancelEdit(): void {
 // --- edit form -----------------------------------------------------------
 const provider = ref<Provider>("anthropic");
 const key = ref("");
+// 2026-07: the user picks the MODEL too (it's their bill). Empty = the
+// provider's default, shown as the placeholder.
+const model = ref("");
 const showKey = ref(false);
 const showGuide = ref(false);
+
+// Catalog defaults per provider, for the placeholder. Mirrors the backend's
+// defaultModelFor(); the authoritative value also arrives in GET /api/ai-key.
+const DEFAULT_MODEL: Record<Provider, string> = {
+  anthropic: "claude-sonnet-4-6",
+  openai: "gpt-4o",
+  google: "gemini-2.5-pro",
+  deepseek: "deepseek-chat",
+};
+const modelPlaceholder = computed(() =>
+  t("aiKey.modelPlaceholder", {
+    model: (meta.value?.provider === provider.value && meta.value?.defaultModel) || DEFAULT_MODEL[provider.value],
+  }),
+);
 
 const saving = ref(false);
 const saveError = ref("");
@@ -120,7 +139,7 @@ async function testConnection(): Promise<void> {
   testing.value = true;
   testResult.value = null;
   try {
-    const r = await aiKeyApi.test(provider.value, key.value.trim());
+    const r = await aiKeyApi.test(provider.value, key.value.trim(), model.value.trim() || undefined);
     if (r.ok) {
       testResult.value = {
         ok: !!r.data?.ok,
@@ -142,7 +161,7 @@ async function save(): Promise<void> {
   saveError.value = "";
   saveSuccess.value = false;
   try {
-    const r = await aiKeyApi.save(provider.value, key.value.trim());
+    const r = await aiKeyApi.save(provider.value, key.value.trim(), model.value.trim() || undefined);
     if (r.ok) {
       meta.value = r.data;
       configured.value = true;
@@ -172,6 +191,13 @@ async function save(): Promise<void> {
         <dt>{{ t("aiKey.configuredLabel") }}</dt>
         <dd class="mono">
           {{ t(`aiKey.providers.${meta?.provider ?? "anthropic"}`) }} · &bull;&bull;&bull;&bull;{{ meta?.keyLast4 ?? "----" }}
+        </dd>
+      </div>
+      <div class="acct-row">
+        <dt>{{ t("aiKey.modelLabel") }}</dt>
+        <dd class="mono">
+          {{ meta?.model || meta?.defaultModel || "—" }}
+          <span v-if="!meta?.model" class="muted"> ({{ t("aiKey.modelDefaultTag") }})</span>
         </dd>
       </div>
       <div v-if="meta?.updatedAt" class="acct-row">
@@ -222,6 +248,22 @@ async function save(): Promise<void> {
         <input v-model="showKey" type="checkbox" />
         {{ showKey ? t("aiKey.hide") : t("aiKey.show") }}
       </label>
+
+      <!-- 2026-07: per-user model choice. Optional — empty runs the provider's
+           default (shown in the placeholder). It's the user's own AI bill, so
+           their model choice wins over the operator's configuration. -->
+      <label class="acct-field">
+        <span>{{ t("aiKey.modelLabel") }}</span>
+        <input
+          v-model="model"
+          type="text"
+          class="acct-input"
+          autocomplete="off"
+          :spellcheck="false"
+          :placeholder="modelPlaceholder"
+        />
+      </label>
+      <p class="aikey-model-hint muted">{{ t("aiKey.modelHint") }}</p>
 
       <button
         class="btn aikey-guide-toggle"
@@ -432,6 +474,11 @@ async function save(): Promise<void> {
   color: var(--muted);
   font-size: 12px;
   margin: 0;
+}
+.aikey-model-hint {
+  font-size: 12px;
+  margin: -6px 0 0;
+  line-height: 1.5;
 }
 .aikey-learn {
   color: var(--accent);

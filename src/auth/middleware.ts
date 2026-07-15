@@ -7,8 +7,9 @@
  * prefix wildcard - a new route is protected automatically until someone
  * deliberately lists it as public. Non-/api requests (the static SPA bundle and
  * index.html) pass through so the login page and the Academy can render; they
- * expose no user data because the Academy is 100% client-rendered static content
- * and makes ZERO API calls (see the audit in src/server.ts).
+ * expose no user data because the Academy's CONTENT is 100% client-rendered
+ * static data. (Academy PROGRESS, added 2026-07, is served by /api/academy/*
+ * which is default-deny like everything else, bar the one preview path below.)
  *
  * On success the request runs inside runWithUserId() so the data layer
  * (currentUserId()) scopes every read/write to the authenticated user, with
@@ -20,6 +21,7 @@ import { verifyJwt } from "./jwt";
 import { isSessionActive } from "./store";
 import { JWT_COOKIE, parseCookies } from "./cookies";
 import { runWithUserId } from "../users/context";
+import { PREVIEW_PROGRESS_PUBLIC_PATH } from "../academy/constants";
 
 /**
  * The ONLY API paths reachable without a valid JWT. Exact-match set (a strict
@@ -44,6 +46,12 @@ export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
   // Feature 2: Stripe calls this without any session cookie; authenticity is
   // the HMAC signature over the raw body, verified in the handler itself.
   "/api/billing/webhook",
+  // Academy free-preview lesson (2026-07): the ONE lesson an anonymous visitor
+  // may read. Exact PATCH path only - every other /api/academy/* route stays
+  // default-deny. The handler resolves an OPTIONAL session itself (the gate
+  // short-circuits public paths before reading the JWT) so a logged-in reader
+  // is still tracked while a true anonymous call is silently ignored.
+  PREVIEW_PROGRESS_PUBLIC_PATH,
 ]);
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -97,6 +105,30 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
   // Scope the rest of the request to this user (AsyncLocalStorage).
   runWithUserId(verdict.claims.sub, () => next());
+}
+
+/**
+ * OPTIONAL authentication for the few PUBLIC paths that personalise when a
+ * session happens to be present (the Academy preview lesson's progress PATCH).
+ * Same checks as requireAuth (verify + aud rejection + server-side session
+ * activity), but instead of answering 401 it returns null for "anonymous".
+ *
+ * NEVER falls back to DEFAULT_USER_ID - callers must treat null as anonymous
+ * and skip per-user writes entirely, otherwise an unauthenticated visitor's
+ * data would land on the operator's account.
+ */
+export async function resolveOptionalUserId(req: Request): Promise<string | null> {
+  const token = parseCookies(req.headers.cookie)[JWT_COOKIE] ?? "";
+  if (!token) return null;
+  const verdict = verifyJwt(token, config.jwtSecret, nowSec());
+  if (!verdict.ok) return null;
+  if (verdict.claims.aud) return null; // admin token must never act as a user
+  try {
+    if (!(await isSessionActive(verdict.claims.jti))) return null;
+  } catch {
+    return null; // DB hiccup: treat as anonymous, never guess an identity
+  }
+  return verdict.claims.sub;
 }
 
 // --- per-IP rate limiter for /api/auth/* (sliding window) -------------------

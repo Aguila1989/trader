@@ -2,17 +2,24 @@
 // Persistent header above the tabs: the existing TopBar controls, a bot-status
 // strip (all derived from existing store state), and the wallet overview
 // (PortfolioPanel). Everything here stays visible when the user switches tabs.
-import { computed } from "vue";
+import { computed, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useTraderStore } from "../stores/trader";
+import { scrollToSection } from "../lib/scroll";
 import TopBar from "./TopBar.vue";
 import PortfolioPanel from "./PortfolioPanel.vue";
 import WalletChip from "./wallet/WalletChip.vue";
 
 const { t } = useI18n();
+const route = useRoute();
 const router = useRouter();
 const store = useTraderStore();
+
+// Bug 3 (2026-07): the portfolio overview is header-level, so without a
+// per-route condition it appeared on pages where it's just noise (Receive &
+// Send, Pending payments, Logs). Those routes opt out via meta.hidePortfolio.
+const showPortfolio = computed(() => route.meta.hidePortfolio !== true);
 
 const activeStops = computed(
   () => store.stopLosses.filter((s) => s.status === "active").length,
@@ -23,10 +30,14 @@ const whitelistCount = computed(() => store.limits?.assetWhitelist.length ?? 0);
 const killOn = computed(() => store.killSwitch);
 // Feature 4: deterioration warnings for held trustlines (always visible here).
 const trustlineWarnings = computed(() => store.trustlineWarnings.length);
-function viewWarnings(): void {
-  // Warnings live on the Bot sub-tab of the Trading page (route "/").
+async function viewWarnings(): Promise<void> {
+  // Bug 1 (2026-07): warnings live on the Bot sub-tab of the Trading page
+  // (route "/"). Land there first, wait for the panel to mount, THEN scroll —
+  // previously this never scrolled, dumping the user at the top of the page.
   store.setActiveTab("bot");
-  void router.push("/");
+  if (route.path !== "/") await router.push("/");
+  await nextTick();
+  scrollToSection("trustline-warnings");
 }
 </script>
 
@@ -52,7 +63,7 @@ function viewWarnings(): void {
       </div>
       <div class="bs-item">{{ t("globalHeader.whitelistedTokens") }}: <strong>{{ whitelistCount }}</strong></div>
     </section>
-    <PortfolioPanel data-tour="portfolio" />
+    <PortfolioPanel v-if="showPortfolio" data-tour="portfolio" />
   </div>
 </template>
 

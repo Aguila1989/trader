@@ -18,6 +18,7 @@ import { authApi } from "../api";
 import { uiState } from "../ui/uiState";
 import { useTraderStore } from "../stores/trader";
 import { TOUR_STEP_COUNT, endTour, tourState } from "../onboarding/tour";
+import { scrollToSection } from "../lib/scroll";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -179,7 +180,8 @@ function measure(): void {
   missCount.value = 0;
   if (scrolledForStep !== tourState.step) {
     scrolledForStep = tourState.step;
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // Instant (smooth:false): the rect is measured right below this line.
+    scrollToSection(el, { align: "nearest", smooth: false });
   }
   const r = el.getBoundingClientRect();
   const PAD = 6;

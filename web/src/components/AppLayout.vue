@@ -15,6 +15,7 @@ import { loadBillingStatus } from "../billing/premium";
 import { walletState } from "../wallet/walletState";
 import Sidebar from "./Sidebar.vue";
 import GlobalHeader from "./GlobalHeader.vue";
+import AppFooter from "./AppFooter.vue";
 import SettingsModal from "./SettingsModal.vue";
 import OnboardingTour from "./OnboardingTour.vue";
 
@@ -88,6 +89,7 @@ onMounted(() => {
         </div>
       </div>
       <router-view />
+      <AppFooter />
     </div>
     <SettingsModal v-if="uiState.settingsOpen" />
     <OnboardingTour v-if="tourState.active" />
@@ -103,6 +105,20 @@ onMounted(() => {
   margin-left: var(--sidebar-w);
   min-height: 100vh;
   transition: margin-left 0.15s ease;
+  /* Column layout so the footer's margin-top:auto pins it to the bottom even
+     on short pages. */
+  display: flex;
+  flex-direction: column;
+}
+/* Flex children default to min-width:auto and refuse to shrink below their
+   content, which would let a wide table push the whole page into horizontal
+   scroll. min-width:0 restores the block-like behavior every page was built
+   against (inner overflow-x wrappers then do their job). */
+.app-main > :deep(*) {
+  min-width: 0;
+}
+.app-main > :deep(.app-footer) {
+  margin-top: auto;
 }
 .app-shell.collapsed .app-main {
   margin-left: var(--sidebar-w-collapsed);

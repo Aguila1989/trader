@@ -8,6 +8,7 @@ import { useI18n } from "vue-i18n";
 import { getChapterGroups } from "../content";
 import { useLocale } from "../locale";
 import { useAcademyStore } from "../progress";
+import { scrollToSection } from "../../lib/scroll";
 import type { Chapter, Level } from "../types";
 
 const emit = defineEmits<{ (e: "open", chapterId: string): void }>();
@@ -23,18 +24,32 @@ function unlockKey(level: Level): string {
   return "";
 }
 
-/** Per-chapter view-model: counts, lock state, and quiz badge. */
+/** Per-chapter view-model: counts, lock state, quiz badge + progress state. */
 function cardState(ch: Chapter): {
   viewed: number;
   total: number;
   locked: boolean;
   quiz: "passed" | "retry" | "todo";
+  state: "not-started" | "in-progress" | "completed";
+  percent: number;
+  certified: boolean;
 } {
   const cp = academy.chapterProgress(ch.id);
   const viewed = academy.chapterLessonsViewed(ch);
   const attempted = cp.attempts.length > 0;
   const quiz = cp.quizPassed ? "passed" : attempted ? "retry" : "todo";
-  return { viewed, total: ch.lessons.length, locked: !academy.isChapterUnlocked(ch), quiz };
+  // Feature 1E: server-derived progress state (percent bar, Bezig/Afgerond
+  // badges, certificate) — falls back to local viewed data pre-hydration.
+  const s = academy.chapterCardState(ch);
+  return {
+    viewed,
+    total: ch.lessons.length,
+    locked: !academy.isChapterUnlocked(ch),
+    quiz,
+    state: s.state,
+    percent: s.percent,
+    certified: s.certified,
+  };
 }
 
 function pct(done: number, total: number): number {
@@ -48,13 +63,7 @@ function open(ch: Chapter): void {
 // "Skip to Advanced": expert bypass — unlock every level and jump to ADVANCED.
 function skipToAdvanced(): void {
   academy.setExpertBypass(true);
-  requestAnimationFrame(() => {
-    try {
-      document.getElementById("academy-ADVANCED")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    } catch {
-      /* no DOM */
-    }
-  });
+  requestAnimationFrame(() => scrollToSection("academy-ADVANCED"));
 }
 
 // --- reset progress confirmation ---
@@ -112,13 +121,27 @@ function doReset(): void {
           v-for="ch in g.chapters"
           :key="ch.id"
           class="card chap-card"
-          :class="{ locked: cardState(ch).locked }"
+          :class="{
+            locked: cardState(ch).locked,
+            'is-completed': cardState(ch).state === 'completed',
+            'is-inprogress': cardState(ch).state === 'in-progress',
+            'is-notstarted': cardState(ch).state === 'not-started' && !cardState(ch).locked,
+          }"
           :disabled="cardState(ch).locked"
           @click="open(ch)"
         >
           <div class="cc-top">
             <span class="cc-num">{{ t("academy.chapter", { n: ch.number }) }}</span>
-            <span v-if="cardState(ch).quiz === 'passed'" class="badge cc-badge ok">✓ {{ t("academy.badge.passed") }}</span>
+            <!-- Feature 1E state badges (top-right): completed > in-progress > quiz-retry > locked -->
+            <span v-if="cardState(ch).state === 'completed'" class="badge cc-badge ok">
+              <svg viewBox="0 0 24 24" class="cc-ic"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2" /><path d="M8.5 12.5l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              {{ t("academy.badge.completed") }}
+              <svg v-if="cardState(ch).certified" viewBox="0 0 24 24" class="cc-ic" aria-label="certificate"><circle cx="12" cy="9" r="4.5" fill="none" stroke="currentColor" stroke-width="2" /><path d="M9.5 12.5L8 20l4-2.2L16 20l-1.5-7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
+            <span v-else-if="cardState(ch).state === 'in-progress'" class="badge cc-badge busy">
+              <svg viewBox="0 0 24 24" class="cc-ic"><path d="M8 5.5v13l10-6.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              {{ t("academy.badge.inProgress") }}
+            </span>
             <span v-else-if="cardState(ch).quiz === 'retry'" class="badge cc-badge retry">↻ {{ t("academy.badge.retry") }}</span>
             <span v-else-if="cardState(ch).locked" class="badge cc-badge lock">🔒 {{ t("academy.badge.locked") }}</span>
           </div>
@@ -138,6 +161,15 @@ function doReset(): void {
               >{{ i < cardState(ch).viewed ? "✓" : "•" }}</span>
             </span>
             <span class="cc-count muted">{{ t("academy.lessonsCount", { viewed: cardState(ch).viewed, total: cardState(ch).total }) }}</span>
+            <!-- "Start" affordance: hover/focus on pointer devices, always on touch -->
+            <span v-if="cardState(ch).state === 'not-started' && !cardState(ch).locked" class="cc-start" aria-hidden="true">
+              {{ t("academy.badge.start") }} →
+            </span>
+          </div>
+
+          <!-- Feature 1E: bottom progress bar (in-progress only) -->
+          <div v-if="cardState(ch).state === 'in-progress'" class="cc-progress" role="progressbar" :aria-valuenow="cardState(ch).percent" aria-valuemin="0" aria-valuemax="100">
+            <div class="cc-progress-fill" :style="{ width: cardState(ch).percent + '%' }" />
           </div>
         </button>
       </div>
@@ -198,6 +230,24 @@ function doReset(): void {
 }
 .chap-card:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
 .chap-card.locked { opacity: 0.55; cursor: not-allowed; }
+/* Feature 1E card states */
+.chap-card { position: relative; overflow: hidden; }
+.chap-card.is-completed { border-color: var(--border-success); }
+.cc-ic { width: 13px; height: 13px; vertical-align: -2px; }
+.cc-badge.busy { color: var(--text-warning); border-color: var(--text-warning); display: inline-flex; align-items: center; gap: 4px; }
+.cc-badge.ok { display: inline-flex; align-items: center; gap: 4px; }
+.cc-start { font-size: 12px; color: var(--text-accent); font-weight: 600; opacity: 0; transition: opacity 0.12s; }
+.chap-card.is-notstarted:hover .cc-start,
+.chap-card.is-notstarted:focus-visible .cc-start { opacity: 1; }
+/* Touch devices have no hover: the Start affordance is always visible. */
+@media (hover: none) {
+  .chap-card.is-notstarted .cc-start { opacity: 1; }
+}
+.cc-progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: transparent;
+}
+.cc-progress-fill { height: 100%; background: var(--fill-accent); transition: width 0.3s ease; }
 
 .cc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cc-num { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }

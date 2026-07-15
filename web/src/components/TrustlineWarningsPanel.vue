@@ -26,7 +26,8 @@ function snooze(w: TrustlineWarning): void {
 </script>
 
 <template>
-  <section class="panel">
+  <!-- Bug 1 (2026-07): the header banner's "view" button scrolls here. -->
+  <section id="trustline-warnings" class="panel">
     <h2>{{ t("trustlineSuggestions.warningsTitle") }}</h2>
     <p class="muted tw-intro">{{ t("trustlineSuggestions.warningsIntro") }}</p>
 

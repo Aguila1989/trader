@@ -15,13 +15,16 @@ import HistoryTable from "./HistoryTable.vue";
 </script>
 
 <template>
-  <AiToggle />
-  <!-- Feature 2: the AI analysis panel is the LLM-driven core - locked (visible,
-       never hidden) for free users. Proposals/stop-losses stay free: system
-       stop-loss exits flow through the proposals panel for everyone. -->
-  <PremiumGate>
-    <BotAnalysisPanel />
-  </PremiumGate>
+  <!-- Bug 2 (2026-07): scroll anchor for the header's AI-trading pill. -->
+  <div id="ai-trading">
+    <AiToggle />
+    <!-- Feature 2: the AI analysis panel is the LLM-driven core - locked (visible,
+         never hidden) for free users. Proposals/stop-losses stay free: system
+         stop-loss exits flow through the proposals panel for everyone. -->
+    <PremiumGate>
+      <BotAnalysisPanel />
+    </PremiumGate>
+  </div>
   <ProposalsPanel />
   <StopLossPanel mode="ai" />
   <!-- Feature 4: deterioration warnings first (held tokens), then add-suggestions. -->
@@ -31,3 +34,13 @@ import HistoryTable from "./HistoryTable.vue";
   <AlertsPanel />
   <HistoryTable source="bot" />
 </template>
+
+<style scoped>
+/* The #ai-trading anchor wrapper keeps the surrounding .tab-body rhythm
+   (flex column, 16px gap) so wrapping two panels changes no spacing. */
+#ai-trading {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+</style>

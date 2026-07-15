@@ -575,6 +575,10 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // on dbo.Users. Runs after ensureUserScoping so dbo.Users exists.
   await ensureBillingSchema(p);
 
+  // Academy progress (2026-07): per-user server-side lesson progress + quiz
+  // attempts. Runs after ensureUserScoping so the userId foreign keys resolve.
+  await ensureAcademySchema(p);
+
   // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
   // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
   // per network - a hard DB guarantee, not just app logic. Added here (after
@@ -595,6 +599,13 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
        AND COL_LENGTH('dbo.UserAiKeys', 'userId') IS NOT NULL
        AND INDEXPROPERTY(OBJECT_ID('dbo.UserAiKeys'), 'UX_UserAiKeys_user', 'IndexID') IS NULL
       EXEC('CREATE UNIQUE INDEX UX_UserAiKeys_user ON dbo.UserAiKeys (userId)');
+
+    -- Per-user MODEL choice (2026-07): previously every BYO-key user was pinned
+    -- to the operator's env/catalog-default model for their provider. NULL means
+    -- "use the catalog default" (src/ai/userKeys.ts specDefaults).
+    IF OBJECT_ID('dbo.UserAiKeys', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.UserAiKeys', 'model') IS NULL
+      ALTER TABLE dbo.UserAiKeys ADD model NVARCHAR(120) NULL;
   `);
 
   // AUDIT-025: the Logs tab filters TradeLog by action/token and AiLog by
@@ -692,6 +703,60 @@ async function ensureAuthSchema(p: sql.ConnectionPool): Promise<void> {
       );
       CREATE INDEX IX_LoginAttempts_ts ON dbo.LoginAttempts (ts DESC);
       CREATE INDEX IX_LoginAttempts_email ON dbo.LoginAttempts (email, ts DESC);
+    END
+  `);
+}
+
+/**
+ * Academy progress (2026-07 Feature 1: account-gated Academy + progress
+ * tracking). Per-user, server-side lesson progress and quiz attempts - the
+ * source of truth for a signed-in user, replacing the client-only localStorage
+ * store. Additive + idempotent, exactly like the rest of ensureSchema; runs
+ * after ensureUserScoping so the userId foreign keys resolve against dbo.Users.
+ *
+ * dbo.AcademyLessonProgress  one row per (user, lessonSlug). The UNIQUE index on
+ *                            (userId, lessonSlug) is the DB-level upsert key, so
+ *                            a race can never create two rows for the same
+ *                            lesson. status: 0=NotStarted 1=InProgress 2=Completed.
+ *                            progressPercent only ever moves forward (enforced in
+ *                            the repo layer, not the DB).
+ * dbo.AcademyQuizAttempts    append-only; one row per quiz attempt. attemptNumber
+ *                            is 1-based per (user, lessonSlug). Best score is
+ *                            derived at read time with MAX(scorePercent) - there
+ *                            is no denormalised "best" column to drift.
+ */
+async function ensureAcademySchema(p: sql.ConnectionPool): Promise<void> {
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.AcademyLessonProgress', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AcademyLessonProgress (
+        id              NVARCHAR(64)  NOT NULL CONSTRAINT PK_AcademyLessonProgress PRIMARY KEY,
+        userId          NVARCHAR(64)  NOT NULL,
+        lessonSlug      NVARCHAR(120) NOT NULL,
+        status          INT           NOT NULL CONSTRAINT DF_AcademyLessonProgress_status DEFAULT 0,
+        startedAt       DATETIME2(3)  NULL,
+        completedAt     DATETIME2(3)  NULL,
+        progressPercent INT           NOT NULL CONSTRAINT DF_AcademyLessonProgress_pct DEFAULT 0,
+        CONSTRAINT FK_AcademyLessonProgress_userId FOREIGN KEY (userId) REFERENCES dbo.Users(id)
+      );
+      CREATE UNIQUE INDEX UX_AcademyLessonProgress_user_lesson
+        ON dbo.AcademyLessonProgress (userId, lessonSlug);
+    END
+
+    IF OBJECT_ID('dbo.AcademyQuizAttempts', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.AcademyQuizAttempts (
+        id            NVARCHAR(64)  NOT NULL CONSTRAINT PK_AcademyQuizAttempts PRIMARY KEY,
+        userId        NVARCHAR(64)  NOT NULL,
+        lessonSlug    NVARCHAR(120) NOT NULL,
+        attemptNumber INT           NOT NULL,
+        scorePercent  INT           NOT NULL,
+        passed        BIT           NOT NULL,
+        attemptedAt   DATETIME2(3)  NOT NULL,
+        CONSTRAINT FK_AcademyQuizAttempts_userId FOREIGN KEY (userId) REFERENCES dbo.Users(id)
+      );
+      CREATE INDEX IX_AcademyQuizAttempts_user_lesson
+        ON dbo.AcademyQuizAttempts (userId, lessonSlug, attemptedAt DESC);
     END
   `);
 }

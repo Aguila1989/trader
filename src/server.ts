@@ -16,6 +16,7 @@ import { aiReady, aiModel, aiProviderId } from "./ai";
 import {
   AiKeyError,
   aiReadyForCurrentUser,
+  defaultModelFor,
   deleteUserAiKey,
   getUserAiKeyMeta,
   isUserAiProvider,
@@ -51,6 +52,7 @@ import { startMonitor, stopMonitor } from "./trading/monitor";
 import { startTierScheduler, stopTierScheduler } from "./fees/tierScheduler";
 import { createAdminRouter } from "./admin/routes";
 import { createBillingRouter } from "./billing/routes";
+import { createAcademyRouter } from "./academy/routes";
 import { processWebhookDelivery } from "./billing/webhook";
 import { stripeConfigured } from "./billing/stripeClient";
 import { settingsCatalog, settingLoop } from "./trading/settings";
@@ -259,6 +261,12 @@ app.use("/api/wallet", createWalletRouter());
 // captured above. Any verification/shape failure answers 400; a handler error
 // answers 500 so Stripe retries the delivery.
 app.use("/api/billing", createBillingRouter());
+
+// Academy progress (2026-07 Feature 1): per-user lesson progress + quiz
+// attempts. Mounted AFTER requireAuth so every route runs in the authenticated
+// user's scope; only the preview lesson's PATCH path is public (see
+// PUBLIC_API_PATHS) and that handler resolves an optional session itself.
+app.use("/api/academy", createAcademyRouter());
 app.post("/api/billing/webhook", async (req, res) => {
   if (!stripeConfigured()) {
     res.status(503).json({ error: "billing not configured" });
@@ -1580,7 +1588,13 @@ app.get("/api/liquidity", async (req, res) => {
 
 app.get("/api/ai-key", async (_req, res) => {
   const meta = await getUserAiKeyMeta(currentUserId());
-  res.json(meta ? { configured: true, ...meta } : { configured: false });
+  // defaultModel: what runs when the user hasn't chosen a model (the catalog
+  // default for their provider) — shown as the placeholder in Settings.
+  res.json(
+    meta
+      ? { configured: true, ...meta, defaultModel: defaultModelFor(meta.provider) }
+      : { configured: false },
+  );
 });
 
 app.post("/api/ai-key", async (req, res) => {
@@ -1591,9 +1605,10 @@ app.post("/api/ai-key", async (req, res) => {
     return;
   }
   try {
-    await saveUserAiKey(currentUserId(), provider, key);
+    // model is the user's optional choice; empty/absent = provider default.
+    await saveUserAiKey(currentUserId(), provider, key, req.body?.model);
     const meta = await getUserAiKeyMeta(currentUserId());
-    res.json({ configured: true, ...meta });
+    res.json({ configured: true, ...meta, defaultModel: defaultModelFor(provider) });
   } catch (err) {
     if (err instanceof AiKeyError) {
       res.status(err.status).json({ error: err.message });
@@ -1619,7 +1634,15 @@ app.post("/api/ai-key/test", async (req, res) => {
   // still applies so a stuck tab can't fan out concurrent calls.
   if (!llmGateAcquire(res)) return;
   try {
-    res.json(await testAiKey(provider, key));
+    // Test against the model the user intends to run (optional; default used
+    // when absent) so a typo'd model id fails before saving.
+    res.json(await testAiKey(provider, key, req.body?.model));
+  } catch (err) {
+    if (err instanceof AiKeyError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    failGeneric(res, err, 500);
   } finally {
     llmGateRelease();
   }

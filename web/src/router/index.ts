@@ -19,6 +19,7 @@ import ReceiveSendPage from "../components/ReceiveSendPage.vue";
 import PendingPaymentsPage from "../components/PendingPaymentsPage.vue";
 import LogsPage from "../components/LogsPage.vue";
 import { isLoggedIn } from "../auth/session";
+import { isPreviewLesson } from "../academy/preview";
 import { loadWalletStatus, walletState } from "../wallet/walletState";
 import i18n from "../i18n";
 
@@ -60,9 +61,12 @@ const router = createRouter({
       component: AppLayout,
       children: [
         { path: "", name: "trading", component: TradingPage },
-        { path: "receive", name: "receive", component: ReceiveSendPage },
-        { path: "pending", name: "pending", component: PendingPaymentsPage },
-        { path: "logs", name: "logs", component: LogsPage },
+        // Bug 3 (2026-07): the header-level portfolio overview is noise on
+        // these three pages (Receive & Send, Pending payments, Logs) — they
+        // opt out via meta.hidePortfolio, read in GlobalHeader.vue.
+        { path: "receive", name: "receive", component: ReceiveSendPage, meta: { hidePortfolio: true } },
+        { path: "pending", name: "pending", component: PendingPaymentsPage, meta: { hidePortfolio: true } },
+        { path: "logs", name: "logs", component: LogsPage, meta: { hidePortfolio: true } },
         {
           // Feature 2: pricing/upgrade page. Sidebar but no trading header
           // (standalone, like the Academy) - it's a marketing/decision page.
@@ -79,6 +83,14 @@ const router = createRouter({
           name: "token",
           component: () => import("../components/TokenDetailPage.vue"),
           meta: { standalone: true },
+        },
+        {
+          // Feature 2 (2026-07): the "how we earn" page. Fully public and
+          // standalone like the Academy (no trading header, no session needed).
+          path: "transparency",
+          name: "transparency",
+          component: () => import("../components/TransparencyPage.vue"),
+          meta: { public: true, standalone: true },
         },
         {
           path: "academy",
@@ -116,6 +128,13 @@ router.beforeEach(async (to) => {
   const isPublic = to.meta.public === true;
   // Already-logged-in users never need the login/register screens.
   if (authed && (to.name === "login" || to.name === "register")) return { path: "/" };
+  // Academy lessons are account-gated (2026-07 Feature 1); only the free
+  // preview lesson stays open. /academy itself remains public (it renders the
+  // sign-up landing for anonymous visitors). The redirect param brings the
+  // user straight back to the lesson after logging in.
+  if (!authed && to.name === "academy-lesson" && !isPreviewLesson(to.params.chapterId, to.params.lessonId)) {
+    return { path: "/login", query: { redirect: to.fullPath } };
+  }
   // Unauthenticated users may only reach the public allowlist; everything else
   // redirects to login, preserving where they were headed.
   if (!authed && !isPublic) {
@@ -151,6 +170,7 @@ const ROUTE_TITLE_KEYS: Record<string, string> = {
   pricing: "billing.upgradeNav",
   academy: "sidebar.academy",
   "academy-lesson": "sidebar.academy",
+  transparency: "footer.transparency",
   login: "auth.login.title",
   register: "auth.register.title",
   "forgot-password": "auth.forgot.title",

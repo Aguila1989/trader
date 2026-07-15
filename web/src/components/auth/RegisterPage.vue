@@ -1,12 +1,24 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import AuthLayout from "./AuthLayout.vue";
 import PasswordStrengthMeter from "./PasswordStrengthMeter.vue";
 import { register } from "../../auth/session";
 import { checkPassword } from "../../auth/passwordPolicy";
 
 const { t } = useI18n();
+const route = useRoute();
+
+// Feature 1 (2026-07): arriving with ?redirect= (e.g. from the Academy landing
+// CTA) must survive the register -> login hop, so the user lands back where
+// they started after signing in. Same internal-path-only rule as LoginPage's
+// safeRedirect: never forward an absolute/protocol-relative URL.
+const loginTo = computed(() => {
+  const r = typeof route.query.redirect === "string" ? route.query.redirect : "";
+  const safe = r.startsWith("/") && !r.startsWith("//") ? r : "";
+  return safe ? { path: "/login", query: { redirect: safe } } : { path: "/login" };
+});
 
 const email = ref("");
 const password = ref("");
@@ -73,7 +85,7 @@ async function submit(): Promise<void> {
       <div class="auth-links">
         <span class="muted">
           {{ t("auth.register.haveAccount") }}
-          <router-link to="/login">{{ t("auth.register.loginLink") }}</router-link>
+          <router-link :to="loginTo">{{ t("auth.register.loginLink") }}</router-link>
         </span>
       </div>
     </template>
@@ -82,7 +94,7 @@ async function submit(): Promise<void> {
       <h1 class="auth-title">{{ t("auth.register.title") }}</h1>
       <p class="auth-success" role="status">{{ doneMessage }}</p>
       <p v-if="verificationRequired" class="auth-sub muted">{{ t("auth.register.verifyNotice") }}</p>
-      <router-link class="btn primary auth-submit" to="/login">{{ t("auth.register.loginLink") }}</router-link>
+      <router-link class="btn primary auth-submit" :to="loginTo">{{ t("auth.register.loginLink") }}</router-link>
     </template>
   </AuthLayout>
 </template>

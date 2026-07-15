@@ -5,6 +5,7 @@ import { useTraderStore } from "../stores/trader";
 import { fmtNum } from "../format";
 import AssetSelect from "./AssetSelect.vue";
 import type { UniverseToken } from "../types";
+import { scrollToSection } from "../lib/scroll";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -35,7 +36,7 @@ function applyPrefill(asset: string | null): void {
     mDomain.value = "";
   }
   void nextTick(() => {
-    panelEl.value?.scrollIntoView({ behavior: "smooth", block: "center" });
+    scrollToSection(panelEl.value, { align: "center" });
   });
   store.clearTrustlinePrefill();
 }

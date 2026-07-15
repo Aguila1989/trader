@@ -19,10 +19,9 @@ import { useAcademyStore } from "../academy/progress";
 import { uiState, toggleSidebar, openSettings } from "../ui/uiState";
 import { billingState } from "../billing/premium";
 
-// Fix 3: Help & support. PLACEHOLDER ADDRESS — the operator MUST replace this
-// with a real, monitored support mailbox before launch (there is currently no
-// other way for a user to reach anyone). Tracked in DEPLOY.md.
-const SUPPORT_EMAIL = "support@example.com";
+// Fix 3: Help & support. The address is a shared placeholder constant — see
+// web/src/support.ts (operator MUST replace before launch; tracked in DEPLOY.md).
+import { SUPPORT_EMAIL } from "../support";
 
 const { t } = useI18n();
 const route = useRoute();

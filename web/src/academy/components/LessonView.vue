@@ -1,12 +1,18 @@
 <script setup lang="ts">
-// Single-lesson reader. Presentational: it renders the lesson (already localized
-// content via the chapter prop) and emits navigation intent. Chrome strings come
-// from i18n.
-import { computed } from "vue";
+// Single-lesson reader. Renders the lesson (already localized content via the
+// chapter prop) and emits navigation intent. Chrome strings come from i18n.
+//
+// Feature 1F (2026-07): reading progress. A thin bar at the top shows how far
+// the reader has come (highest of: this session's scroll depth, the server's
+// stored percent), and crossing the 25/50/75/100 scroll thresholds reports to
+// the store, which PATCHes the API debounced (>=500ms) - reaching the end
+// completes the lesson server-side.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useLocale } from "../locale";
 import { glossaryFor } from "../glossary";
 import { segmentText } from "../segment";
+import { useAcademyStore } from "../progress";
 import TermTip from "./TermTip.vue";
 import type { Chapter } from "../types";
 
@@ -19,7 +25,51 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { locale } = useLocale();
+const academy = useAcademyStore();
 const lesson = computed(() => props.chapter.lessons[props.lessonIndex]);
+
+// --- reading-progress tracking (Feature 1F) ---
+const bodyEl = ref<HTMLElement | null>(null);
+/** Highest scroll threshold (0/25/50/75/100) reached for the CURRENT lesson. */
+const scrollPct = ref(0);
+const serverPct = computed(() => {
+  const id = lesson.value?.id;
+  if (!id) return 0;
+  const item = academy.serverProgress[id];
+  return item ? (item.status === "Completed" ? 100 : item.progressPercent) : 0;
+});
+const shownPct = computed(() => Math.min(100, Math.max(scrollPct.value, serverPct.value)));
+
+/** How much of the article has scrolled past the viewport bottom -> threshold. */
+function measure(): void {
+  const el = bodyEl.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const read = Math.min(Math.max(window.innerHeight - r.top, 0) / Math.max(r.height, 1), 1);
+  const th = read >= 0.999 ? 100 : read >= 0.75 ? 75 : read >= 0.5 ? 50 : read >= 0.25 ? 25 : 0;
+  if (th > scrollPct.value) {
+    scrollPct.value = th;
+    // Store-level debounce keeps the PATCH rate low regardless of scroll rate.
+    academy.updateLessonScroll(props.chapter.id, props.lessonIndex, th);
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("scroll", measure, { passive: true });
+  window.addEventListener("resize", measure, { passive: true });
+  void nextTick(measure); // short lesson fully in view counts as read
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("scroll", measure);
+  window.removeEventListener("resize", measure);
+});
+watch(
+  () => [props.chapter.id, props.lessonIndex],
+  () => {
+    scrollPct.value = 0; // each lesson tracks its own depth
+    void nextTick(measure);
+  },
+);
 
 // Split the lesson prose into text + glossary-term segments. `used` is shared
 // across paragraphs + the example so each term is linked only on first use.
@@ -38,6 +88,11 @@ const levelClass = computed(() => "lvl-" + props.chapter.level.toLowerCase());
 
 <template>
   <div class="lesson">
+    <!-- Feature 1F: reading-progress bar (session scroll depth vs stored) -->
+    <div class="ls-track" role="progressbar" :aria-valuenow="shownPct" aria-valuemin="0" aria-valuemax="100">
+      <div class="ls-track-fill" :style="{ width: shownPct + '%' }" />
+    </div>
+
     <header class="ls-head">
       <button class="link-btn" @click="emit('overview')">{{ t("academy.lesson.all") }}</button>
       <div class="ls-titles">
@@ -59,7 +114,7 @@ const levelClass = computed(() => "lvl-" + props.chapter.level.toLowerCase());
       />
     </div>
 
-    <article class="panel ls-body">
+    <article ref="bodyEl" class="panel ls-body">
       <h1 class="ls-h1">{{ lesson.title }}</h1>
       <p v-for="(segs, i) in segments.paras" :key="i" class="ls-p">
         <template v-for="(s, j) in segs" :key="j">
@@ -96,6 +151,13 @@ const levelClass = computed(() => "lvl-" + props.chapter.level.toLowerCase());
 
 <style scoped>
 .lesson { display: flex; flex-direction: column; gap: 14px; }
+
+/* Feature 1F reading-progress bar */
+.ls-track {
+  height: 3px; border-radius: 999px; overflow: hidden;
+  background: var(--panel-2);
+}
+.ls-track-fill { height: 100%; background: var(--fill-accent); transition: width 0.25s ease; }
 
 .ls-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .link-btn { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }

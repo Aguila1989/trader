@@ -120,6 +120,69 @@ async function postJSON<T>(url: string, body?: unknown): Promise<T> {
   return data;
 }
 
+/** PATCH twin of postJSON (same non-throwing error-sentinel contract). */
+async function patchJSON<T>(url: string, body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PATCH",
+      credentials: CREDENTIALS,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch {
+    return { error: "Network error - please try again." } as T;
+  }
+  handleStatus(res);
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok && !data.error) {
+    (data as { error?: string }).error = `Request failed (HTTP ${res.status}).`;
+  }
+  return data;
+}
+
+// --- Academy progress API (2026-07 Feature 1) --------------------------------
+// Server-side lesson progress + quiz attempts for the signed-in user. Slugs are
+// the content model's ids: lesson reading progress is keyed "cN-lM", chapter
+// quizzes "cN". See src/academy/store.ts (backend) for the rules.
+
+export interface AcademyProgressItem {
+  lessonSlug: string;
+  status: "NotStarted" | "InProgress" | "Completed";
+  progressPercent: number;
+  completedAt: string | null;
+  bestQuizScore: number | null;
+  quizPassed: boolean;
+  error?: string;
+}
+
+export interface AcademyQuizResult {
+  lessonSlug: string;
+  attemptNumber: number;
+  scorePercent: number;
+  passed: boolean;
+  isNewBest: boolean;
+  attemptedAt: string;
+  error?: string;
+}
+
+export interface AcademyQuizAttemptRecord {
+  attemptNumber: number;
+  scorePercent: number;
+  passed: boolean;
+  attemptedAt: string;
+}
+
+export const academyApi = {
+  progress: () => getJSON<AcademyProgressItem[]>("/api/academy/progress"),
+  updateProgress: (slug: string, body: { progressPercent: number; status?: string }) =>
+    patchJSON<AcademyProgressItem>(`/api/academy/progress/${encodeURIComponent(slug)}`, body),
+  recordQuiz: (slug: string, body: { scorePercent: number; passed: boolean }) =>
+    postJSON<AcademyQuizResult>(`/api/academy/progress/${encodeURIComponent(slug)}/quiz`, body),
+  quizHistory: (slug: string) =>
+    getJSON<AcademyQuizAttemptRecord[]>(`/api/academy/progress/${encodeURIComponent(slug)}/quiz`),
+};
+
 // --- auth API ---------------------------------------------------------------
 // Returns the parsed body plus ok/status so the auth screens can show the
 // server's (deliberately generic) messages. These never throw on 4xx.
@@ -240,12 +303,16 @@ export interface AiKeyMeta {
   provider?: "anthropic" | "openai" | "google" | "deepseek";
   keyLast4?: string;
   updatedAt?: string;
+  /** The user's chosen model; null/absent = the provider's default. */
+  model?: string | null;
+  /** What runs when no model is chosen (catalog default for the provider). */
+  defaultModel?: string;
 }
 
 export const aiKeyApi = {
   get: () => getJSON<AiKeyMeta>("/api/ai-key"),
-  save: (provider: string, key: string) =>
-    authRequest<AiKeyMeta>("/api/ai-key", { provider, key }),
+  save: (provider: string, key: string, model?: string) =>
+    authRequest<AiKeyMeta>("/api/ai-key", { provider, key, ...(model ? { model } : {}) }),
   remove: async (): Promise<AuthApiResult<AiKeyMeta>> => {
     try {
       const res = await fetch("/api/ai-key", { method: "DELETE", credentials: CREDENTIALS });
@@ -255,9 +322,14 @@ export const aiKeyApi = {
       return { ok: false, status: 0, data: { configured: true, error: "Network error - please try again." } as AiKeyMeta & { error?: string } };
     }
   },
-  // One-token connectivity test against the CANDIDATE key (pre-save).
-  test: (provider: string, key: string) =>
-    authRequest<{ ok?: boolean; message?: string; model?: string }>("/api/ai-key/test", { provider, key }),
+  // One-token connectivity test against the CANDIDATE key (pre-save), run on
+  // the model the user intends to use (typo'd model ids fail here, not later).
+  test: (provider: string, key: string, model?: string) =>
+    authRequest<{ ok?: boolean; message?: string; model?: string }>("/api/ai-key/test", {
+      provider,
+      key,
+      ...(model ? { model } : {}),
+    }),
 };
 
 // --- Billing API (Feature 2) -------------------------------------------------

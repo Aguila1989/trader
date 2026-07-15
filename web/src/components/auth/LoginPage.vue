@@ -44,6 +44,13 @@ function safeRedirect(p: unknown): string {
   return typeof p === "string" && p.startsWith("/") && !p.startsWith("//") ? p : "/";
 }
 
+// Feature 1 (2026-07): keep ?redirect= alive across the login <-> register hop
+// so an Academy-landing visitor ends up back at the lesson they wanted.
+const registerTo = computed(() => {
+  const safe = safeRedirect(route.query.redirect);
+  return safe !== "/" ? { path: "/register", query: { redirect: safe } } : { path: "/register" };
+});
+
 async function submit(): Promise<void> {
   error.value = "";
   loading.value = true;
@@ -114,7 +121,7 @@ function backToPassword(): void {
         <router-link to="/forgot-password">{{ t("auth.login.forgot") }}</router-link>
         <span class="muted">
           {{ t("auth.login.noAccount") }}
-          <router-link to="/register">{{ t("auth.login.registerLink") }}</router-link>
+          <router-link :to="registerTo">{{ t("auth.login.registerLink") }}</router-link>
         </span>
       </div>
     </template>
