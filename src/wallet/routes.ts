@@ -11,6 +11,7 @@
  * real cause is logged server-side, the client gets a generic message.
  */
 import { Router, type Request, type Response } from "express";
+import { config } from "../config";
 import { store } from "../trading/store";
 import {
   createWallet,
@@ -19,6 +20,7 @@ import {
   getWalletStatus,
   replaceWallet,
   fundViaFriendbot,
+  registerWallet,
 } from "./service";
 import { WalletError } from "./errors";
 
@@ -85,6 +87,20 @@ export function createWalletRouter(): Router {
   router.post("/friendbot", async (_req: Request, res: Response) => {
     try {
       res.json(await fundViaFriendbot());
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // NON-CUSTODIAL (flag-gated): register a client-generated wallet by PUBLIC KEY
+  // only — the server never receives a secret. Signing happens on the device.
+  router.post("/register", async (req: Request, res: Response) => {
+    if (!config.nonCustodial) {
+      res.status(404).json({ error: "Non-custodial mode is not enabled." });
+      return;
+    }
+    try {
+      res.json(await registerWallet(req.body?.publicKey));
     } catch (err) {
       fail(res, err);
     }

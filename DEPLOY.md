@@ -354,13 +354,16 @@ Verified with `tsc` + `vue-tsc` (web + admin-web) + `vitest` (429 tests).
 
 Legal is the dominant blocker; see report Section 6.
 
-- **Resolve the custodial/non-custodial question (legal, dominant path driver).**
-  The app is marketed as non-custodial, but wallet keys are generated and
-  decrypted **server-side** and the backend signs autonomously — that is
-  effectively custodial and likely triggers **MiCA CASP / FSMA** licensing.
-  Either obtain a legal opinion + registration, or re-architect to true
-  client-side signing. Nothing else legal is safe to finalize until this is
-  settled. (Report Section 5 → Must Have.)
+- **Custody — DIRECTION SET (2026-07-16): go non-custodial (Option A).**
+  A CASP licence is unaffordable for a bootstrapped product, so custodial
+  keys/signing are being removed. The app is *currently still* custodial (keys
+  generated/decrypted server-side, backend signs) — that is exactly what the
+  migration removes. **Immediate step: a one-off legal opinion** confirming the
+  specific non-custodial design falls outside CASP scope (questions drafted in
+  `juridische-analyse-atrium.md` §7.1) — *before* building. Then execute the
+  phased migration (build-on-server / sign-on-client); see the engineering plan
+  in the second brain (`atrium-noncustodial-engineering-plan`). Nothing else
+  legal is safe to finalize until the opinion lands. (Report Section 5 → Must Have.)
 - **Privacy Policy** (GDPR Art. 13/14; required URL for both app stores),
   **Terms of Service** with accept-at-signup, **Risk Disclaimer** gating live/AI
   trading, and a **Cookie Policy** section — none exist in the repo.

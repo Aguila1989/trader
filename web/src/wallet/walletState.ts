@@ -15,6 +15,10 @@ export const walletState = reactive<{
   xlmBalance: string | null;
   funded: boolean;
   network: string;
+  /** NON-CUSTODIAL: active wallet has no server-side secret; sign on device. */
+  clientSigned: boolean;
+  /** Whether the server offers the non-custodial setup flow. */
+  nonCustodial: boolean;
 }>({
   loaded: false,
   configured: false,
@@ -22,6 +26,8 @@ export const walletState = reactive<{
   xlmBalance: null,
   funded: false,
   network: "",
+  clientSigned: false,
+  nonCustodial: false,
 });
 
 let inflight: Promise<void> | null = null;
@@ -32,6 +38,8 @@ function apply(s: WalletStatus): void {
   walletState.xlmBalance = s.xlmBalance ?? null;
   walletState.funded = s.funded ?? false;
   walletState.network = s.network;
+  walletState.clientSigned = s.clientSigned ?? false;
+  walletState.nonCustodial = s.nonCustodial ?? false;
   walletState.loaded = true;
 }
 
@@ -64,4 +72,6 @@ export function resetWalletState(): void {
   walletState.xlmBalance = null;
   walletState.funded = false;
   walletState.network = "";
+  walletState.clientSigned = false;
+  walletState.nonCustodial = false;
 }

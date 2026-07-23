@@ -592,6 +592,15 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
               ON dbo.Wallets (userId, network) WHERE status = ''active''');
   `);
 
+  // Non-custodial migration: client-signed wallets store only the public key, so
+  // encryptedSecret becomes NULLable. Idempotent — only alters when currently NOT
+  // NULL. Existing (custodial) rows keep their ciphertext unchanged.
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.Wallets', 'U') IS NOT NULL
+       AND COLUMNPROPERTY(OBJECT_ID('dbo.Wallets'), 'encryptedSecret', 'AllowsNull') = 0
+      EXEC('ALTER TABLE dbo.Wallets ALTER COLUMN encryptedSecret NVARCHAR(MAX) NULL');
+  `);
+
   // AI keys (2026-07 Feature 3): ONE key row per user - a hard DB guarantee,
   // same EXEC-after-scoping pattern as UX_Wallets_active.
   await p.request().batch(`

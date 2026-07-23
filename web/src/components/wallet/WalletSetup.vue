@@ -14,7 +14,7 @@ import { walletState, loadWalletStatus } from "../../wallet/walletState";
 const { t } = useI18n();
 const router = useRouter();
 
-type View = "choose" | "create" | "import" | "manage";
+type View = "choose" | "create" | "import" | "manage" | "create-nc";
 const view = ref<View>("choose");
 
 const loading = ref(false);
@@ -28,6 +28,14 @@ const last4 = ref("");
 // actually saved somewhere recoverable. A mandatory acknowledgement checkbox
 // gates the confirm button in addition to (not instead of) the last-4 check.
 const secretSavedAck = ref(false);
+
+// NON-CUSTODIAL create: key generated + encrypted ON THIS DEVICE (never sent to
+// the server); the server stores only the public key. The localKey module is
+// dynamically imported so stellar-base stays out of this route's initial chunk.
+const ncGen = ref<{ publicKey: string; secret: string } | null>(null);
+const ncPass = ref("");
+const ncPassConfirm = ref("");
+const ncBackupAck = ref(false);
 
 // Import / replace inputs.
 const importSecret = ref("");
@@ -87,6 +95,62 @@ async function confirmCreate(): Promise<void> {
     view.value = "manage";
   } else {
     error.value = r.data.error || t("walletSetup.genericError");
+  }
+}
+
+// NON-CUSTODIAL: generate a keypair on the device, then show it for backup.
+async function startNc(): Promise<void> {
+  reset();
+  ncGen.value = null;
+  ncPass.value = "";
+  ncPassConfirm.value = "";
+  ncBackupAck.value = false;
+  view.value = "create-nc";
+  loading.value = true;
+  try {
+    const m = await import("../../wallet/localKey");
+    ncGen.value = m.generateLocalWallet();
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    loading.value = false;
+  }
+}
+
+// Encrypt the key at rest on the device (passphrase), then register the PUBLIC
+// key with the server. If the server register fails, roll back the device key so
+// no orphaned local key is left behind.
+async function confirmNc(): Promise<void> {
+  reset();
+  if (!ncGen.value) return;
+  if (ncPass.value.length < 8) {
+    error.value = "Passphrase must be at least 8 characters.";
+    return;
+  }
+  if (ncPass.value !== ncPassConfirm.value) {
+    error.value = "Passphrases do not match.";
+    return;
+  }
+  loading.value = true;
+  try {
+    const m = await import("../../wallet/localKey");
+    await m.saveLocalWallet(ncGen.value.secret, ncPass.value);
+    const r = await walletApi.register(ncGen.value.publicKey);
+    if (r.ok && r.data.publicKey) {
+      ncGen.value = null;
+      ncPass.value = "";
+      ncPassConfirm.value = "";
+      ncBackupAck.value = false;
+      await loadWalletStatus(true);
+      view.value = "manage";
+    } else {
+      await m.clearLocalWallet(); // registration failed — don't strand a device key
+      error.value = r.data.error || t("walletSetup.genericError");
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -169,6 +233,14 @@ async function doReplace(): Promise<void> {
           <strong>{{ t("walletSetup.importCard") }}</strong>
           <span class="muted">{{ t("walletSetup.importCardDesc") }}</span>
         </button>
+        <!-- NON-CUSTODIAL: shown only when the server offers it (NONCUSTODIAL_MODE). -->
+        <button v-if="walletState.nonCustodial" class="ws-choice" type="button" @click="startNc()">
+          <strong>Create on this device (non-custodial)</strong>
+          <span class="muted">
+            Your key is generated and encrypted on your device — we never see it. You sign every
+            transaction yourself.
+          </span>
+        </button>
       </div>
     </template>
 
@@ -234,6 +306,72 @@ async function doReplace(): Promise<void> {
             :disabled="loading || last4.trim().length !== 4 || !secretSavedAck"
           >
             {{ t("walletSetup.confirmBtn") }}
+          </button>
+        </form>
+      </template>
+    </template>
+
+    <!-- 2b. Create a NON-CUSTODIAL wallet (key generated + kept on this device) -->
+    <template v-else-if="view === 'create-nc'">
+      <h1 class="auth-title">Create a non-custodial wallet</h1>
+
+      <template v-if="!ncGen">
+        <p class="auth-sub muted">Generating a key on this device…</p>
+        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <div class="auth-links">
+          <a href="#" @click.prevent="reset(); view = 'choose'">{{ t("walletSetup.back") }}</a>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="ws-warn" role="alert">
+          <strong>Back up your secret key now.</strong>
+          <p>
+            This key lives only on this device, encrypted by your passphrase. If you lose both,
+            your funds are gone — we cannot recover them.
+          </p>
+        </div>
+
+        <label class="auth-field">
+          <span>{{ t("walletSetup.publicKeyLabel") }}</span>
+          <div class="ws-keyrow">
+            <code class="ws-key">{{ ncGen.publicKey }}</code>
+            <button class="btn ws-copy" type="button" @click="copy(ncGen!.publicKey, 'ncpub')">
+              {{ copied === "ncpub" ? t("walletSetup.copied") : t("walletSetup.copy") }}
+            </button>
+          </div>
+        </label>
+
+        <label class="auth-field">
+          <span>{{ t("walletSetup.secretKeyLabel") }}</span>
+          <div class="ws-keyrow">
+            <code class="ws-key ws-secret">{{ ncGen.secret }}</code>
+            <button class="btn ws-copy" type="button" @click="copy(ncGen!.secret, 'ncsec')">
+              {{ copied === "ncsec" ? t("walletSetup.copied") : t("walletSetup.copy") }}
+            </button>
+          </div>
+        </label>
+
+        <form class="auth-form" @submit.prevent="confirmNc">
+          <label class="auth-field">
+            <span>Passphrase (encrypts the key on this device)</span>
+            <input v-model="ncPass" type="password" autocomplete="new-password" placeholder="At least 8 characters" />
+          </label>
+          <label class="auth-field">
+            <span>Confirm passphrase</span>
+            <input v-model="ncPassConfirm" type="password" autocomplete="new-password" />
+          </label>
+          <label class="ws-ack">
+            <input v-model="ncBackupAck" type="checkbox" />
+            <span>I have saved my secret key somewhere safe. I understand it cannot be recovered.</span>
+          </label>
+          <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+          <button
+            class="btn primary auth-submit"
+            type="submit"
+            :disabled="loading || ncPass.length < 8 || ncPass !== ncPassConfirm || !ncBackupAck"
+          >
+            {{ loading ? "Saving…" : "Create wallet" }}
           </button>
         </form>
       </template>

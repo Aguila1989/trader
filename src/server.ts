@@ -42,7 +42,9 @@ import {
   changeTrustline,
   resolveIssuerByDomain,
 } from "./stellar/trustlineOps";
-import { sendPayment, quoteSwap, swap } from "./stellar/transfers";
+import { sendPayment, quoteSwap, swap, buildPaymentUnsigned } from "./stellar/transfers";
+import { parseSignedTx, submitSignedTx } from "./stellar/clientSign";
+import { reserveSequence, releaseSequence } from "./stellar/txReservation";
 import { listClaimableBalances, claimBalance } from "./stellar/claimable";
 import { assetCode, canonicalAsset, pairLabel } from "./stellar/assets";
 import { checkEgress } from "./policy/engine";
@@ -90,6 +92,7 @@ import { signerPublicKey, signAndSubmit } from "./stellar/signer";
 import {
   resolveTradingAccountOrNull,
   WalletNotConfiguredError,
+  ClientSignedWalletError,
 } from "./stellar/keyProvider";
 import type { TradeProposal } from "./types";
 import { initDb, closeDb, dbReady } from "./db/pool";
@@ -505,6 +508,18 @@ function failGeneric(res: Response, err: unknown, code: 500 | 502 = 502): void {
     if (!res.headersSent) res.status(400).json({ error: err.message });
     return;
   }
+  // A client-signed (non-custodial) wallet has no server-side key, so the server
+  // cannot sign this (custodial) route. Return an actionable 409 pointing at the
+  // build→sign→submit flow rather than masking it as a 5xx.
+  if (err instanceof ClientSignedWalletError) {
+    if (!res.headersSent) {
+      res.status(409).json({
+        error:
+          "This wallet is non-custodial — sign the transaction on your device (build, review, then submit).",
+      });
+    }
+    return;
+  }
   store.log("error", `request failed (${code}): ${(err as Error)?.message ?? String(err)}`);
   if (!res.headersSent) res.status(code).json({ error: "request failed" });
 }
@@ -838,6 +853,112 @@ app.post("/api/pay", async (req, res) => {
     res.json(result);
   } catch (err) {
     store.releaseEgress(amountNum); // submit failed - free the reservation
+    failGeneric(res, err, 502);
+  }
+});
+
+// --- Non-custodial signing (migration P0, flag-gated) ---------------------
+// EXPERIMENTAL, testnet-only. Inert unless NONCUSTODIAL_MODE=true. The server
+// BUILDS an unsigned tx; the client signs it and posts it to /api/submit.
+// KNOWN GAP (do NOT enable on mainnet until closed): the build->sign->submit
+// split still needs the per-account sequence allocator + abandoned-reservation
+// TTL from the engineering plan §4.4 to be concurrency-/multi-user-safe. Egress
+// is reserved on /submit from amounts parsed out of the SIGNED tx (never trusted
+// from the request), so the daily cap stays server-authoritative.
+app.post("/api/pay/build", async (req, res) => {
+  if (!config.nonCustodial) {
+    res.status(404).json({ error: "Non-custodial mode is not enabled." });
+    return;
+  }
+  if (!(await ensureCanSubmit(res))) return;
+  if (!config.allowRawTransfers) {
+    res.status(403).json({
+      error:
+        "Raw external transfers are disabled. Set ALLOW_RAW_TRANSFERS=true to enable /api/pay.",
+    });
+    return;
+  }
+  const b = req.body ?? {};
+  const destination = String(b.destination ?? "").trim();
+  const asset = String(b.asset ?? "").trim() || "XLM";
+  const amount = String(b.amount ?? "").trim();
+  const memo = b.memo != null ? String(b.memo) : undefined;
+  if (!destination) {
+    res.status(400).json({ error: "destination is required" });
+    return;
+  }
+  const amountNum = parseTransferAmount(amount, res, "amount");
+  if (amountNum == null) return;
+  if (!ensureEgressAllowed(res, [asset])) return;
+  // §4.4: at most one outstanding (built-but-unsubmitted) tx per account, so two
+  // envelopes can't bake the same Horizon sequence across the human signing gap.
+  const account = await resolveTradingAccountOrNull();
+  if (!account) {
+    res.status(400).json({ error: "No wallet is configured for this account." });
+    return;
+  }
+  if (!reserveSequence(account)) {
+    res.status(409).json({
+      error:
+        "Another transaction is already being prepared for this wallet. Finish or cancel it, then retry.",
+    });
+    return;
+  }
+  try {
+    // Build inside the serial lock so the sequence baked into the XDR is fresh.
+    const built = await runExclusive(() => buildPaymentUnsigned({ destination, asset, amount, memo }));
+    res.json(built); // { xdr }
+  } catch (err) {
+    releaseSequence(account); // build failed — free the slot immediately
+    failGeneric(res, err, 502);
+  }
+});
+
+// Relay a CLIENT-SIGNED transaction to Horizon. Verifies the source account +
+// operation shape, re-runs the egress whitelist/cap from amounts parsed out of
+// the signed tx, then reuses the existing submitSigned() reconcile/poll logic.
+app.post("/api/submit", async (req, res) => {
+  if (!config.nonCustodial) {
+    res.status(404).json({ error: "Non-custodial mode is not enabled." });
+    return;
+  }
+  if (!(await ensureCanSubmit(res))) return;
+  const signedXdr = String((req.body ?? {}).signedXdr ?? "").trim();
+  if (!signedXdr) {
+    res.status(400).json({ error: "signedXdr is required" });
+    return;
+  }
+  const submitAccount = await resolveTradingAccountOrNull();
+  if (!submitAccount) {
+    res.status(400).json({ error: "No wallet is configured for this account." });
+    return;
+  }
+  let parsed;
+  try {
+    parsed = parseSignedTx(signedXdr, submitAccount);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+    return;
+  }
+  const { tx, egressAmount, egressAssets } = parsed;
+  // This submit resolves the build's §4.4 reservation whatever the outcome.
+  if (egressAssets.length && !ensureEgressAllowed(res, egressAssets)) {
+    releaseSequence(tx.source);
+    return;
+  }
+  if (egressAmount > 0 && !store.tryReserveEgress(egressAmount)) {
+    releaseSequence(tx.source);
+    res.status(403).json({ error: "Daily egress cap exceeded (MAX_DAILY_EGRESS)." });
+    return;
+  }
+  try {
+    const result = await runExclusive(() => submitSignedTx(tx));
+    releaseSequence(tx.source);
+    store.log("trade", `Client-signed tx relayed (tx ${result.hash}).`);
+    res.json(result);
+  } catch (err) {
+    releaseSequence(tx.source);
+    if (egressAmount > 0) store.releaseEgress(egressAmount); // submit failed - free it
     failGeneric(res, err, 502);
   }
 });

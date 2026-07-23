@@ -1324,7 +1324,7 @@ export type WalletStatus = "pending" | "active" | "replaced";
 export interface WalletRecord {
   id: string;
   publicKey: string;
-  encryptedSecret: string;
+  encryptedSecret: string | null;
   status: WalletStatus;
   createdAt: string;
   updatedAt: string;
@@ -1333,7 +1333,7 @@ export interface WalletRecord {
 interface RawWalletRow {
   id: string;
   publicKey: string;
-  encryptedSecret: string;
+  encryptedSecret: string | null;
   status: string;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -1389,7 +1389,7 @@ export async function getLatestPendingWallet(): Promise<WalletRecord | null> {
 export async function insertWallet(w: {
   id: string;
   publicKey: string;
-  encryptedSecret: string;
+  encryptedSecret: string | null;
   status: WalletStatus;
 }): Promise<void> {
   if (!dbReady()) return;

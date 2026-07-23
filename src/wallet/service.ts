@@ -67,6 +67,12 @@ export interface WalletStatusView {
   funded?: boolean;
   /** Native XLM balance as a string, or null when unfunded / unknown. */
   xlmBalance?: string | null;
+  /** NON-CUSTODIAL: true when the active wallet holds no server-side secret
+   *  (encryptedSecret is null), so signing must happen on the user's device. */
+  clientSigned?: boolean;
+  /** Whether the server offers the non-custodial flow (NONCUSTODIAL_MODE). The
+   *  setup UI shows the client-signed option only when true. */
+  nonCustodial?: boolean;
 }
 
 /** Probe Horizon for an account's funded state + native balance. */
@@ -140,6 +146,10 @@ export async function confirmWallet(last4: string): Promise<{ publicKey: string 
   if (want.length !== 4) {
     throw new WalletError(400, "Enter the last 4 characters of your secret key.");
   }
+  if (!pending.encryptedSecret) {
+    // Non-custodial wallets carry no server-side secret; nothing to confirm here.
+    throw new WalletError(400, "This wallet is non-custodial; there is no server-side secret to confirm.");
+  }
   // Decrypt the pending row to verify the last-4 the user typed (case-sensitive,
   // matching the displayed strkey). decryptSecret throws on any tamper/mismatch.
   const seed = decryptSecret(pending.encryptedSecret, currentUserId(), config.walletEncryptionKey);
@@ -199,10 +209,46 @@ export async function importWallet(
   return { publicKey: kp.publicKey(), ...probe };
 }
 
+/** A Stellar ed25519 PUBLIC key in strkey form. */
+const PUBLIC_RE = /^G[A-Z2-7]{55}$/;
+
+/**
+ * NON-CUSTODIAL: register a client-generated wallet by its PUBLIC KEY only. The
+ * server never receives or stores a secret (encryptedSecret is null); signing
+ * happens on the user's device via /api/pay/build + /api/submit. Refuses if an
+ * active wallet already exists (replace it instead). Gated by NONCUSTODIAL_MODE
+ * at the route.
+ */
+export async function registerWallet(
+  publicKey: unknown,
+): Promise<{ publicKey: string; funded: boolean; xlmBalance: string | null }> {
+  ensureWalletStorage();
+  const pk = String(publicKey ?? "").trim();
+  if (!PUBLIC_RE.test(pk)) {
+    throw new WalletError(400, "That doesn't look like a Stellar public key (it must start with G).");
+  }
+  try {
+    Keypair.fromPublicKey(pk); // validate the strkey decodes
+  } catch {
+    throw new WalletError(400, "Invalid Stellar public key.");
+  }
+  if (await getActiveWallet()) {
+    throw new WalletError(409, "You already have an active wallet. Replace it instead.");
+  }
+  const probe = await probeAccount(pk);
+  await insertWallet({
+    id: randomUUID(),
+    publicKey: pk,
+    encryptedSecret: null, // non-custodial: no secret is held server-side
+    status: "active",
+  });
+  return { publicKey: pk, ...probe };
+}
+
 /** Wallet status for the header chip + setup gate. Never returns a secret. */
 export async function getWalletStatus(): Promise<WalletStatusView> {
   const wallet = await getActiveWallet();
-  if (!wallet) return { configured: false, network: config.network };
+  if (!wallet) return { configured: false, network: config.network, nonCustodial: config.nonCustodial };
   const probe = await probeAccount(wallet.publicKey).catch(() => ({
     funded: false,
     xlmBalance: null,
@@ -213,6 +259,8 @@ export async function getWalletStatus(): Promise<WalletStatusView> {
     publicKey: wallet.publicKey,
     funded: probe.funded,
     xlmBalance: probe.xlmBalance,
+    clientSigned: !wallet.encryptedSecret,
+    nonCustodial: config.nonCustodial,
   };
 }
 

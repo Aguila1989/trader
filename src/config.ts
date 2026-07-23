@@ -470,6 +470,16 @@ export const config = {
    */
   allowRawTransfers: bool("ALLOW_RAW_TRANSFERS", false),
   /**
+   * EXPERIMENTAL (2026-07, non-custodial migration P0). Enables the client-side
+   * signing endpoints (`POST /api/pay/build` + `/api/submit`) and public-key-only
+   * wallet registration (`POST /api/wallet/register`). OFF by default: flag off =
+   * ZERO behavior change, the custodial path is entirely untouched. TESTNET-ONLY
+   * until the per-account sequence allocator + abandoned-reservation TTL land and
+   * a testnet pass is done (see the non-custodial engineering plan). Do NOT enable
+   * on mainnet yet.
+   */
+  nonCustodial: bool("NONCUSTODIAL_MODE", false),
+  /**
    * DEPRECATED (Feature 2). Previously opted out of the "exposed bind with empty
    * DASHBOARD_TOKEN" boot guard. Auth is now mandatory (JWT_SECRET required +
    * login on every API route), so that guard is gone and this flag is unused.

@@ -16,6 +16,9 @@ import InfoTip from "./InfoTip.vue";
 import ReceiveQr from "./wallet/ReceiveQr.vue";
 import ConversionHistory from "./ConversionHistory.vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import TxReviewDialog from "./TxReviewDialog.vue";
+import { api } from "../api";
+import type { DecodedTx } from "../wallet/xdrDecode";
 
 const { t } = useI18n();
 const store = useTraderStore();
@@ -121,6 +124,94 @@ async function confirmSend(): Promise<void> {
     }
   } finally {
     sending.value = false;
+  }
+}
+
+// --- Non-custodial send (client-side signing) ---------------------------
+// When the active wallet is client-signed, the server cannot sign: it BUILDS an
+// unsigned payment, we show it in the review dialog, sign it on-device, and relay
+// the signed XDR. The signing modules are dynamically imported so the heavy
+// stellar-base bundle stays out of the initial load. Network passphrases are
+// protocol constants (stable), inlined to avoid a static stellar-base import here.
+const PUBLIC_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+const networkPassphrase = computed(() =>
+  walletState.network === "public" ? PUBLIC_PASSPHRASE : TESTNET_PASSPHRASE,
+);
+const nonCustodial = computed(() => walletState.clientSigned);
+
+const showTxReview = ref(false);
+const txXdr = ref<string | null>(null);
+const txDecoded = ref<DecodedTx | null>(null);
+const txBusy = ref(false);
+const txError = ref<string | null>(null);
+
+// The Send button dispatches to the custodial confirm (existing) or the
+// non-custodial build→review→sign→submit flow, per the active wallet type.
+function onSend(): void {
+  if (nonCustodial.value) void startNonCustodialSend();
+  else openSendConfirm();
+}
+
+async function startNonCustodialSend(): Promise<void> {
+  if (sending.value || !sendValid.value) return;
+  txError.value = null;
+  sending.value = true;
+  try {
+    const built = await api.buildPayment({
+      destination: sendTo.value.trim(),
+      asset: sendAsset.value.trim() || "XLM",
+      amount: sendAmount.value.trim(),
+      memo: sendMemo.value.trim() || undefined,
+    });
+    if (built.error || !built.xdr) {
+      store.walletError = built.error || "Could not prepare the transaction.";
+      return;
+    }
+    const { decodeXdr } = await import("../wallet/xdrDecode");
+    txXdr.value = built.xdr;
+    txDecoded.value = decodeXdr(built.xdr, networkPassphrase.value);
+    showTxReview.value = true;
+  } catch (e) {
+    store.walletError = (e as Error).message;
+  } finally {
+    sending.value = false;
+  }
+}
+
+function cancelTxReview(): void {
+  showTxReview.value = false;
+  txXdr.value = null;
+  txDecoded.value = null;
+  txError.value = null;
+}
+
+async function confirmNonCustodialSend(passphrase: string): Promise<void> {
+  if (!txXdr.value) return;
+  txBusy.value = true;
+  txError.value = null;
+  try {
+    const [{ unlockLocalWallet }, { signXdr }] = await Promise.all([
+      import("../wallet/localKey"),
+      import("../wallet/signing"),
+    ]);
+    const kp = await unlockLocalWallet(passphrase); // throws on wrong passphrase
+    // A send may only ever be a payment op — pin it so a tampered build can't
+    // slip in anything else (refuses out-of-shape XDR before signing).
+    const signed = signXdr(txXdr.value, kp, networkPassphrase.value, ["payment"]);
+    const res = await api.submitSigned(signed);
+    if (res.error || !res.hash) {
+      txError.value = res.error || "Submit failed.";
+      return;
+    }
+    cancelTxReview();
+    sendTo.value = "";
+    sendAmount.value = "";
+    sendMemo.value = "";
+  } catch (e) {
+    txError.value = (e as Error).message;
+  } finally {
+    txBusy.value = false;
   }
 }
 
@@ -231,7 +322,7 @@ async function doSwap(): Promise<void> {
              only). PAPER is the one exception: sends move REAL funds and have
              no simulation, so they are disabled while simulating (the backend
              refuses too). Wallet + kill switch stay enforced server-side. -->
-        <button class="btn primary" :disabled="sending || store.isPaper || !sendValid" @click="openSendConfirm">
+        <button class="btn primary" :disabled="sending || store.isPaper || !sendValid" @click="onSend">
           {{ sending ? t("wallet.sending") : t("wallet.send") }}
         </button>
       </div>
@@ -277,6 +368,17 @@ async function doSwap(): Promise<void> {
         <p v-if="sendConfirmError" class="violations">{{ t("receiveSend.sendConfirm.ackRequired") }}</p>
       </template>
     </ConfirmDialog>
+
+    <!-- NON-CUSTODIAL SEND: build (server) → review → sign on-device → relay.
+         Only reached when the active wallet is client-signed. -->
+    <TxReviewDialog
+      v-if="showTxReview && txDecoded"
+      :decoded="txDecoded"
+      :busy="txBusy"
+      :error="txError"
+      @confirm="confirmNonCustodialSend"
+      @cancel="cancelTxReview"
+    />
 
     <!-- SWAP -->
     <section class="panel">

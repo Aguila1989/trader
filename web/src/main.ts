@@ -5,6 +5,13 @@ import "./style.css";
 import App from "./App.vue";
 import router from "./router";
 import i18n from "./i18n";
+import { Buffer } from "buffer";
+
+// stellar-base (client-side signing) expects a global Buffer, which Vite does not
+// provide in the browser. Polyfill it before any wallet/signing module loads.
+if (typeof (globalThis as { Buffer?: unknown }).Buffer === "undefined") {
+  (globalThis as { Buffer?: unknown }).Buffer = Buffer;
+}
 
 const app = createApp(App);
 

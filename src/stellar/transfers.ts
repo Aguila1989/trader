@@ -102,6 +102,21 @@ async function buildSignSubmit(ops: TxOperation | TxOperation[], memo?: Memo): P
   return { hash };
 }
 
+/** Build (but DON'T sign) an ATOMIC tx from 1..N operations, returning its XDR
+ *  for the client to sign (non-custodial path). Twin of buildSignSubmit — the
+ *  builders never touched the key, so this is the exact same build, minus the
+ *  signAndSubmit. */
+async function buildUnsigned(ops: TxOperation | TxOperation[], memo?: Memo): Promise<{ xdr: string }> {
+  const account = await horizon.loadAccount(await requireTradingAccount());
+  const builder = new TransactionBuilder(account, {
+    fee: recommendedFee(),
+    networkPassphrase: config.networkPassphrase,
+  });
+  for (const op of Array.isArray(ops) ? ops : [ops]) builder.addOperation(op);
+  if (memo) builder.addMemo(memo);
+  return { xdr: builder.setTimeout(120).build().toXDR() };
+}
+
 export interface SendPaymentInput {
   destination: string;
   asset: string;
@@ -114,6 +129,17 @@ export async function sendPayment(input: SendPaymentInput): Promise<{ hash: stri
   const { accountId, memo } = await resolveDestination(input.destination, input.memo);
   const asset = parseAsset(input.asset);
   return buildSignSubmit(
+    Operation.payment({ destination: accountId, asset, amount: formatAmount(input.amount) }),
+    memo,
+  );
+}
+
+/** Non-custodial: build an unsigned same-asset payment for the client to sign. */
+export async function buildPaymentUnsigned(input: SendPaymentInput): Promise<{ xdr: string }> {
+  if (!(Number(input.amount) > 0)) throw new Error("Amount must be a positive number.");
+  const { accountId, memo } = await resolveDestination(input.destination, input.memo);
+  const asset = parseAsset(input.asset);
+  return buildUnsigned(
     Operation.payment({ destination: accountId, asset, amount: formatAmount(input.amount) }),
     memo,
   );

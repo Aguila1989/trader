@@ -6,6 +6,9 @@ import vue from "@vitejs/plugin-vue";
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  // stellar-base references `global` in the browser bundle; map it to globalThis
+  // (the Buffer polyfill itself is set up in main.ts).
+  define: { global: "globalThis" },
   server: {
     port: 5175,
     proxy: {

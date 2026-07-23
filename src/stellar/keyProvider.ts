@@ -33,6 +33,21 @@ export class WalletNotConfiguredError extends Error {
 }
 
 /**
+ * Thrown when the current user's active wallet is CLIENT-SIGNED (non-custodial):
+ * the server holds only the public key (encryptedSecret is null), so there is no
+ * key to decrypt or sign with here. The server maps it to a clean 409 telling the
+ * client to sign the transaction itself (`/api/pay/build` + `/api/submit`).
+ * Carries no secret material. (Non-custodial migration §4.6 — prevents a
+ * decryptSecret(null) from surfacing as an uncaught generic 500.)
+ */
+export class ClientSignedWalletError extends Error {
+  constructor(message = "This wallet is non-custodial; sign the transaction on your own device.") {
+    super(message);
+    this.name = "ClientSignedWalletError";
+  }
+}
+
+/**
  * Does the DEFAULT account get to fall back to the env STELLAR_SECRET? Only the
  * default user (the single-operator deployment + the background autopilot/monitor
  * loops). A logged-in user NEVER falls back to the operator's key - they must set
@@ -66,6 +81,10 @@ function envFallbackPublic(): string | null {
 export async function withDecryptedKey<T>(fn: (kp: Keypair) => T | Promise<T>): Promise<T> {
   const wallet = await getActiveWallet();
   if (wallet) {
+    // Non-custodial wallets store only the public key — there is no secret to
+    // decrypt or sign with server-side. Fail with a typed, catchable error rather
+    // than calling decryptSecret(null) (which would surface as a generic 500).
+    if (!wallet.encryptedSecret) throw new ClientSignedWalletError();
     const seed = decryptSecret(wallet.encryptedSecret, currentUserId(), config.walletEncryptionKey);
     try {
       const kp = Keypair.fromRawEd25519Seed(seed);
@@ -103,4 +122,15 @@ export async function resolveTradingAccountOrNull(): Promise<string | null> {
   const wallet = await getActiveWallet();
   if (wallet) return wallet.publicKey;
   return envFallbackPublic();
+}
+
+/**
+ * True when the current user's active wallet is non-custodial (client-signed):
+ * the server stored only the public key, so signing must happen on the device.
+ * Read paths still work (they use the public key); write paths must route through
+ * the build/submit endpoints instead of withDecryptedKey().
+ */
+export async function isCurrentWalletClientSigned(): Promise<boolean> {
+  const wallet = await getActiveWallet();
+  return !!wallet && !wallet.encryptedSecret;
 }

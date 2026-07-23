@@ -395,6 +395,11 @@ export interface WalletStatus {
   publicKey?: string;
   funded?: boolean;
   xlmBalance?: string | null;
+  /** NON-CUSTODIAL: the active wallet holds no server-side secret; signing is
+   *  on the device. The UI uses this to pick the build→sign→submit flow. */
+  clientSigned?: boolean;
+  /** Whether the server offers the non-custodial flow (setup UI gate). */
+  nonCustodial?: boolean;
 }
 
 export const walletApi = {
@@ -413,6 +418,13 @@ export const walletApi = {
     ),
   friendbot: () =>
     authRequest<{ funded: boolean; xlmBalance: string | null }>("/api/wallet/friendbot", {}),
+  // NON-CUSTODIAL (flag-gated): register a client-generated wallet by PUBLIC KEY
+  // only — the secret never leaves the device.
+  register: (publicKey: string) =>
+    authRequest<{ publicKey: string; funded: boolean; xlmBalance: string | null }>(
+      "/api/wallet/register",
+      { publicKey },
+    ),
 };
 
 export const api = {
@@ -574,6 +586,12 @@ export const api = {
   },
   pay: (body: { destination: string; asset: string; amount: string; memo?: string }) =>
     postJSON<{ hash?: string; error?: string }>("/api/pay", body),
+  // NON-CUSTODIAL (flag-gated): build an unsigned payment XDR for the client to
+  // sign, then relay the signed XDR. Both inert unless NONCUSTODIAL_MODE is on.
+  buildPayment: (body: { destination: string; asset: string; amount: string; memo?: string }) =>
+    postJSON<{ xdr?: string; error?: string }>("/api/pay/build", body),
+  submitSigned: (signedXdr: string) =>
+    postJSON<{ hash?: string; error?: string }>("/api/submit", { signedXdr }),
   swapQuote: (send: string, dest: string, amount: string) => {
     const q = new URLSearchParams({ send, dest, amount });
     return getJSON<SwapQuote>(`/api/swap/quote?${q.toString()}`);
