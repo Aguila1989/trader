@@ -11,6 +11,11 @@ export default {
     pageTitle: "Receive & Send",
     qrHint: "Scan to send to this wallet",
     qrCaption: "Your public address — safe to share",
+    // Multi-chain receive: one tab per configured chain. Send stays
+    // Stellar-only for now — other chains are receive-only.
+    chainTabsAria: "Receive chain",
+    sendLaterNote:
+      "Sending from {chain} isn't available yet — this wallet is receive-only for now. Sending arrives in a later update.",
     conversion: {
       title: "XLM Conversion History",
       subtitle: "Swaps into XLM from this wallet",
@@ -45,6 +50,9 @@ export default {
     pageTitle: "Ontvangen & verzenden",
     qrHint: "Scan om naar deze wallet te verzenden",
     qrCaption: "Je openbaar adres — veilig om te delen",
+    chainTabsAria: "Ontvangstchain",
+    sendLaterNote:
+      "Verzenden vanaf {chain} is nog niet beschikbaar — deze wallet is voorlopig alleen voor ontvangen. Verzenden volgt in een latere update.",
     conversion: {
       title: "XLM-omzettingsgeschiedenis",
       subtitle: "Swaps naar XLM vanuit deze wallet",
@@ -79,6 +87,9 @@ export default {
     pageTitle: "Recevoir et envoyer",
     qrHint: "Scannez pour envoyer vers ce portefeuille",
     qrCaption: "Votre adresse publique — sans danger à partager",
+    chainTabsAria: "Chaîne de réception",
+    sendLaterNote:
+      "L'envoi depuis {chain} n'est pas encore disponible — ce portefeuille est pour l'instant en réception uniquement. L'envoi arrivera dans une prochaine mise à jour.",
     conversion: {
       title: "Historique des conversions XLM",
       subtitle: "Conversions vers XLM depuis ce portefeuille",
@@ -113,6 +124,9 @@ export default {
     pageTitle: "Recibir y enviar",
     qrHint: "Escanea para enviar a esta billetera",
     qrCaption: "Tu dirección pública: segura para compartir",
+    chainTabsAria: "Cadena de recepción",
+    sendLaterNote:
+      "El envío desde {chain} aún no está disponible: esta billetera es solo de recepción por ahora. El envío llegará en una próxima actualización.",
     conversion: {
       title: "Historial de conversiones a XLM",
       subtitle: "Conversiones a XLM desde esta billetera",

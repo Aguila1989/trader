@@ -19,8 +19,11 @@ import {
   getActiveWallet,
   getLatestPendingWallet,
   insertWallet,
+  listActiveWallets,
   setWalletStatus,
 } from "../db/repo";
+import { adapterFor, enabledChains, isChainEnabled, isChainSupported } from "../chains/registry";
+import type { ChainAccountProbe } from "../chains/types";
 import { currentUserId } from "../users/context";
 import {
   findUserById,
@@ -209,40 +212,182 @@ export async function importWallet(
   return { publicKey: kp.publicKey(), ...probe };
 }
 
-/** A Stellar ed25519 PUBLIC key in strkey form. */
-const PUBLIC_RE = /^G[A-Z2-7]{55}$/;
-
 /**
  * NON-CUSTODIAL: register a client-generated wallet by its PUBLIC KEY only. The
  * server never receives or stores a secret (encryptedSecret is null); signing
  * happens on the user's device via /api/pay/build + /api/submit. Refuses if an
- * active wallet already exists (replace it instead). Gated by NONCUSTODIAL_MODE
- * at the route.
+ * active wallet already exists ON THAT CHAIN (replace it instead). Gated by
+ * NONCUSTODIAL_MODE at the route.
+ *
+ * Multi-chain (2026-07): `chain` selects the ledger ("stellar" default). The
+ * chain must be operator-enabled (CHAINS) and the address is validated by that
+ * chain's adapter. Non-Stellar wallets are ALWAYS non-custodial — this is their
+ * only registration path.
  */
 export async function registerWallet(
   publicKey: unknown,
-): Promise<{ publicKey: string; funded: boolean; xlmBalance: string | null }> {
+  chain: unknown = "stellar",
+): Promise<{
+  publicKey: string;
+  chain: string;
+  funded: boolean;
+  nativeBalance: string | null;
+  /** Back-compat alias of nativeBalance for the pre-multichain Stellar UI. */
+  xlmBalance: string | null;
+}> {
   ensureWalletStorage();
+  const chainId = String(chain ?? "stellar").trim().toLowerCase() || "stellar";
+  if (!isChainEnabled(chainId)) {
+    throw new WalletError(400, `Chain "${chainId}" is not available on this platform.`);
+  }
+  const adapter = adapterFor(chainId);
   const pk = String(publicKey ?? "").trim();
-  if (!PUBLIC_RE.test(pk)) {
-    throw new WalletError(400, "That doesn't look like a Stellar public key (it must start with G).");
+  if (!adapter.validatePublicKey(pk)) {
+    throw new WalletError(
+      400,
+      chainId === "stellar"
+        ? "That doesn't look like a Stellar public key (it must start with G)."
+        : `That doesn't look like a valid ${adapter.displayName} address.`,
+    );
   }
-  try {
-    Keypair.fromPublicKey(pk); // validate the strkey decodes
-  } catch {
-    throw new WalletError(400, "Invalid Stellar public key.");
+  if (await getActiveWallet(chainId)) {
+    throw new WalletError(
+      409,
+      `You already have an active ${adapter.displayName} wallet. Remove or replace it first.`,
+    );
   }
-  if (await getActiveWallet()) {
-    throw new WalletError(409, "You already have an active wallet. Replace it instead.");
-  }
-  const probe = await probeAccount(pk);
+  const probe = await adapter.probeAccount(pk).catch(() => ({
+    exists: false,
+    nativeBalance: null,
+    hasAnyFunds: false,
+  }));
   await insertWallet({
     id: randomUUID(),
+    chain: chainId,
     publicKey: pk,
     encryptedSecret: null, // non-custodial: no secret is held server-side
     status: "active",
   });
-  return { publicKey: pk, ...probe };
+  return {
+    publicKey: pk,
+    chain: chainId,
+    funded: probe.exists,
+    nativeBalance: probe.nativeBalance,
+    xlmBalance: chainId === "stellar" ? probe.nativeBalance : null,
+  };
+}
+
+/** One row of the per-chain wallet overview (GET /api/wallet/chains). */
+export interface ChainWalletView {
+  chain: string;
+  displayName: string;
+  nativeSymbol: string;
+  /** Whether the operator currently offers this chain (CHAINS). A wallet on a
+   *  since-disabled chain still shows up so the user can remove it. */
+  enabled: boolean;
+  configured: boolean;
+  publicKey?: string;
+  /** True = no server-side secret; signing happens on the device. */
+  clientSigned?: boolean;
+  funded?: boolean;
+  nativeBalance?: string | null;
+  /** The remove gate, evaluated live: any non-zero balance blocks removal. */
+  hasAnyFunds?: boolean;
+  canRemove?: boolean;
+  /** Human reason when canRemove is false (funds present / probe failed). */
+  removeBlockReason?: string;
+  explorerUrl?: string;
+}
+
+/**
+ * Per-chain wallet overview: one entry for every operator-enabled chain, plus
+ * any chain the user still holds an active wallet on (even if since disabled,
+ * so it can always be removed). Never returns secret material.
+ */
+export async function getWalletsOverview(): Promise<ChainWalletView[]> {
+  const wallets = await listActiveWallets();
+  const byChain = new Map(wallets.map((w) => [w.chain, w]));
+  const chainIds = new Set<string>([
+    ...enabledChains().map((a) => a.chain),
+    ...wallets.map((w) => w.chain).filter((c) => isChainSupported(c)),
+  ]);
+
+  const out: ChainWalletView[] = [];
+  for (const chainId of chainIds) {
+    const adapter = adapterFor(chainId);
+    const wallet = byChain.get(chainId);
+    const view: ChainWalletView = {
+      chain: chainId,
+      displayName: adapter.displayName,
+      nativeSymbol: adapter.nativeSymbol,
+      enabled: isChainEnabled(chainId),
+      configured: !!wallet,
+    };
+    if (wallet) {
+      view.publicKey = wallet.publicKey;
+      view.clientSigned = !wallet.encryptedSecret;
+      view.explorerUrl = adapter.explorerAccountUrl(wallet.publicKey);
+      try {
+        const probe = await adapter.probeAccount(wallet.publicKey);
+        view.funded = probe.exists;
+        view.nativeBalance = probe.nativeBalance;
+        view.hasAnyFunds = probe.hasAnyFunds;
+        view.canRemove = !probe.hasAnyFunds;
+        if (probe.hasAnyFunds) {
+          view.removeBlockReason = `This wallet still holds funds. Empty it (send everything out) before removing the ${adapter.displayName} chain.`;
+        }
+      } catch {
+        // Fail CLOSED on removal when the balance can't be verified.
+        view.canRemove = false;
+        view.removeBlockReason = "Balance check unavailable right now — try again in a moment.";
+      }
+    }
+    out.push(view);
+  }
+  // Stable order: enabled config order first, then leftovers alphabetically.
+  const order = new Map(config.chains.map((c, i) => [c, i]));
+  out.sort((a, b) => (order.get(a.chain) ?? 99) - (order.get(b.chain) ?? 99) || a.chain.localeCompare(b.chain));
+  return out;
+}
+
+/**
+ * Remove the user's wallet on `chain` — allowed ONLY when the on-ledger account
+ * holds no funds at all (native or tokens), verified live and failing CLOSED
+ * when the balance can't be checked. The row is status-transitioned to
+ * "removed" (never deleted), matching the wallet layer's no-delete rule.
+ * Removal stays possible for a chain the operator has since disabled.
+ */
+export async function removeChainWallet(
+  chain: unknown,
+): Promise<{ chain: string; removed: true }> {
+  ensureWalletStorage();
+  const chainId = String(chain ?? "").trim().toLowerCase();
+  if (!isChainSupported(chainId)) {
+    throw new WalletError(400, `Unknown chain "${chainId}".`);
+  }
+  const adapter = adapterFor(chainId);
+  const wallet = await getActiveWallet(chainId);
+  if (!wallet) {
+    throw new WalletError(404, `You have no active ${adapter.displayName} wallet to remove.`);
+  }
+  let probe: ChainAccountProbe;
+  try {
+    probe = await adapter.probeAccount(wallet.publicKey);
+  } catch {
+    throw new WalletError(
+      502,
+      `Could not verify the ${adapter.displayName} wallet is empty (network unavailable). Removal refused — try again in a moment.`,
+    );
+  }
+  if (probe.hasAnyFunds) {
+    throw new WalletError(
+      409,
+      `This ${adapter.displayName} wallet still holds funds. Empty it first (send everything out), then remove the chain.`,
+    );
+  }
+  await setWalletStatus(wallet.id, "removed");
+  store.log("trade", `${adapter.displayName} wallet removed (${wallet.publicKey.slice(0, 8)}…, empty).`);
+  return { chain: chainId, removed: true };
 }
 
 /** Wallet status for the header chip + setup gate. Never returns a secret. */

@@ -395,13 +395,18 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
       CREATE INDEX IX_PortfolioSnapshots_net_ts ON dbo.PortfolioSnapshots (network, ts DESC);
     END
 
-    -- Per-user wallets (Feature 3). Stores ONLY the AES-256-GCM-encrypted
-    -- Stellar secret (base64 blob = version|salt|iv|tag|ciphertext) + the public
-    -- key, never plaintext. status: 'pending' (created, last-4 not confirmed) ->
-    -- 'active' (the one signing wallet) -> 'replaced' (superseded; never deleted,
-    -- like StopLosses). userId is added by ensureUserScoping (Wallets is in
-    -- USER_SCOPED_TABLES); the single-active invariant is a filtered unique index
-    -- added afterwards (it needs the userId column to exist first).
+    -- Per-user wallets (Feature 3; multi-chain 2026-07). Stores ONLY the
+    -- AES-256-GCM-encrypted Stellar secret (base64 blob = version|salt|iv|tag|
+    -- ciphertext) + the public key, never plaintext — or, for a NON-CUSTODIAL
+    -- (client-signed) wallet, just the public key (encryptedSecret NULL).
+    -- 'chain' says which ledger the wallet lives on ('stellar' | 'solana' |
+    -- ...); publicKey is wide enough for both strkey (56) and base58 (<=44).
+    -- status: 'pending' (created, last-4 not confirmed) -> 'active' (the one
+    -- signing wallet per chain) -> 'replaced'/'removed' (superseded / chain
+    -- removed by the user; never deleted, like StopLosses). userId is added by
+    -- ensureUserScoping (Wallets is in USER_SCOPED_TABLES); the single-active
+    -- invariant is a filtered unique index added afterwards (it needs the
+    -- userId column to exist first).
     IF OBJECT_ID('dbo.Wallets', 'U') IS NULL
     BEGIN
       CREATE TABLE dbo.Wallets (
@@ -409,6 +414,7 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
         createdAt       DATETIME2(3)  NOT NULL,
         updatedAt       DATETIME2(3)  NOT NULL,
         network         NVARCHAR(16)  NOT NULL,
+        chain           NVARCHAR(24)  NOT NULL CONSTRAINT DF_Wallets_chain DEFAULT 'stellar',
         publicKey       NVARCHAR(64)  NOT NULL,
         encryptedSecret NVARCHAR(MAX) NOT NULL,
         status          NVARCHAR(16)  NOT NULL
@@ -579,17 +585,40 @@ async function ensureSchema(p: sql.ConnectionPool): Promise<void> {
   // attempts. Runs after ensureUserScoping so the userId foreign keys resolve.
   await ensureAcademySchema(p);
 
-  // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
-  // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
-  // per network - a hard DB guarantee, not just app logic. Added here (after
-  // ensureUserScoping) because it references the userId column it adds; via EXEC
-  // so it compiles once that column exists.
+  // Multi-chain wallets (2026-07): add the `chain` discriminator to an existing
+  // Wallets table. NOT NULL DEFAULT 'stellar' backfills every pre-multichain row
+  // as a Stellar wallet in the same statement (the ensureUserScoping idiom).
   await p.request().batch(`
     IF OBJECT_ID('dbo.Wallets', 'U') IS NOT NULL
+       AND COL_LENGTH('dbo.Wallets', 'chain') IS NULL
+      ALTER TABLE dbo.Wallets
+        ADD chain NVARCHAR(24) NOT NULL CONSTRAINT DF_Wallets_chain DEFAULT 'stellar';
+  `);
+
+  // Wallets (Feature 3): the single-active-wallet invariant. A FILTERED UNIQUE
+  // index lets a user keep many 'replaced' rows but at most ONE 'active' wallet
+  // per (network, chain) - a hard DB guarantee, not just app logic. Added here
+  // (after ensureUserScoping) because it references the userId column it adds;
+  // via EXEC so it compiles once that column exists. Multi-chain 2026-07: a
+  // pre-multichain index keyed (userId, network) only is dropped and recreated
+  // with the chain leg, so a user can hold one active wallet PER CHAIN.
+  await p.request().batch(`
+    IF OBJECT_ID('dbo.Wallets', 'U') IS NOT NULL
+       AND INDEXPROPERTY(OBJECT_ID('dbo.Wallets'), 'UX_Wallets_active', 'IndexID') IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM sys.index_columns ic
+          WHERE ic.object_id = OBJECT_ID('dbo.Wallets')
+            AND ic.index_id  = INDEXPROPERTY(OBJECT_ID('dbo.Wallets'), 'UX_Wallets_active', 'IndexID')
+            AND COL_NAME(ic.object_id, ic.column_id) = 'chain')
+      EXEC('DROP INDEX UX_Wallets_active ON dbo.Wallets');
+
+    IF OBJECT_ID('dbo.Wallets', 'U') IS NOT NULL
        AND COL_LENGTH('dbo.Wallets', 'userId') IS NOT NULL
+       AND COL_LENGTH('dbo.Wallets', 'chain') IS NOT NULL
        AND INDEXPROPERTY(OBJECT_ID('dbo.Wallets'), 'UX_Wallets_active', 'IndexID') IS NULL
       EXEC('CREATE UNIQUE INDEX UX_Wallets_active
-              ON dbo.Wallets (userId, network) WHERE status = ''active''');
+              ON dbo.Wallets (userId, network, chain) WHERE status = ''active''');
   `);
 
   // Non-custodial migration: client-signed wallets store only the public key, so

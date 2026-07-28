@@ -9,12 +9,12 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import AuthLayout from "../auth/AuthLayout.vue";
 import { walletApi } from "../../api";
-import { walletState, loadWalletStatus } from "../../wallet/walletState";
+import { walletState, loadWalletStatus, refreshChains } from "../../wallet/walletState";
 
 const { t } = useI18n();
 const router = useRouter();
 
-type View = "choose" | "create" | "import" | "manage" | "create-nc";
+type View = "choose" | "create" | "import" | "manage" | "create-nc" | "sol-create" | "sol-import";
 const view = ref<View>("choose");
 
 const loading = ref(false);
@@ -46,11 +46,24 @@ const replacePassword = ref("");
 const replaceConfirm4 = ref("");
 const replacedMsg = ref("");
 
+// MULTI-CHAIN (2026-07): the setup screen is also where the user picks their
+// chain(s). Stellar is required (the trading chain — the router gate keys on
+// it); Solana is an optional, NON-CUSTODIAL-ONLY add-on whose key is generated
+// on this device (solanaKey/localKey, dynamically imported like the Stellar
+// non-custodial flow so stellar-base stays out of the initial chunk).
+const solGen = ref<{ publicKey: string; secret: string } | null>(null);
+const solImportSecret = ref("");
+// Two-step removal confirm: the chain id whose Remove button was clicked.
+const removeArm = ref("");
+
+const solanaRow = computed(() => walletState.chains.find((c) => c.chain === "solana"));
+const solanaOffered = computed(() => !!solanaRow.value?.enabled || !!solanaRow.value?.configured);
+
 const SECRET_RE = /^S[A-Z2-7]{55}$/;
 const isTestnet = computed(() => walletState.network !== "public");
 
 onMounted(async () => {
-  await loadWalletStatus();
+  await Promise.all([loadWalletStatus(), refreshChains()]);
   if (walletState.configured) view.value = "manage";
 });
 
@@ -91,7 +104,7 @@ async function confirmCreate(): Promise<void> {
     generated.value = null;
     last4.value = "";
     secretSavedAck.value = false;
-    await loadWalletStatus(true);
+    await Promise.all([loadWalletStatus(true), refreshChains()]);
     view.value = "manage";
   } else {
     error.value = r.data.error || t("walletSetup.genericError");
@@ -141,7 +154,7 @@ async function confirmNc(): Promise<void> {
       ncPass.value = "";
       ncPassConfirm.value = "";
       ncBackupAck.value = false;
-      await loadWalletStatus(true);
+      await Promise.all([loadWalletStatus(true), refreshChains()]);
       view.value = "manage";
     } else {
       await m.clearLocalWallet(); // registration failed — don't strand a device key
@@ -151,6 +164,126 @@ async function confirmNc(): Promise<void> {
     error.value = (e as Error).message;
   } finally {
     loading.value = false;
+  }
+}
+
+// SOLANA create: mirror of startNc/confirmNc, on the "solana" localKey slot.
+// The passphrase/ack refs are shared with the Stellar non-custodial flow (only
+// one of the flows is ever on screen).
+async function startSolCreate(): Promise<void> {
+  reset();
+  solGen.value = null;
+  ncPass.value = "";
+  ncPassConfirm.value = "";
+  ncBackupAck.value = false;
+  view.value = "sol-create";
+  loading.value = true;
+  try {
+    const m = await import("../../wallet/solanaKey");
+    solGen.value = m.generateSolanaWallet();
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    loading.value = false;
+  }
+}
+
+function startSolImport(): void {
+  reset();
+  solImportSecret.value = "";
+  ncPass.value = "";
+  ncPassConfirm.value = "";
+  ncBackupAck.value = false;
+  view.value = "sol-import";
+}
+
+/** Leave a Solana flow: back to manage when Stellar is already configured
+ *  (adding a chain from the manage screen), else back to the setup picker. */
+function backFromSol(): void {
+  reset();
+  view.value = walletState.configured ? "manage" : "choose";
+}
+
+/** Shared tail of both Solana flows: encrypt the (normalized) secret on this
+ *  device, register the ADDRESS server-side, roll the device key back if the
+ *  registration fails. Returns to the right view for the setup phase. */
+async function persistSolana(publicKey: string, secret: string): Promise<void> {
+  if (ncPass.value.length < 8) {
+    error.value = t("walletSetup.passphraseTooShort");
+    return;
+  }
+  if (ncPass.value !== ncPassConfirm.value) {
+    error.value = t("walletSetup.passphraseMismatch");
+    return;
+  }
+  loading.value = true;
+  try {
+    const lk = await import("../../wallet/localKey");
+    await lk.saveLocalWallet(secret, ncPass.value, "solana");
+    const r = await walletApi.register(publicKey, "solana");
+    if (r.ok && r.data.publicKey) {
+      solGen.value = null;
+      solImportSecret.value = "";
+      ncPass.value = "";
+      ncPassConfirm.value = "";
+      ncBackupAck.value = false;
+      await refreshChains();
+      // Stellar (the required chain) may still be missing: back to the picker.
+      view.value = walletState.configured ? "manage" : "choose";
+    } else {
+      await lk.clearLocalWallet("solana"); // registration failed — no orphaned device key
+      error.value = r.data.error || t("walletSetup.genericError");
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function confirmSolCreate(): Promise<void> {
+  reset();
+  if (!solGen.value) return;
+  await persistSolana(solGen.value.publicKey, solGen.value.secret);
+}
+
+async function confirmSolImport(): Promise<void> {
+  reset();
+  loading.value = true;
+  let wallet: { publicKey: string; secret: string };
+  try {
+    const m = await import("../../wallet/solanaKey");
+    wallet = m.parseSolanaSecret(solImportSecret.value);
+  } catch {
+    error.value = t("walletSetup.solImportInvalid");
+    loading.value = false;
+    return;
+  }
+  loading.value = false;
+  await persistSolana(wallet.publicKey, wallet.secret);
+}
+
+// Remove a chain wallet. Server-guarded (409 while funds remain, fail-closed on
+// probe errors); on success the device-stored key for that chain is cleared too.
+async function doRemoveChain(chain: string): Promise<void> {
+  reset();
+  loading.value = true;
+  const r = await walletApi.removeChain(chain);
+  loading.value = false;
+  removeArm.value = "";
+  if (r.ok) {
+    if (chain === "stellar" || chain === "solana") {
+      try {
+        const lk = await import("../../wallet/localKey");
+        await lk.clearLocalWallet(chain);
+      } catch {
+        /* best-effort device cleanup */
+      }
+    }
+    await Promise.all([refreshChains(), loadWalletStatus(true)]);
+    if (!walletState.configured) view.value = "choose";
+  } else {
+    error.value = r.data.error || t("walletSetup.genericError");
   }
 }
 
@@ -166,7 +299,7 @@ async function doImport(): Promise<void> {
   loading.value = false;
   if (r.ok && r.data.publicKey) {
     importSecret.value = "";
-    await loadWalletStatus(true);
+    await Promise.all([loadWalletStatus(true), refreshChains()]);
     view.value = "manage";
   } else {
     error.value = r.data.error || t("walletSetup.genericError");
@@ -220,10 +353,16 @@ async function doReplace(): Promise<void> {
 
 <template>
   <AuthLayout>
-    <!-- 1. Choose: create or import (first-time setup) -->
+    <!-- 1. Choose: pick your chain(s), create or import per chain (first-time setup) -->
     <template v-if="view === 'choose'">
       <h1 class="auth-title">{{ t("walletSetup.setupTitle") }}</h1>
       <p class="auth-sub muted">{{ t("walletSetup.setupSubtitle") }}</p>
+
+      <div class="ws-chainhead">
+        <strong>Stellar</strong>
+        <span class="ws-badge">{{ t("walletSetup.chainRequired") }}</span>
+      </div>
+      <p class="muted ws-chaindesc">{{ t("walletSetup.chainStellarDesc") }}</p>
       <div class="ws-choices">
         <button class="ws-choice" type="button" @click="reset(); view = 'create'">
           <strong>{{ t("walletSetup.createCard") }}</strong>
@@ -235,13 +374,35 @@ async function doReplace(): Promise<void> {
         </button>
         <!-- NON-CUSTODIAL: shown only when the server offers it (NONCUSTODIAL_MODE). -->
         <button v-if="walletState.nonCustodial" class="ws-choice" type="button" @click="startNc()">
-          <strong>Create on this device (non-custodial)</strong>
-          <span class="muted">
-            Your key is generated and encrypted on your device — we never see it. You sign every
-            transaction yourself.
-          </span>
+          <strong>{{ t("walletSetup.ncCard") }}</strong>
+          <span class="muted">{{ t("walletSetup.ncCardDesc") }}</span>
         </button>
       </div>
+
+      <!-- MULTI-CHAIN: optional chains the operator offers (Solana today). A
+           user can set them up now or later from the manage screen. -->
+      <template v-if="solanaOffered">
+        <div class="ws-chainhead">
+          <strong>Solana</strong>
+          <span class="ws-badge ws-badge-opt">
+            {{ solanaRow?.configured ? t("walletSetup.chainConfigured") : t("walletSetup.chainOptional") }}
+          </span>
+        </div>
+        <p class="muted ws-chaindesc">{{ t("walletSetup.solChainDesc") }}</p>
+        <div v-if="!solanaRow?.configured" class="ws-choices">
+          <button class="ws-choice" type="button" @click="startSolCreate()">
+            <strong>{{ t("walletSetup.solCreateCard") }}</strong>
+            <span class="muted">{{ t("walletSetup.solCreateCardDesc") }}</span>
+          </button>
+          <button class="ws-choice" type="button" @click="startSolImport()">
+            <strong>{{ t("walletSetup.solImportCard") }}</strong>
+            <span class="muted">{{ t("walletSetup.solImportCardDesc") }}</span>
+          </button>
+        </div>
+        <p v-else class="muted ws-chaindesc">
+          <code class="ws-key">{{ solanaRow?.publicKey }}</code>
+        </p>
+      </template>
     </template>
 
     <!-- 2. Create: generate, then show secret ONCE + last-4 confirm -->
@@ -377,6 +538,112 @@ async function doReplace(): Promise<void> {
       </template>
     </template>
 
+    <!-- 2c. Create a SOLANA wallet (non-custodial only, key stays on device) -->
+    <template v-else-if="view === 'sol-create'">
+      <h1 class="auth-title">{{ t("walletSetup.solCreateTitle") }}</h1>
+
+      <template v-if="!solGen">
+        <p class="auth-sub muted">{{ t("walletSetup.ncGenerating") }}</p>
+        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <div class="auth-links">
+          <a href="#" @click.prevent="backFromSol()">{{ t("walletSetup.back") }}</a>
+        </div>
+      </template>
+
+      <template v-else>
+        <div class="ws-warn" role="alert">
+          <strong>{{ t("walletSetup.ncBackupTitle") }}</strong>
+          <p>{{ t("walletSetup.ncBackupWarning") }}</p>
+        </div>
+
+        <label class="auth-field">
+          <span>{{ t("walletSetup.solAddressLabel") }}</span>
+          <div class="ws-keyrow">
+            <code class="ws-key">{{ solGen.publicKey }}</code>
+            <button class="btn ws-copy" type="button" @click="copy(solGen!.publicKey, 'solpub')">
+              {{ copied === "solpub" ? t("walletSetup.copied") : t("walletSetup.copy") }}
+            </button>
+          </div>
+        </label>
+
+        <label class="auth-field">
+          <span>{{ t("walletSetup.solSecretLabel") }}</span>
+          <div class="ws-keyrow">
+            <code class="ws-key ws-secret">{{ solGen.secret }}</code>
+            <button class="btn ws-copy" type="button" @click="copy(solGen!.secret, 'solsec')">
+              {{ copied === "solsec" ? t("walletSetup.copied") : t("walletSetup.copy") }}
+            </button>
+          </div>
+        </label>
+
+        <form class="auth-form" @submit.prevent="confirmSolCreate">
+          <label class="auth-field">
+            <span>{{ t("walletSetup.passphraseLabel") }}</span>
+            <input v-model="ncPass" type="password" autocomplete="new-password" :placeholder="t('walletSetup.passphrasePlaceholder')" />
+          </label>
+          <label class="auth-field">
+            <span>{{ t("walletSetup.passphraseConfirmLabel") }}</span>
+            <input v-model="ncPassConfirm" type="password" autocomplete="new-password" />
+          </label>
+          <label class="ws-ack">
+            <input v-model="ncBackupAck" type="checkbox" />
+            <span>{{ t("walletSetup.ncBackupAck") }}</span>
+          </label>
+          <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+          <button
+            class="btn primary auth-submit"
+            type="submit"
+            :disabled="loading || ncPass.length < 8 || ncPass !== ncPassConfirm || !ncBackupAck"
+          >
+            {{ loading ? t("walletSetup.ncSaving") : t("walletSetup.ncCreateBtn") }}
+          </button>
+        </form>
+        <div class="auth-links">
+          <a href="#" @click.prevent="backFromSol()">{{ t("walletSetup.back") }}</a>
+        </div>
+      </template>
+    </template>
+
+    <!-- 2d. Import a SOLANA wallet (Base58 secret; stays on device) -->
+    <template v-else-if="view === 'sol-import'">
+      <h1 class="auth-title">{{ t("walletSetup.solImportTitle") }}</h1>
+      <form class="auth-form" @submit.prevent="confirmSolImport">
+        <label class="auth-field">
+          <span>{{ t("walletSetup.solSecretInputLabel") }}</span>
+          <input
+            v-model="solImportSecret"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="t('walletSetup.solSecretPlaceholder')"
+          />
+        </label>
+        <label class="auth-field">
+          <span>{{ t("walletSetup.passphraseLabel") }}</span>
+          <input v-model="ncPass" type="password" autocomplete="new-password" :placeholder="t('walletSetup.passphrasePlaceholder')" />
+        </label>
+        <label class="auth-field">
+          <span>{{ t("walletSetup.passphraseConfirmLabel") }}</span>
+          <input v-model="ncPassConfirm" type="password" autocomplete="new-password" />
+        </label>
+        <label class="ws-ack">
+          <input v-model="ncBackupAck" type="checkbox" />
+          <span>{{ t("walletSetup.ncBackupAck") }}</span>
+        </label>
+        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <button
+          class="btn primary auth-submit"
+          type="submit"
+          :disabled="loading || !solImportSecret.trim() || ncPass.length < 8 || ncPass !== ncPassConfirm || !ncBackupAck"
+        >
+          {{ loading ? t("walletSetup.ncSaving") : t("walletSetup.importBtn") }}
+        </button>
+      </form>
+      <div class="auth-links">
+        <a href="#" @click.prevent="backFromSol()">{{ t("walletSetup.back") }}</a>
+      </div>
+    </template>
+
     <!-- 3. Import an existing secret -->
     <template v-else-if="view === 'import'">
       <h1 class="auth-title">{{ t("walletSetup.importTitle") }}</h1>
@@ -444,6 +711,64 @@ async function doReplace(): Promise<void> {
       <button class="btn primary auth-submit" type="button" @click="router.push('/')">
         {{ t("walletSetup.continueBtn") }}
       </button>
+
+      <!-- MULTI-CHAIN: every chain the platform offers (+ any the user still
+           holds a wallet on). Add is always possible; REMOVE only when the
+           wallet is verifiably empty (server-enforced; reason shown here). -->
+      <section v-if="walletState.chains.length" class="ws-chains" :aria-label="t('walletSetup.chainsTitle')">
+        <h2 class="ws-chains-title">{{ t("walletSetup.chainsTitle") }}</h2>
+        <div v-for="c in walletState.chains" :key="c.chain" class="ws-chainrow">
+          <div class="ws-chainmain">
+            <div class="ws-chainhead">
+              <strong>{{ c.displayName }}</strong>
+              <span class="ws-badge" :class="{ 'ws-badge-opt': c.chain !== 'stellar' }">
+                {{ c.chain === "stellar" ? t("walletSetup.chainRequired") : c.configured ? t("walletSetup.chainConfigured") : t("walletSetup.chainOptional") }}
+              </span>
+            </div>
+            <template v-if="c.configured">
+              <code class="ws-key">{{ c.publicKey }}</code>
+              <span class="muted ws-chainbal">
+                {{ t("walletSetup.balanceLabel") }}:
+                <strong>{{ c.nativeBalance ?? "0" }} {{ c.nativeSymbol }}</strong>
+              </span>
+            </template>
+            <span v-else class="muted ws-chainbal">{{ t("walletSetup.chainNotSetUp") }}</span>
+          </div>
+          <div class="ws-chainactions">
+            <template v-if="!c.configured && c.enabled && c.chain === 'solana'">
+              <button class="btn" type="button" @click="startSolCreate()">{{ t("walletSetup.createCard") }}</button>
+              <button class="btn" type="button" @click="startSolImport()">{{ t("walletSetup.importCard") }}</button>
+            </template>
+            <template v-else-if="c.configured">
+              <button
+                class="btn danger"
+                type="button"
+                :disabled="loading || !c.canRemove"
+                :aria-label="t('walletSetup.removeChainAria', { chain: c.displayName })"
+                :title="c.canRemove ? '' : c.removeBlockReason"
+                @click="removeArm = removeArm === c.chain ? '' : c.chain"
+              >
+                {{ t("walletSetup.removeChainBtn") }}
+              </button>
+            </template>
+          </div>
+          <p v-if="c.configured && !c.canRemove && c.removeBlockReason" class="muted ws-chainblock">
+            {{ c.removeBlockReason }}
+          </p>
+          <!-- Two-step confirm strip for a destructive removal. -->
+          <div v-if="removeArm === c.chain && c.canRemove" class="ws-warn ws-removeconfirm" role="alertdialog">
+            <strong>{{ t("walletSetup.removeChainTitle", { chain: c.displayName }) }}</strong>
+            <p>{{ t("walletSetup.removeChainBody", { chain: c.displayName, address: c.publicKey }) }}</p>
+            <p v-if="c.clientSigned">{{ t("walletSetup.removeChainDeviceKey") }}</p>
+            <div class="ws-chainactions">
+              <button class="btn danger" type="button" :disabled="loading" @click="doRemoveChain(c.chain)">
+                {{ t("walletSetup.removeChainConfirm") }}
+              </button>
+              <button class="btn" type="button" @click="removeArm = ''">{{ t("walletSetup.back") }}</button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- Replace wallet (password-gated, warns about cancellation) -->
       <details class="ws-replace">
@@ -603,5 +928,78 @@ async function doReplace(): Promise<void> {
   cursor: pointer;
   color: var(--muted);
   font-size: 14px;
+}
+/* Multi-chain: setup-picker group headings + the manage chain list. */
+.ws-chainhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+.ws-chaindesc {
+  font-size: 13px;
+  margin: 4px 0 8px;
+}
+.ws-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.ws-badge-opt {
+  border-color: var(--line);
+  color: var(--muted);
+}
+.ws-chains {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.ws-chains-title {
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+.ws-chainrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ws-chainrow:last-child {
+  border-bottom: none;
+}
+.ws-chainmain {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ws-chainmain .ws-chainhead {
+  margin-top: 0;
+}
+.ws-chainbal {
+  font-size: 13px;
+}
+.ws-chainactions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ws-chainactions .btn {
+  min-height: 44px;
+}
+.ws-chainblock {
+  flex-basis: 100%;
+  font-size: 12px;
+  margin: 0;
+}
+.ws-removeconfirm {
+  flex-basis: 100%;
 }
 </style>

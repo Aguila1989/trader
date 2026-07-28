@@ -859,10 +859,9 @@ app.post("/api/pay", async (req, res) => {
 
 // --- Non-custodial signing (migration P0, flag-gated) ---------------------
 // EXPERIMENTAL, testnet-only. Inert unless NONCUSTODIAL_MODE=true. The server
-// BUILDS an unsigned tx; the client signs it and posts it to /api/submit.
-// KNOWN GAP (do NOT enable on mainnet until closed): the build->sign->submit
-// split still needs the per-account sequence allocator + abandoned-reservation
-// TTL from the engineering plan §4.4 to be concurrency-/multi-user-safe. Egress
+// BUILDS an unsigned tx; the client signs it and posts it to /api/submit. The
+// §4.4 per-account sequence allocator + abandoned-reservation TTL guard the
+// build->sign->submit split below (reserveSequence/releaseSequence). Egress
 // is reserved on /submit from amounts parsed out of the SIGNED tx (never trusted
 // from the request), so the daily cap stays server-authoritative.
 app.post("/api/pay/build", async (req, res) => {

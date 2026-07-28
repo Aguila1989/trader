@@ -12,22 +12,15 @@ import {
   riskProfileSummary,
 } from "../policy/riskProfile";
 import { currentDrawdownPct, drawdownPeak } from "./drawdown";
-import {
-  bookLevelsBase,
-  getBalances,
-  getMarketSnapshot,
-  getOpenOffers,
-  type MarketSnapshot,
-} from "../stellar/market";
+import { type MarketSnapshot } from "../stellar/market";
 import { walkBook } from "../stellar/indicators";
 import { assetCode, canonicalAsset, pairLabel } from "../stellar/assets";
-import { buildOfferTransaction } from "../stellar/builder";
-import { preflightCheck } from "../stellar/preflight";
-import {
-  signOnly,
-  submitSigned,
-  type OfferResultLike,
-} from "../stellar/signer";
+// ChainAdapter reroute (2026-07): every market read and the whole build->sign->
+// submit execution path go through the Stellar adapter (a thin facade over the
+// same stellar/* modules as before), so a second chain's executor can slot in
+// behind the same seam. Fill reconciliation lives in the adapter now.
+import { adapterFor } from "../chains/registry";
+import type { Fill } from "../chains/types";
 import { resolveTradingAccountOrNull } from "../stellar/keyProvider";
 import { accrueFillFee } from "../fees/collector";
 import { isPlatformHalted } from "../db/billingRepo";
@@ -51,6 +44,10 @@ import type { PolicyContext, RiskProfile, TradeProposal, TradeSide } from "../ty
 
 /** How many recent submitted trades (with outcomes) the analyst gets to see. */
 const MEMORY_OUTCOMES = 5;
+
+/** Trading is Stellar-only today; every read + execution routes through its
+ *  adapter. Multi-chain trading later means resolving this per proposal. */
+const stellarChain = adapterFor("stellar");
 
 /** Snapshot of how this system's own trading has gone, fed to the analyst. */
 function tradingMemory(): TradingMemory {
@@ -94,9 +91,9 @@ export interface ScanOutcome extends AnalysisOutcome {
 async function walletHeld(): Promise<((spec: string) => boolean) | null> {
   const pub = await resolveTradingAccountOrNull();
   if (!pub) return null;
-  let balances: Awaited<ReturnType<typeof getBalances>>;
+  let balances: Awaited<ReturnType<typeof stellarChain.getBalances>>;
   try {
-    balances = await getBalances(pub);
+    balances = await stellarChain.getBalances(pub);
   } catch {
     return null;
   }
@@ -126,7 +123,7 @@ async function availableXlmBalance(): Promise<number | undefined> {
   const pub = await resolveTradingAccountOrNull();
   if (!pub) return undefined;
   try {
-    const balances = await getBalances(pub);
+    const balances = await stellarChain.getBalances(pub);
     const native = balances.find((b) => b.asset === "XLM");
     return native ? Number(native.balance) : 0;
   } catch {
@@ -184,7 +181,7 @@ export async function runAnalysis(
   // e.g. a range-high sell the rules would take but the AI skipped. A skip the
   // wallet couldn't have funded is tagged PHANTOM rather than a real miss.
   try {
-    const snap = await getMarketSnapshot(baseAsset, quoteAsset, 8);
+    const snap = await stellarChain.getMarketSnapshot(baseAsset, quoteAsset, 8);
     const aiSide = result.proposals[0]?.side ?? null;
     const baseline = baselineCall(snap.stats, snap.stats.lastPrice ?? midOf(snap));
     const fundable =
@@ -327,7 +324,7 @@ async function runChainScanInner(): Promise<ScanOutcome> {
   const markets: MarketSnapshot[] = [];
   for (const asset of assets) {
     try {
-      const snap = await getMarketSnapshot("XLM", asset, 8);
+      const snap = await stellarChain.getMarketSnapshot("XLM", asset, 8);
       if (snap.bids.length === 0 && snap.asks.length === 0) {
         store.log("info", `Skipping ${asset}: empty orderbook.`);
         continue;
@@ -340,7 +337,7 @@ async function runChainScanInner(): Promise<ScanOutcome> {
   }
   for (const pair of crossPairs) {
     try {
-      const snap = await getMarketSnapshot(pair.base, pair.quote, 8);
+      const snap = await stellarChain.getMarketSnapshot(pair.base, pair.quote, 8);
       if (snap.bids.length === 0 && snap.asks.length === 0) {
         store.log("info", `Skipping ${pair.base}/${pair.quote}: empty orderbook.`);
         continue;
@@ -1253,7 +1250,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
 
   // On-chain settlement pre-check: confirm trustline + spendable funds so we
   // don't sign a transaction that is guaranteed to fail (and burn a fee).
-  const pre = await preflightCheck(p);
+  const pre = await stellarChain.preflight(p);
   if (!pre.ok) {
     const insufficient = pre.code === "insufficient_balance";
     // Spec-worded message for the funds case; generic for trustline/other.
@@ -1311,19 +1308,22 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   store.updateProposal(id, { status: "submitting", error: undefined });
   store.log("trade", `Submitting ${shortId(id)} to Stellar ${config.network}...`);
   try {
-    const tx = await buildOfferTransaction(p);
-    // Sign first and persist the hash BEFORE the network submit: if the
-    // process dies mid-submit, the monitor can recover this row by hash
-    // (recheckTimedOut) instead of leaving real on-chain exposure outside
-    // every ledger and cap.
-    const hash = await signOnly(tx);
+    // Prepare + sign first and persist the handle (the tx hash) BEFORE the
+    // network submit: if the process dies mid-submit, the monitor can recover
+    // this row by hash (recheckTimedOut) instead of leaving real on-chain
+    // exposure outside every ledger and cap.
+    const prepared = await stellarChain.prepareOrder(p);
+    const signed = await stellarChain.sign(prepared);
+    const hash = signed.handle;
     store.updateProposal(id, { txHash: hash });
-    const { offerResults } = await submitSigned(tx, hash);
-    // Reconcile the REAL fill before recording the trade, so daily volume, the
-    // PnL ledger and positions reflect what actually traded - not an optimistic
-    // full fill at the limit. A null fill (timeout path) keeps the old
-    // assume-full-fill behaviour via proposalToFill's limit-price fallback.
-    const fill = reconcileOfferFill(p, offerResults);
+    // The adapter reconciles the REAL fill (including recovering a resting
+    // offer id lost to a submit timeout) so daily volume, the PnL ledger and
+    // positions reflect what actually traded - not an optimistic full fill at
+    // the limit. A null fill (timeout path) keeps the old assume-full-fill
+    // behaviour via proposalToFill's limit-price fallback.
+    const receipt = await stellarChain.submit(signed);
+    const fill = receipt.fill;
+    if (fill) logFillOutcome(p, fill);
     const patch: Partial<TradeProposal> = {
       status: "submitted",
       txHash: hash,
@@ -1334,15 +1334,7 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
       patch.filledPrice = String(fill.avgPrice);
       // A resting remainder leaves an offer on the book - remember its id so
       // the position monitor can book later fills and cancel it when stale.
-      if (fill.offerId) patch.offerId = fill.offerId;
-      else if (Number(p.amount) - fill.filledBase > 1e-7) {
-        // Timeout/effects path: the submit response (and its currentOffer id)
-        // was lost, but an offer for the unfilled remainder rests on-chain.
-        // Recover its id from the account's open offers so it isn't orphaned
-        // (untracked = later fills never booked, stale-cancel never fires).
-        const recovered = await recoverRestingOfferId(p);
-        if (recovered) patch.offerId = recovered;
-      }
+      if (fill.restingOrderId) patch.offerId = fill.restingOrderId;
     }
     const recorded = store.updateProposal(id, patch) ?? p;
     store.recordSubmittedTrade(recorded);
@@ -1355,6 +1347,29 @@ async function executeInner(id: string, auto: boolean): Promise<void> {
   }
 }
 
+/**
+ * Emit the fill-outcome log lines (resting-only / partial fill) that lived
+ * inside reconcileOfferFill before reconciliation moved into the Stellar
+ * adapter (src/chains/stellar). Wording preserved verbatim.
+ */
+function logFillOutcome(p: TradeProposal, fill: Fill): void {
+  const requested = Number(p.amount) || 0;
+  if (!(fill.filledBase > 0)) {
+    store.log(
+      "trade",
+      `Proposal ${shortId(p.id)} did not fill immediately; ${requested} ${p.baseAsset} resting on the order book.`,
+    );
+    return;
+  }
+  const resting = round7(requested - fill.filledBase);
+  if (resting > 1e-7) {
+    store.log(
+      "trade",
+      `Proposal ${shortId(p.id)} partially filled ${round7(fill.filledBase)}/${requested} ${p.baseAsset} @ ~${round7(fill.avgPrice)} ${p.quoteAsset}; ${resting} resting on the book.`,
+    );
+  }
+}
+
 async function marketContext(
   base: string,
   quote: string,
@@ -1362,8 +1377,8 @@ async function marketContext(
   try {
     // Depth 20: enough levels for the policy engine to WALK the book and price
     // a cap-size order, not just read the touch.
-    const snap = await getMarketSnapshot(base, quote, 20);
-    const levels = bookLevelsBase(snap);
+    const snap = await stellarChain.getMarketSnapshot(base, quote, 20);
+    const levels = stellarChain.bookLevels(snap);
     return {
       bestBid: snap.bestBid ?? undefined,
       bestAsk: snap.bestAsk ?? undefined,
@@ -1377,16 +1392,6 @@ async function marketContext(
     // closed on it inside checkPolicy.
     return {};
   }
-}
-
-interface OfferFill {
-  /** Base units that actually traded (0 if the whole order is resting). */
-  filledBase: number;
-  /** Volume-weighted price actually paid/received (quote per base). */
-  avgPrice: number;
-  /** Id of the RESTING offer left on the book (absent when fully filled). The
-   *  position monitor uses it to book later fills + cancel stale offers. */
-  offerId?: string;
 }
 
 function round7(n: number): number {
@@ -1480,96 +1485,6 @@ export function simulatePaperFill(
   };
 }
 
-/**
- * Translate Horizon's manageOffer result(s) into the base amount that actually
- * traded and the average price achieved, so the ledger books the REAL fill
- * instead of optimistically assuming the whole limit order executed.
- *
- *  - sell: we sold `amountSold` base and received `amountBought` quote, so the
- *          realized price is amountBought / amountSold (quote per base).
- *  - buy:  we received `amountBought` base and paid `amountSold` quote, so the
- *          realized price is amountSold / amountBought (quote per base).
- *
- * Returns null when no offerResults are present (e.g. the submit timed out and
- * we polled the bare tx record) - the caller then falls back to assuming a full
- * fill at the limit price. A resting remainder (partial fill, or nothing
- * matched and the order sits on the book) is logged but NOT booked: those units
- * haven't traded yet. Later fills of a resting offer are not reconciled here
- * (documented limitation - would need async tracking by offer id).
- */
-export function reconcileOfferFill(
-  p: TradeProposal,
-  offerResults: OfferResultLike[] | undefined,
-): OfferFill | null {
-  if (!offerResults || offerResults.length === 0) return null;
-
-  // One manageOffer op per proposal; sum defensively in case Horizon ever
-  // splits the result across slots. Capture the resting offer id (if any) so
-  // the monitor can track later fills / cancel it when stale.
-  let bought = 0;
-  let sold = 0;
-  let offerId: string | undefined;
-  for (const r of offerResults) {
-    bought += Number(r.amountBought) || 0;
-    sold += Number(r.amountSold) || 0;
-    const oid = r.currentOffer?.offerId;
-    if (oid != null && offerId === undefined) offerId = String(oid);
-  }
-
-  const filledBase = p.side === "sell" ? sold : bought;
-  const quoteLeg = p.side === "sell" ? bought : sold;
-  const requested = Number(p.amount) || 0;
-
-  if (!(filledBase > 0) || !(quoteLeg > 0)) {
-    store.log(
-      "trade",
-      `Proposal ${shortId(p.id)} did not fill immediately; ${requested} ${p.baseAsset} resting on the order book.`,
-    );
-    return { filledBase: 0, avgPrice: Number(p.limitPrice) || 0, offerId };
-  }
-
-  const avgPrice = quoteLeg / filledBase;
-  const resting = round7(requested - filledBase);
-  if (resting > 1e-7) {
-    store.log(
-      "trade",
-      `Proposal ${shortId(p.id)} partially filled ${round7(filledBase)}/${requested} ${p.baseAsset} @ ~${round7(avgPrice)} ${p.quoteAsset}; ${resting} resting on the book.`,
-    );
-  }
-  return { filledBase: round7(filledBase), avgPrice: round7(avgPrice), offerId };
-}
-
-/**
- * Best-effort recovery of a resting offer's id when the submit response (and
- * its currentOffer) was lost to a timeout: match the account's open offers by
- * the proposal's legs and limit price. Returns undefined when no match - the
- * caller keeps the proposal untracked rather than guessing.
- */
-export async function recoverRestingOfferId(
-  p: TradeProposal,
-): Promise<string | undefined> {
-  const pub = await resolveTradingAccountOrNull();
-  if (!pub) return undefined;
-  try {
-    const offers = await getOpenOffers(pub);
-    const selling = p.side === "sell" ? p.baseAsset : p.quoteAsset;
-    const buying = p.side === "sell" ? p.quoteAsset : p.baseAsset;
-    const limit = Number(p.limitPrice) || 0;
-    if (!(limit > 0)) return undefined;
-    // Offer price is buying-per-selling: equals the limit for a sell (quote
-    // per base) and its inverse for a buy (base per quote).
-    const expected = p.side === "sell" ? limit : 1 / limit;
-    for (const o of offers) {
-      if (o.selling !== selling || o.buying !== buying) continue;
-      const op = Number(o.price) || 0;
-      if (op > 0 && Math.abs(op - expected) / expected < 0.001) return o.id;
-    }
-  } catch {
-    // Horizon unavailable: stay untracked; the monitor's untracked-offer
-    // warning still surfaces it to the operator.
-  }
-  return undefined;
-}
 
 function current(id: string): TradeProposal {
   const p = store.getProposal(id);

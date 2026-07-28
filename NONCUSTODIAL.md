@@ -122,8 +122,9 @@ against a mainnet `.env`:
 ## 6. Known gaps before this is production-trustworthy
 
 - Only `/api/pay` is wired end-to-end; other write paths still use the custodial flow.
-- Full per-action operation allowlist, `ClientSignedWalletError → 409` on the old custodial
-  routes, and the `localKey` security review are still open.
+- The per-action operation allowlist (signing.ts `allowedOps`) and the
+  `ClientSignedWalletError → 409` mapping on the old custodial routes ARE shipped;
+  the `localKey` security review (see its header checklist) is still open.
 - Fees-in-signed-tx, the autonomous paths, and the **live-mainnet wallet migration** are not
   built — the migration is deadline-driven and must not be a flag flip.
 - The design assumes the **one-off legal opinion** (see `juridische-analyse-atrium.md` §7.1)

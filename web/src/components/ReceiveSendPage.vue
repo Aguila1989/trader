@@ -4,10 +4,10 @@
 // token send form, and the general swap — and adds a client-side QR of the
 // PUBLIC key plus a trade-log–derived XLM conversion history. Pending payments
 // moved to their own route; auto-swap settings live in Settings ▸ Swap & Transfer.
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useTraderStore } from "../stores/trader";
-import { walletState } from "../wallet/walletState";
+import { walletState, refreshChains } from "../wallet/walletState";
 import { fmtNum, assetCode as code } from "../format";
 import { LESSONS } from "../academy/deeplinks";
 import type { UniverseToken } from "../types";
@@ -24,7 +24,29 @@ const { t } = useI18n();
 const store = useTraderStore();
 
 // The operator's own wallet (per-user, authoritative) — what we show + encode.
+// This stays the STELLAR wallet: the send flows below all operate on it.
 const account = computed(() => walletState.publicKey);
+
+// MULTI-CHAIN RECEIVE: one tab per CONFIGURED chain, each with its own address
+// + QR. Falls back to a Stellar-only entry when the per-chain list is not
+// available (e.g. the /chains fetch failed) so the page never loses its QR.
+const receiveChains = computed(() => {
+  const configured = walletState.chains.filter((c) => c.configured && c.publicKey);
+  if (configured.length > 0) return configured;
+  return account.value
+    ? [{ chain: "stellar", displayName: "Stellar", nativeSymbol: "XLM", enabled: true, configured: true, publicKey: account.value }]
+    : [];
+});
+const activeReceiveChain = ref("stellar");
+const activeReceive = computed(
+  () =>
+    receiveChains.value.find((c) => c.chain === activeReceiveChain.value) ??
+    receiveChains.value[0] ??
+    null,
+);
+onMounted(() => {
+  void refreshChains();
+});
 
 const heldTokens = computed(() => store.heldTokens);
 const swapToOptions = computed<UniverseToken[]>(() => {
@@ -41,9 +63,10 @@ const swapToOptions = computed<UniverseToken[]>(() => {
 
 const justCopied = ref(false);
 async function copyAddress(): Promise<void> {
-  if (!account.value) return;
+  const addr = activeReceive.value?.publicKey;
+  if (!addr) return;
   try {
-    await navigator.clipboard.writeText(account.value);
+    await navigator.clipboard.writeText(addr);
     justCopied.value = true;
     setTimeout(() => (justCopied.value = false), 1500);
   } catch {
@@ -289,17 +312,36 @@ async function doSwap(): Promise<void> {
       </h2>
       <p v-if="store.isReadOnly" class="muted w-note">{{ t("wallet.readOnlyNote") }}</p>
 
-      <div v-if="account" class="rcv">
+      <!-- MULTI-CHAIN: one tab per configured chain, each with its own QR. -->
+      <div v-if="receiveChains.length > 1" class="rcv-tabs" role="tablist" :aria-label="t('receiveSend.chainTabsAria')">
+        <button
+          v-for="c in receiveChains"
+          :key="c.chain"
+          class="rcv-tab"
+          :class="{ active: activeReceive?.chain === c.chain }"
+          role="tab"
+          type="button"
+          :aria-selected="activeReceive?.chain === c.chain"
+          @click="activeReceiveChain = c.chain"
+        >
+          {{ c.displayName }}
+        </button>
+      </div>
+
+      <div v-if="activeReceive" class="rcv">
         <div class="rcv-qr">
-          <ReceiveQr :value="account" />
+          <ReceiveQr :value="activeReceive.publicKey!" />
           <p class="muted rcv-hint">{{ t("receiveSend.qrHint") }}</p>
         </div>
         <div class="rcv-addr-box">
           <span class="muted rcv-addr-label">{{ t("wallet.copyAddress") }}</span>
-          <code class="mono rcv-addr">{{ account }}</code>
+          <code class="mono rcv-addr">{{ activeReceive.publicKey }}</code>
           <button class="btn rcv-copy" @click="copyAddress">
             {{ justCopied ? t("walletSetup.chipCopied") : t("wallet.copyAddress") }}
           </button>
+          <p v-if="activeReceive.chain !== 'stellar'" class="muted w-note">
+            {{ t("receiveSend.sendLaterNote", { chain: activeReceive.displayName }) }}
+          </p>
         </div>
       </div>
       <p v-else class="muted">{{ t("wallet.noAccount") }}</p>
@@ -435,6 +477,32 @@ async function doSwap(): Promise<void> {
 </template>
 
 <style scoped>
+/* Multi-chain receive tabs (one per configured chain). 44px touch floor. */
+.rcv-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.rcv-tab {
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.rcv-tab:hover {
+  border-color: var(--accent);
+}
+.rcv-tab.active {
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
 .rcv {
   display: flex;
   flex-wrap: wrap;

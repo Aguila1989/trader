@@ -18,9 +18,11 @@ import {
   confirmWallet,
   importWallet,
   getWalletStatus,
+  getWalletsOverview,
   replaceWallet,
   fundViaFriendbot,
   registerWallet,
+  removeChainWallet,
 } from "./service";
 import { WalletError } from "./errors";
 
@@ -92,15 +94,40 @@ export function createWalletRouter(): Router {
     }
   });
 
-  // NON-CUSTODIAL (flag-gated): register a client-generated wallet by PUBLIC KEY
-  // only — the server never receives a secret. Signing happens on the device.
+  // NON-CUSTODIAL: register a client-generated wallet by PUBLIC KEY only — the
+  // server never receives a secret. Signing happens on the device. For STELLAR
+  // this is flag-gated by NONCUSTODIAL_MODE (it changes the trading chain's
+  // signing story); for other chains, being operator-enabled in CHAINS is the
+  // opt-in — they have no custodial alternative at all (service validates).
   router.post("/register", async (req: Request, res: Response) => {
-    if (!config.nonCustodial) {
+    const chain = String(req.body?.chain ?? "stellar").trim().toLowerCase() || "stellar";
+    if (chain === "stellar" && !config.nonCustodial) {
       res.status(404).json({ error: "Non-custodial mode is not enabled." });
       return;
     }
     try {
-      res.json(await registerWallet(req.body?.publicKey));
+      res.json(await registerWallet(req.body?.publicKey, chain));
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // MULTI-CHAIN (2026-07): per-chain wallet overview for the setup/manage +
+  // Receive UIs. One entry per enabled chain (plus any chain the user still
+  // holds a wallet on). Addresses + balances only - never a secret.
+  router.get("/chains", async (_req: Request, res: Response) => {
+    try {
+      res.json({ chains: await getWalletsOverview() });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
+  // MULTI-CHAIN: remove the wallet on one chain. Only allowed when the
+  // on-ledger account is verifiably EMPTY (fails closed when unverifiable).
+  router.delete("/chain/:chain", async (req: Request, res: Response) => {
+    try {
+      res.json(await removeChainWallet(req.params.chain));
     } catch (err) {
       fail(res, err);
     }

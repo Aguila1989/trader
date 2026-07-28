@@ -1318,11 +1318,13 @@ export async function listStopLossAudit(opts: {
  * defence) and rows are never deleted - status transitions only.
  * ------------------------------------------------------------------ */
 
-export type WalletStatus = "pending" | "active" | "replaced";
+export type WalletStatus = "pending" | "active" | "replaced" | "removed";
 
 /** Internal wallet row. `encryptedSecret` is the at-rest blob - NEVER expose it. */
 export interface WalletRecord {
   id: string;
+  /** Which chain this wallet lives on ("stellar" | "solana" | ...). */
+  chain: string;
   publicKey: string;
   encryptedSecret: string | null;
   status: WalletStatus;
@@ -1332,6 +1334,7 @@ export interface WalletRecord {
 
 interface RawWalletRow {
   id: string;
+  chain: string;
   publicKey: string;
   encryptedSecret: string | null;
   status: string;
@@ -1342,6 +1345,7 @@ interface RawWalletRow {
 function rowToWallet(r: RawWalletRow): WalletRecord {
   return {
     id: r.id,
+    chain: r.chain || "stellar",
     publicKey: r.publicKey,
     encryptedSecret: r.encryptedSecret,
     status: r.status as WalletStatus,
@@ -1350,25 +1354,46 @@ function rowToWallet(r: RawWalletRow): WalletRecord {
   };
 }
 
-const WALLET_COLS = "id, publicKey, encryptedSecret, status, createdAt, updatedAt";
+const WALLET_COLS = "id, chain, publicKey, encryptedSecret, status, createdAt, updatedAt";
 
-/** The current user's ACTIVE wallet for this network, or null. (<=1 by index.) */
-export async function getActiveWallet(): Promise<WalletRecord | null> {
+/** The current user's ACTIVE wallet on `chain` for this network, or null.
+ *  (<=1 per (user, network, chain) by the filtered unique index.) Defaults to
+ *  "stellar" so every pre-multichain call site keeps its exact behavior. */
+export async function getActiveWallet(chain = "stellar"): Promise<WalletRecord | null> {
   if (!dbReady()) return null;
   const res = await getPool()
     .request()
     .input("net", sql.NVarChar(16), config.network)
     .input("userId", sql.NVarChar(64), currentUserId())
+    .input("chain", sql.NVarChar(24), chain)
     .query<RawWalletRow>(
       `SELECT TOP 1 ${WALLET_COLS}
          FROM dbo.Wallets
-        WHERE network = @net AND userId = @userId AND status = 'active';`,
+        WHERE network = @net AND userId = @userId AND chain = @chain
+          AND status = 'active';`,
     );
   const row = res.recordset[0];
   return row ? rowToWallet(row) : null;
 }
 
-/** The current user's most-recent PENDING (created-but-unconfirmed) wallet, or null. */
+/** Every ACTIVE wallet of the current user on this network, across chains. */
+export async function listActiveWallets(): Promise<WalletRecord[]> {
+  if (!dbReady()) return [];
+  const res = await getPool()
+    .request()
+    .input("net", sql.NVarChar(16), config.network)
+    .input("userId", sql.NVarChar(64), currentUserId())
+    .query<RawWalletRow>(
+      `SELECT ${WALLET_COLS}
+         FROM dbo.Wallets
+        WHERE network = @net AND userId = @userId AND status = 'active'
+        ORDER BY chain;`,
+    );
+  return res.recordset.map(rowToWallet);
+}
+
+/** The current user's most-recent PENDING (created-but-unconfirmed) wallet, or
+ *  null. Pending rows only exist for the custodial Stellar create flow. */
 export async function getLatestPendingWallet(): Promise<WalletRecord | null> {
   if (!dbReady()) return null;
   const res = await getPool()
@@ -1378,7 +1403,8 @@ export async function getLatestPendingWallet(): Promise<WalletRecord | null> {
     .query<RawWalletRow>(
       `SELECT TOP 1 ${WALLET_COLS}
          FROM dbo.Wallets
-        WHERE network = @net AND userId = @userId AND status = 'pending'
+        WHERE network = @net AND userId = @userId AND chain = 'stellar'
+          AND status = 'pending'
         ORDER BY createdAt DESC;`,
     );
   const row = res.recordset[0];
@@ -1388,6 +1414,7 @@ export async function getLatestPendingWallet(): Promise<WalletRecord | null> {
 /** Insert a wallet row (idempotent on id), scoped to the current user + network. */
 export async function insertWallet(w: {
   id: string;
+  chain?: string;
   publicKey: string;
   encryptedSecret: string | null;
   status: WalletStatus;
@@ -1401,15 +1428,16 @@ export async function insertWallet(w: {
     .input("updatedAt", sql.DateTime2, now)
     .input("network", sql.NVarChar(16), config.network)
     .input("userId", sql.NVarChar(64), currentUserId())
+    .input("chain", sql.NVarChar(24), w.chain ?? "stellar")
     .input("publicKey", sql.NVarChar(64), w.publicKey)
     .input("encryptedSecret", sql.NVarChar(sql.MAX), w.encryptedSecret)
     .input("status", sql.NVarChar(16), w.status)
     .query(
       `IF NOT EXISTS (SELECT 1 FROM dbo.Wallets WHERE id = @id)
        INSERT INTO dbo.Wallets
-         (id, createdAt, updatedAt, network, userId, publicKey, encryptedSecret, status)
+         (id, createdAt, updatedAt, network, userId, chain, publicKey, encryptedSecret, status)
        VALUES
-         (@id, @createdAt, @updatedAt, @network, @userId, @publicKey, @encryptedSecret, @status);`,
+         (@id, @createdAt, @updatedAt, @network, @userId, @chain, @publicKey, @encryptedSecret, @status);`,
     );
 }
 

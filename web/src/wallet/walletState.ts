@@ -6,7 +6,7 @@
 // wallet first" gate. The server still enforces a wallet on every on-chain call;
 // this is UX only. It never holds a secret.
 import { reactive } from "vue";
-import { walletApi, type WalletStatus } from "../api";
+import { walletApi, type ChainWalletView, type WalletStatus } from "../api";
 
 export const walletState = reactive<{
   loaded: boolean;
@@ -19,6 +19,10 @@ export const walletState = reactive<{
   clientSigned: boolean;
   /** Whether the server offers the non-custodial setup flow. */
   nonCustodial: boolean;
+  /** MULTI-CHAIN: one entry per enabled chain (+ any chain the user still has
+   *  a wallet on). The flat Stellar fields above are unchanged — they remain
+   *  the trading chain's status, consumed all over the app. */
+  chains: ChainWalletView[];
 }>({
   loaded: false,
   configured: false,
@@ -28,6 +32,7 @@ export const walletState = reactive<{
   network: "",
   clientSigned: false,
   nonCustodial: false,
+  chains: [],
 });
 
 let inflight: Promise<void> | null = null;
@@ -64,6 +69,22 @@ export async function loadWalletStatus(force = false): Promise<void> {
   return inflight;
 }
 
+/**
+ * Load the per-chain wallet list (GET /api/wallet/chains). Unlike
+ * loadWalletStatus it always re-fetches: it backs the setup chain picker, the
+ * Receive tabs and the manage add/remove UI, which all need fresh data right
+ * after a mutation. On failure the previous list is kept — consumers fall back
+ * to the flat Stellar fields when the list is empty.
+ */
+export async function refreshChains(): Promise<void> {
+  try {
+    const r = await walletApi.chains();
+    walletState.chains = Array.isArray(r.chains) ? r.chains : [];
+  } catch {
+    /* keep the previous list; a later navigation retries */
+  }
+}
+
 /** Forget cached status (on logout / user switch) so the next load re-fetches. */
 export function resetWalletState(): void {
   walletState.loaded = false;
@@ -74,4 +95,5 @@ export function resetWalletState(): void {
   walletState.network = "";
   walletState.clientSigned = false;
   walletState.nonCustodial = false;
+  walletState.chains = [];
 }

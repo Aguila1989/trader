@@ -363,7 +363,15 @@ Legal is the dominant blocker; see report Section 6.
   `juridische-analyse-atrium.md` §7.1) — *before* building. Then execute the
   phased migration (build-on-server / sign-on-client); see the engineering plan
   in the second brain (`atrium-noncustodial-engineering-plan`). Nothing else
-  legal is safe to finalize until the opinion lands. (Report Section 5 → Must Have.)
+  legal is safe to finalize until the opinion lands.
+  **Progress (2026-07-23):** P0 — the non-custodial payment path — is built and
+  committed (`0e055a8`), shipping **flag-OFF** (`NONCUSTODIAL_MODE`): backend
+  build/sign/submit seam + §4.4 sequence allocator + submit trust boundary (both
+  unit-tested) + client-side device-key signing. It is **runtime-UNVERIFIED** —
+  do not enable on mainnet before a testnet pass (`NONCUSTODIAL.md`) **and** the
+  legal opinion. Remaining paths (swap/offers/trustlines/claimable), fees, the
+  autonomous engine, and the live-wallet migration are not built.
+  (Report Section 5 → Must Have.)
 - **Privacy Policy** (GDPR Art. 13/14; required URL for both app stores),
   **Terms of Service** with accept-at-signup, **Risk Disclaimer** gating live/AI
   trading, and a **Cookie Policy** section — none exist in the repo.

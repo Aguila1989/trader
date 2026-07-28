@@ -39,6 +39,22 @@ function num(name: string, fallback: number): number {
 const network: StellarNetwork =
   env("NETWORK", "testnet").toLowerCase() === "public" ? "public" : "testnet";
 
+// Chains the platform offers (multi-chain wallets, 2026-07). Stellar is always
+// enabled (it is the trading chain); other KNOWN chains opt in via CHAINS, e.g.
+// CHAINS=stellar,solana. Unknown ids are dropped so a typo can't surface a
+// chain with no adapter behind it.
+const KNOWN_CHAIN_IDS = ["stellar", "solana"] as const;
+const enabledChains: string[] = (() => {
+  const raw = env("CHAINS", "stellar")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const extras = raw.filter(
+    (c) => c !== "stellar" && (KNOWN_CHAIN_IDS as readonly string[]).includes(c),
+  );
+  return ["stellar", ...Array.from(new Set(extras))];
+})();
+
 const horizonDefaults: Record<StellarNetwork, string> = {
   testnet: "https://horizon-testnet.stellar.org",
   public: "https://horizon.stellar.org",
@@ -78,6 +94,21 @@ export const config = {
   network,
   horizonUrl: env("HORIZON_URL") || horizonDefaults[network],
   networkPassphrase: network === "public" ? Networks.PUBLIC : Networks.TESTNET,
+
+  /**
+   * Chains the platform offers for wallets (multi-chain, 2026-07). Always
+   * includes "stellar" (the trading chain); a user can additionally hold e.g.
+   * a Solana wallet when CHAINS=stellar,solana. Trading remains Stellar-only —
+   * other chains are wallet-level (create/import/receive/remove) until their
+   * trading adapters land (see src/chains/).
+   */
+  chains: enabledChains,
+  /**
+   * Optional private/paid Solana RPC endpoint. Blank = the public cluster URL
+   * for the current network (public → mainnet-beta, else devnet). The public
+   * endpoints are rate-limited; set this before enabling Solana for real users.
+   */
+  solanaRpcUrl: env("SOLANA_RPC_URL"),
 
   // The env-based hot wallet. Since Feature 3 (per-user wallets) this is the
   // SEED/FALLBACK wallet of the DEFAULT account only: it keeps the single-

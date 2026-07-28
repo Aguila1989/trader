@@ -9,12 +9,16 @@ import {
 import { horizon, withHorizonRetry } from "../stellar/client";
 import {
   signerPublicKey,
-  signAndSubmit,
   fillFromEffects,
 } from "../stellar/signer";
-import { buildCancelOfferTransaction } from "../stellar/builder";
+// TODO(chain-adapter): the read-reconciliation in this file (fillFromEffects,
+// horizon.transactions(), withHorizonRetry) is still Stellar-direct — it needs
+// getOrderFills/getTransactionOutcome on the ChainAdapter interface before the
+// monitor can serve a second chain. The WRITE path (stale-offer cancel) already
+// goes through the adapter below.
+import { adapterFor } from "../chains/registry";
+import { recoverRestingOrderId } from "../chains/stellar/adapter";
 import {
-  recoverRestingOfferId,
   runExclusive,
   submitSystemProposal,
   logTradeFill,
@@ -331,8 +335,9 @@ async function reconcileOffers(): Promise<void> {
         }
         try {
           await runExclusive(async () => {
-            const tx = await buildCancelOfferTransaction(p, p.offerId as string);
-            await signAndSubmit(tx);
+            const chain = adapterFor("stellar");
+            const prepared = await chain.prepareCancel(p, p.offerId as string);
+            await chain.submit(await chain.sign(prepared));
           });
           // Deliberately KEEP offerId: the next tick finds the offer gone and
           // books any fills that landed in the snapshot->cancel race window
@@ -797,7 +802,7 @@ async function recheckTimedOut(): Promise<void> {
     // of orphaned - the effects-based fill carries no currentOffer.
     let offerId: string | undefined;
     if ((Number(p.amount) || 0) - filledBase > EPS) {
-      offerId = await recoverRestingOfferId(p);
+      offerId = await recoverRestingOrderId(p);
     }
     const updated = store.updateProposal(p.id, {
       status: "submitted",

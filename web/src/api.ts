@@ -222,6 +222,19 @@ async function authGet<T = Record<string, unknown>>(path: string): Promise<AuthA
   }
 }
 
+// DELETE sibling of authRequest (same non-throwing AuthApiResult shape) for the
+// destructive endpoints whose 4xx/5xx bodies carry the user-facing explanation
+// (e.g. chain-wallet removal: 409 = wallet still holds funds).
+async function authDelete<T = Record<string, unknown>>(path: string): Promise<AuthApiResult<T>> {
+  try {
+    const res = await fetch(path, { method: "DELETE", credentials: CREDENTIALS });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string; message?: string };
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "Network error - please try again." } as T & { error?: string } };
+  }
+}
+
 export interface SessionUser {
   id: string;
   email: string;
@@ -402,8 +415,32 @@ export interface WalletStatus {
   nonCustodial?: boolean;
 }
 
+// Multi-chain wallets (2026-07): one wallet per operator-enabled chain. The
+// per-chain list powers the setup chain picker, the Receive tabs, and the
+// manage add/remove UI. WalletStatus above stays Stellar-scoped (the trading
+// chain) — all its consumers are unchanged.
+export interface ChainWalletView {
+  chain: string;
+  displayName: string;
+  nativeSymbol: string;
+  /** Operator-enabled for NEW wallets. A disabled chain still lists while the
+   *  user has a wallet on it (so it stays visible + removable). */
+  enabled: boolean;
+  configured: boolean;
+  publicKey?: string;
+  clientSigned?: boolean;
+  funded?: boolean;
+  nativeBalance?: string | null;
+  hasAnyFunds?: boolean;
+  /** Removal is blocked (with removeBlockReason) while the wallet holds funds. */
+  canRemove?: boolean;
+  removeBlockReason?: string;
+  explorerUrl?: string;
+}
+
 export const walletApi = {
   status: () => getJSON<WalletStatus>("/api/wallet/status"),
+  chains: () => getJSON<{ chains: ChainWalletView[] }>("/api/wallet/chains"),
   create: () => authRequest<{ publicKey: string; secret: string }>("/api/wallet/create", {}),
   confirm: (last4: string) => authRequest<{ publicKey: string }>("/api/wallet/confirm", { last4 }),
   import: (secret: string) =>
@@ -418,12 +455,23 @@ export const walletApi = {
     ),
   friendbot: () =>
     authRequest<{ funded: boolean; xlmBalance: string | null }>("/api/wallet/friendbot", {}),
-  // NON-CUSTODIAL (flag-gated): register a client-generated wallet by PUBLIC KEY
-  // only — the secret never leaves the device.
-  register: (publicKey: string) =>
-    authRequest<{ publicKey: string; funded: boolean; xlmBalance: string | null }>(
-      "/api/wallet/register",
-      { publicKey },
+  // NON-CUSTODIAL: register a client-generated wallet by PUBLIC KEY only — the
+  // secret never leaves the device. chain "stellar" (default) stays flag-gated
+  // server-side (NONCUSTODIAL_MODE); "solana" is allowed whenever the chain is
+  // enabled (Solana wallets are non-custodial only).
+  register: (publicKey: string, chain = "stellar") =>
+    authRequest<{
+      publicKey: string;
+      chain?: string;
+      funded: boolean;
+      nativeBalance?: string | null;
+      xlmBalance: string | null;
+    }>("/api/wallet/register", { publicKey, chain }),
+  // Remove the wallet on one chain. Server-guarded: 409 while it still holds
+  // funds (the body's error explains), 502 when the balance can't be verified.
+  removeChain: (chain: string) =>
+    authDelete<{ chain?: string; removed?: boolean }>(
+      `/api/wallet/chain/${encodeURIComponent(chain)}`,
     ),
 };
 

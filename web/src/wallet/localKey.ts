@@ -1,10 +1,16 @@
 /**
  * NON-CUSTODIAL client-side key storage (migration P0, path "B": app-managed key).
  *
- * The user's Stellar secret is generated ON THIS DEVICE, encrypted at rest with a
- * key derived from a user passphrase (PBKDF2-SHA256 → AES-256-GCM), and stored in
+ * The user's secret is generated ON THIS DEVICE, encrypted at rest with a key
+ * derived from a user passphrase (PBKDF2-SHA256 → AES-256-GCM), and stored in
  * IndexedDB. It is NEVER sent to the server. It is decrypted transiently in memory
  * only to sign, then dropped.
+ *
+ * MULTI-CHAIN (2026-07): storage is PER-CHAIN — one record per chain id
+ * ("stellar" | "solana"), same passphrase→AES scheme for all. Every function
+ * takes a chain that DEFAULTS to "stellar", so pre-existing call sites are
+ * unchanged; the legacy single record ("active") migrates to "stellar" on
+ * first read. Solana wallets are non-custodial only.
  *
  * SECURITY CEILING (state plainly): software Ed25519 signing needs the raw seed as
  * JS-reachable bytes at sign time, so any XSS active at that instant can capture
@@ -25,10 +31,17 @@
  *   [ ] Evaluate a hardware / external wallet (path A) as the true isolation upgrade.
  */
 import { Keypair } from "@stellar/stellar-base";
+import { parseSolanaSecret } from "./solanaKey";
+
+/** Chains a device key can be stored for. The IndexedDB record key IS the
+ *  chain id — one encrypted wallet per chain, same crypto for all of them. */
+export type ChainId = "stellar" | "solana";
 
 const DB_NAME = "atrium-wallet";
 const STORE = "keys";
-const RECORD_KEY = "active";
+// Pre-multichain record key: the single (Stellar) wallet was stored under
+// "active"; idbGet migrates it to "stellar" transparently on first read.
+const LEGACY_RECORD_KEY = "active";
 // OWASP-recommended floor for PBKDF2-HMAC-SHA256 (2023). Raise if UX allows.
 const PBKDF2_ITERATIONS = 310_000;
 
@@ -36,8 +49,21 @@ interface StoredKey {
   publicKey: string;
   salt: string; // base64
   iv: string; // base64
-  ciphertext: string; // base64 — AES-256-GCM of the "S..." secret (utf8)
+  // base64 — AES-256-GCM of the secret (utf8). Plaintext is chain-specific:
+  // stellar = the "S…" secret; solana = the Base58 64-byte (seed ‖ pub) secret.
+  ciphertext: string;
   createdAt: number;
+}
+
+// Chain-specific validation + normalization: the public key derived from a
+// secret, and the exact plaintext we store. Throws on an invalid secret.
+function normalizeSecret(secret: string, chain: ChainId): { publicKey: string; plaintext: string } {
+  if (chain === "solana") {
+    const w = parseSolanaSecret(secret); // throws; normalizes to Base58-64
+    return { publicKey: w.publicKey, plaintext: w.secret };
+  }
+  const kp = Keypair.fromSecret(secret.trim()); // throws on an invalid secret
+  return { publicKey: kp.publicKey(), plaintext: secret.trim() };
 }
 
 function b64encode(bytes: Uint8Array): string {
@@ -64,25 +90,43 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-async function idbGet(): Promise<StoredKey | null> {
+function idbGetRaw(db: IDBDatabase, key: string): Promise<StoredKey | null> {
+  return new Promise<StoredKey | null>((resolve, reject) => {
+    const req = db.transaction(STORE, "readonly").objectStore(STORE).get(key);
+    req.onsuccess = () => resolve((req.result as StoredKey | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbGet(chain: ChainId): Promise<StoredKey | null> {
   const db = await openDb();
   try {
-    return await new Promise<StoredKey | null>((resolve, reject) => {
-      const req = db.transaction(STORE, "readonly").objectStore(STORE).get(RECORD_KEY);
-      req.onsuccess = () => resolve((req.result as StoredKey | undefined) ?? null);
-      req.onerror = () => reject(req.error);
+    const rec = await idbGetRaw(db, chain);
+    if (rec) return rec;
+    if (chain !== "stellar") return null;
+    // Transparent migration: a pre-multichain record ("active") IS the Stellar
+    // wallet — move it under the chain-id key on first read.
+    const legacy = await idbGetRaw(db, LEGACY_RECORD_KEY);
+    if (!legacy) return null;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(legacy, "stellar");
+      tx.objectStore(STORE).delete(LEGACY_RECORD_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
     });
+    return legacy;
   } finally {
     db.close();
   }
 }
 
-async function idbPut(rec: StoredKey): Promise<void> {
+async function idbPut(chain: ChainId, rec: StoredKey): Promise<void> {
   const db = await openDb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(rec, RECORD_KEY);
+      tx.objectStore(STORE).put(rec, chain);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -91,12 +135,15 @@ async function idbPut(rec: StoredKey): Promise<void> {
   }
 }
 
-async function idbDelete(): Promise<void> {
+async function idbDelete(chain: ChainId): Promise<void> {
   const db = await openDb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).delete(RECORD_KEY);
+      tx.objectStore(STORE).delete(chain);
+      // Belt-and-braces: clearing the Stellar key also clears an unmigrated
+      // legacy record so no orphaned ciphertext lingers on the device.
+      if (chain === "stellar") tx.objectStore(STORE).delete(LEGACY_RECORD_KEY);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -129,44 +176,50 @@ export function generateLocalWallet(): { publicKey: string; secret: string } {
   return { publicKey: kp.publicKey(), secret: kp.secret() };
 }
 
-/** Encrypt + persist a Stellar secret under a passphrase. Returns the public key. */
-export async function saveLocalWallet(secret: string, passphrase: string): Promise<string> {
+/** Encrypt + persist a chain secret under a passphrase. Returns the public key
+ *  (Stellar "G…" / Solana Base58 address). Solana secrets are normalized to the
+ *  Base58 64-byte form before encryption. */
+export async function saveLocalWallet(
+  secret: string,
+  passphrase: string,
+  chain: ChainId = "stellar",
+): Promise<string> {
   if (!passphrase) throw new Error("A passphrase is required to protect your key.");
-  const kp = Keypair.fromSecret(secret.trim()); // throws on an invalid secret
+  const { publicKey, plaintext } = normalizeSecret(secret, chain);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(passphrase, salt);
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      new TextEncoder().encode(secret.trim()),
-    ),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext)),
   );
-  await idbPut({
-    publicKey: kp.publicKey(),
+  await idbPut(chain, {
+    publicKey,
     salt: b64encode(salt),
     iv: b64encode(iv),
     ciphertext: b64encode(ct),
     createdAt: Date.now(),
   });
-  return kp.publicKey();
+  return publicKey;
 }
 
-/** The stored public key (no decryption / no passphrase needed), or null. */
-export async function getLocalPublicKey(): Promise<string | null> {
-  const rec = await idbGet();
+/** The stored public key for a chain (no decryption / no passphrase), or null. */
+export async function getLocalPublicKey(chain: ChainId = "stellar"): Promise<string | null> {
+  const rec = await idbGet(chain);
   return rec?.publicKey ?? null;
 }
 
-export async function hasLocalWallet(): Promise<boolean> {
-  return (await idbGet()) !== null;
+export async function hasLocalWallet(chain: ChainId = "stellar"): Promise<boolean> {
+  return (await idbGet(chain)) !== null;
 }
 
-/** Decrypt the stored secret with the passphrase and return a live Keypair. The
- *  caller must use it immediately and drop the reference (it is NOT cached here). */
-export async function unlockLocalWallet(passphrase: string): Promise<Keypair> {
-  const rec = await idbGet();
+/** Decrypt the stored secret for a chain and return the PLAINTEXT secret string
+ *  (Stellar "S…" / Solana Base58-64). The caller must use it immediately and
+ *  drop the reference (it is NOT cached here). */
+export async function unlockLocalSecret(
+  passphrase: string,
+  chain: ChainId = "stellar",
+): Promise<string> {
+  const rec = await idbGet(chain);
   if (!rec) throw new Error("No wallet is stored on this device.");
   const key = await deriveKey(passphrase, b64decode(rec.salt));
   let plain: ArrayBuffer;
@@ -180,12 +233,18 @@ export async function unlockLocalWallet(passphrase: string): Promise<Keypair> {
     throw new Error("Wrong passphrase.");
   }
   const secret = new TextDecoder().decode(plain).trim();
-  const kp = Keypair.fromSecret(secret);
-  if (kp.publicKey() !== rec.publicKey) throw new Error("Stored key is inconsistent.");
-  return kp;
+  const { publicKey } = normalizeSecret(secret, chain);
+  if (publicKey !== rec.publicKey) throw new Error("Stored key is inconsistent.");
+  return secret;
 }
 
-/** Remove the device-stored key (e.g. on logout or after moving to a new device). */
-export async function clearLocalWallet(): Promise<void> {
-  await idbDelete();
+/** Decrypt the stored STELLAR secret and return a live Keypair (the Stellar
+ *  signing path — existing call sites are unchanged). */
+export async function unlockLocalWallet(passphrase: string): Promise<Keypair> {
+  return Keypair.fromSecret(await unlockLocalSecret(passphrase, "stellar"));
+}
+
+/** Remove the device-stored key for a chain (on logout / removal / new device). */
+export async function clearLocalWallet(chain: ChainId = "stellar"): Promise<void> {
+  await idbDelete(chain);
 }

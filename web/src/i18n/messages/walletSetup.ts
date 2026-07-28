@@ -67,6 +67,57 @@ export default {
     back: "Back",
     cancel: "Cancel",
     genericError: "Something went wrong. Please try again.",
+
+    // --- Non-custodial on-device flows (shared by the Stellar + Solana cards) ---
+    ncCard: "Create on this device (non-custodial)",
+    ncCardDesc:
+      "Your key is generated and encrypted on your device — we never see it. You sign every transaction yourself.",
+    ncTitle: "Create a non-custodial wallet",
+    ncGenerating: "Generating a key on this device…",
+    ncBackupTitle: "Back up your secret key now.",
+    ncBackupWarning:
+      "This key lives only on this device, encrypted by your passphrase. If you lose both, your funds are gone — we cannot recover them.",
+    passphraseLabel: "Passphrase (encrypts the key on this device)",
+    passphrasePlaceholder: "At least 8 characters",
+    passphraseConfirmLabel: "Confirm passphrase",
+    passphraseTooShort: "Passphrase must be at least 8 characters.",
+    passphraseMismatch: "Passphrases do not match.",
+    ncBackupAck: "I have saved my secret key somewhere safe. I understand it cannot be recovered.",
+    ncSaving: "Saving…",
+    ncCreateBtn: "Create wallet",
+
+    // --- Multi-chain setup picker + manage ---
+    chainRequired: "Required — the trading chain",
+    chainOptional: "Optional",
+    chainConfigured: "Set up",
+    chainNotSetUp: "Not set up",
+    chainContinue: "Continue",
+    chainStellarDesc: "Atrium trades on Stellar. This wallet is required.",
+    chainsTitle: "Chains",
+    removeChainBtn: "Remove",
+    removeChainAria: "Remove the {chain} wallet",
+    removeChainTitle: "Remove the {chain} wallet?",
+    removeChainBody: "This removes your {chain} wallet ({address}) from your Atrium account.",
+    removeChainDeviceKey:
+      "The encrypted key stored on this device is deleted too. Make sure you have a backup of the secret if you ever want to use this wallet again.",
+    removeChainConfirm: "Remove wallet",
+
+    // --- Solana (non-custodial only) ---
+    solChainDesc:
+      "Receive and hold SOL alongside your Stellar wallet. Non-custodial only — the key never leaves your device.",
+    solCreateCard: "Create a Solana wallet on this device",
+    solCreateCardDesc: "Generated and encrypted on your device — we only ever store the address.",
+    solImportCard: "Import a Solana wallet",
+    solImportCardDesc:
+      "Paste the Base58 secret your wallet (e.g. Phantom) exports. It stays on this device.",
+    solCreateTitle: "Create a Solana wallet",
+    solImportTitle: "Import a Solana wallet",
+    solAddressLabel: "Solana address",
+    solSecretLabel: "Secret key (Base58)",
+    solSecretInputLabel: "Solana secret key (Base58)",
+    solSecretPlaceholder: "Base58 secret (64 bytes) or 32-byte seed",
+    solImportInvalid:
+      "That doesn't look like a valid Solana secret key — paste the Base58 secret your wallet exports (64 bytes) or a 32-byte seed.",
   },
   nl: {
     setupTitle: "Stel je wallet in",
@@ -132,6 +183,58 @@ export default {
     back: "Terug",
     cancel: "Annuleren",
     genericError: "Er ging iets mis. Probeer het opnieuw.",
+
+    // --- Non-custodial flows op het toestel (gedeeld door Stellar + Solana) ---
+    ncCard: "Op dit toestel aanmaken (non-custodial)",
+    ncCardDesc:
+      "Je sleutel wordt op je toestel gegenereerd en versleuteld — wij zien hem nooit. Je ondertekent elke transactie zelf.",
+    ncTitle: "Non-custodial wallet aanmaken",
+    ncGenerating: "Sleutel genereren op dit toestel…",
+    ncBackupTitle: "Maak nu een back-up van je geheime sleutel.",
+    ncBackupWarning:
+      "Deze sleutel bestaat alleen op dit toestel, versleuteld met je wachtwoordzin. Verlies je beide, dan ben je je fondsen kwijt — wij kunnen ze niet herstellen.",
+    passphraseLabel: "Wachtwoordzin (versleutelt de sleutel op dit toestel)",
+    passphrasePlaceholder: "Minstens 8 tekens",
+    passphraseConfirmLabel: "Bevestig wachtwoordzin",
+    passphraseTooShort: "De wachtwoordzin moet minstens 8 tekens lang zijn.",
+    passphraseMismatch: "De wachtwoordzinnen komen niet overeen.",
+    ncBackupAck:
+      "Ik heb mijn geheime sleutel op een veilige plek bewaard. Ik begrijp dat hij niet kan worden hersteld.",
+    ncSaving: "Opslaan…",
+    ncCreateBtn: "Wallet aanmaken",
+
+    // --- Multi-chain: keuzescherm + beheer ---
+    chainRequired: "Vereist — de chain waarop je handelt",
+    chainOptional: "Optioneel",
+    chainConfigured: "Ingesteld",
+    chainNotSetUp: "Niet ingesteld",
+    chainContinue: "Doorgaan",
+    chainStellarDesc: "Atrium handelt op Stellar. Deze wallet is vereist.",
+    chainsTitle: "Chains",
+    removeChainBtn: "Verwijderen",
+    removeChainAria: "De {chain}-wallet verwijderen",
+    removeChainTitle: "De {chain}-wallet verwijderen?",
+    removeChainBody: "Dit verwijdert je {chain}-wallet ({address}) uit je Atrium-account.",
+    removeChainDeviceKey:
+      "De versleutelde sleutel op dit toestel wordt ook verwijderd. Zorg dat je een back-up van de geheime sleutel hebt als je deze wallet ooit nog wilt gebruiken.",
+    removeChainConfirm: "Wallet verwijderen",
+
+    // --- Solana (uitsluitend non-custodial) ---
+    solChainDesc:
+      "Ontvang en bewaar SOL naast je Stellar-wallet. Uitsluitend non-custodial — de sleutel verlaat je toestel nooit.",
+    solCreateCard: "Solana-wallet op dit toestel aanmaken",
+    solCreateCardDesc: "Gegenereerd en versleuteld op je toestel — wij bewaren alleen het adres.",
+    solImportCard: "Solana-wallet importeren",
+    solImportCardDesc:
+      "Plak de Base58-geheime sleutel die je wallet (bv. Phantom) exporteert. Hij blijft op dit toestel.",
+    solCreateTitle: "Solana-wallet aanmaken",
+    solImportTitle: "Solana-wallet importeren",
+    solAddressLabel: "Solana-adres",
+    solSecretLabel: "Geheime sleutel (Base58)",
+    solSecretInputLabel: "Solana geheime sleutel (Base58)",
+    solSecretPlaceholder: "Base58-geheim (64 bytes) of 32-byte seed",
+    solImportInvalid:
+      "Dit lijkt geen geldige Solana geheime sleutel — plak het Base58-geheim dat je wallet exporteert (64 bytes) of een 32-byte seed.",
   },
   fr: {
     setupTitle: "Configurez votre wallet",
@@ -198,6 +301,58 @@ export default {
     back: "Retour",
     cancel: "Annuler",
     genericError: "Une erreur s'est produite. Veuillez réessayer.",
+
+    // --- Flux non custodial sur l'appareil (partagés par Stellar + Solana) ---
+    ncCard: "Créer sur cet appareil (non custodial)",
+    ncCardDesc:
+      "Votre clé est générée et chiffrée sur votre appareil — nous ne la voyons jamais. Vous signez vous-même chaque transaction.",
+    ncTitle: "Créer un wallet non custodial",
+    ncGenerating: "Génération d'une clé sur cet appareil…",
+    ncBackupTitle: "Sauvegardez votre clé secrète maintenant.",
+    ncBackupWarning:
+      "Cette clé n'existe que sur cet appareil, chiffrée par votre phrase secrète. Si vous perdez les deux, vos fonds sont perdus — nous ne pouvons pas les récupérer.",
+    passphraseLabel: "Phrase secrète (chiffre la clé sur cet appareil)",
+    passphrasePlaceholder: "Au moins 8 caractères",
+    passphraseConfirmLabel: "Confirmez la phrase secrète",
+    passphraseTooShort: "La phrase secrète doit comporter au moins 8 caractères.",
+    passphraseMismatch: "Les phrases secrètes ne correspondent pas.",
+    ncBackupAck:
+      "J'ai enregistré ma clé secrète en lieu sûr. Je comprends qu'elle ne peut pas être récupérée.",
+    ncSaving: "Enregistrement…",
+    ncCreateBtn: "Créer le wallet",
+
+    // --- Multi-chaîne : écran de choix + gestion ---
+    chainRequired: "Requis — la chaîne de trading",
+    chainOptional: "Optionnel",
+    chainConfigured: "Configuré",
+    chainNotSetUp: "Non configuré",
+    chainContinue: "Continuer",
+    chainStellarDesc: "Atrium trade sur Stellar. Ce wallet est requis.",
+    chainsTitle: "Chaînes",
+    removeChainBtn: "Supprimer",
+    removeChainAria: "Supprimer le wallet {chain}",
+    removeChainTitle: "Supprimer le wallet {chain} ?",
+    removeChainBody: "Ceci supprime votre wallet {chain} ({address}) de votre compte Atrium.",
+    removeChainDeviceKey:
+      "La clé chiffrée stockée sur cet appareil est également supprimée. Assurez-vous d'avoir une sauvegarde de la clé secrète si vous comptez réutiliser ce wallet.",
+    removeChainConfirm: "Supprimer le wallet",
+
+    // --- Solana (non custodial uniquement) ---
+    solChainDesc:
+      "Recevez et conservez du SOL aux côtés de votre wallet Stellar. Non custodial uniquement — la clé ne quitte jamais votre appareil.",
+    solCreateCard: "Créer un wallet Solana sur cet appareil",
+    solCreateCardDesc: "Généré et chiffré sur votre appareil — nous ne stockons que l'adresse.",
+    solImportCard: "Importer un wallet Solana",
+    solImportCardDesc:
+      "Collez la clé secrète Base58 exportée par votre wallet (p. ex. Phantom). Elle reste sur cet appareil.",
+    solCreateTitle: "Créer un wallet Solana",
+    solImportTitle: "Importer un wallet Solana",
+    solAddressLabel: "Adresse Solana",
+    solSecretLabel: "Clé secrète (Base58)",
+    solSecretInputLabel: "Clé secrète Solana (Base58)",
+    solSecretPlaceholder: "Secret Base58 (64 octets) ou seed de 32 octets",
+    solImportInvalid:
+      "Cela ne ressemble pas à une clé secrète Solana valide — collez le secret Base58 exporté par votre wallet (64 octets) ou une seed de 32 octets.",
   },
   es: {
     setupTitle: "Configura tu wallet",
@@ -264,5 +419,57 @@ export default {
     back: "Atrás",
     cancel: "Cancelar",
     genericError: "Algo salió mal. Inténtalo de nuevo.",
+
+    // --- Flujos no custodiales en el dispositivo (compartidos por Stellar + Solana) ---
+    ncCard: "Crear en este dispositivo (no custodial)",
+    ncCardDesc:
+      "Tu clave se genera y se cifra en tu dispositivo — nunca la vemos. Tú firmas cada transacción.",
+    ncTitle: "Crear un wallet no custodial",
+    ncGenerating: "Generando una clave en este dispositivo…",
+    ncBackupTitle: "Guarda ahora tu clave secreta.",
+    ncBackupWarning:
+      "Esta clave solo existe en este dispositivo, cifrada con tu frase de contraseña. Si pierdes ambas, tus fondos se pierden — no podemos recuperarlos.",
+    passphraseLabel: "Frase de contraseña (cifra la clave en este dispositivo)",
+    passphrasePlaceholder: "Al menos 8 caracteres",
+    passphraseConfirmLabel: "Confirma la frase de contraseña",
+    passphraseTooShort: "La frase de contraseña debe tener al menos 8 caracteres.",
+    passphraseMismatch: "Las frases de contraseña no coinciden.",
+    ncBackupAck:
+      "He guardado mi clave secreta en un lugar seguro. Entiendo que no se puede recuperar.",
+    ncSaving: "Guardando…",
+    ncCreateBtn: "Crear wallet",
+
+    // --- Multicadena: selector de configuración + gestión ---
+    chainRequired: "Obligatoria — la cadena de trading",
+    chainOptional: "Opcional",
+    chainConfigured: "Configurado",
+    chainNotSetUp: "Sin configurar",
+    chainContinue: "Continuar",
+    chainStellarDesc: "Atrium opera en Stellar. Este wallet es obligatorio.",
+    chainsTitle: "Cadenas",
+    removeChainBtn: "Eliminar",
+    removeChainAria: "Eliminar el wallet de {chain}",
+    removeChainTitle: "¿Eliminar el wallet de {chain}?",
+    removeChainBody: "Esto elimina tu wallet de {chain} ({address}) de tu cuenta de Atrium.",
+    removeChainDeviceKey:
+      "La clave cifrada guardada en este dispositivo también se elimina. Asegúrate de tener una copia de la clave secreta si quieres volver a usar este wallet.",
+    removeChainConfirm: "Eliminar wallet",
+
+    // --- Solana (solo no custodial) ---
+    solChainDesc:
+      "Recibe y guarda SOL junto a tu wallet de Stellar. Solo no custodial — la clave nunca sale de tu dispositivo.",
+    solCreateCard: "Crear un wallet de Solana en este dispositivo",
+    solCreateCardDesc: "Generado y cifrado en tu dispositivo — solo guardamos la dirección.",
+    solImportCard: "Importar un wallet de Solana",
+    solImportCardDesc:
+      "Pega la clave secreta Base58 que exporta tu wallet (p. ej. Phantom). Se queda en este dispositivo.",
+    solCreateTitle: "Crear un wallet de Solana",
+    solImportTitle: "Importar un wallet de Solana",
+    solAddressLabel: "Dirección de Solana",
+    solSecretLabel: "Clave secreta (Base58)",
+    solSecretInputLabel: "Clave secreta de Solana (Base58)",
+    solSecretPlaceholder: "Secreto Base58 (64 bytes) o seed de 32 bytes",
+    solImportInvalid:
+      "Esto no parece una clave secreta de Solana válida — pega el secreto Base58 que exporta tu wallet (64 bytes) o una seed de 32 bytes.",
   },
 };
