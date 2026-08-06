@@ -6,11 +6,13 @@ import {
   bootstrapCI,
   detectPlateau,
   evaluateReadiness,
+  requiredResamplesFor,
   trailingConfirmationRun,
   DEFAULT_READINESS_CONFIG,
   type ArmIterationResult,
   type ReadinessConfig,
 } from "./readiness";
+import { sidakAlpha } from "./stats";
 
 const KEY: EvalArmKey = { arm: "rsi-meanrev", venue: "stellar-sdex" };
 
@@ -138,8 +140,45 @@ describe("adjustedConfidenceLevel", () => {
     expect(l5).toBeGreaterThan(l2);
   });
 
-  it("clamps below 1 so the bootstrap tail never degenerates", () => {
-    expect(adjustedConfidenceLevel(0.95, 1_000_000)).toBeLessThanOrEqual(0.995);
+  it("keeps tightening past 10 variants — the correction never saturates", () => {
+    // Review 2026-08-04 (eval-honesty P1): the old 0.995 clamp meant a
+    // 10,000-variant search was corrected as if only ~10 were tried, so a
+    // noise winner from a wide sweep could pass. The bar must keep biting.
+    const l10 = adjustedConfidenceLevel(0.95, 10);
+    const l10k = adjustedConfidenceLevel(0.95, 10_000);
+    expect(l10).toBeGreaterThan(0.99);
+    // The old clamp pinned everything at 0.995; a 10k-variant sweep must now
+    // land far beyond it, and strictly tighter than the 10-variant bar.
+    expect(l10k).toBeGreaterThan(0.995);
+    expect(l10k).toBeGreaterThan(l10);
+    expect(l10k).toBeLessThan(1);
+  });
+
+  it("matches stats.ts's Šidák correction exactly (one shared bar)", () => {
+    for (const variants of [1, 2, 10, 500]) {
+      expect(adjustedConfidenceLevel(0.95, variants)).toBeCloseTo(
+        1 - sidakAlpha(0.05, variants),
+        12,
+      );
+    }
+  });
+});
+
+describe("bootstrapCI — resamples scale to the level, else fail closed", () => {
+  it("auto-raises resamples so a tight level's tail is a real order statistic", () => {
+    const repeated = [...PATTERN, ...PATTERN, ...PATTERN, ...PATTERN];
+    const tight = bootstrapCI(repeated, 0.999, 1_000)!; // 1k would floor the tail index to 0
+    expect(tight).not.toBeNull();
+    expect(tight.resamples).toBeGreaterThan(1_000);
+    expect(tight.resamples).toBeGreaterThanOrEqual(requiredResamplesFor(0.999));
+  });
+
+  it("returns null (NOT significant) when no feasible resample count resolves the level", () => {
+    // A million-variant search corrects to a level far beyond what a bootstrap
+    // can resolve. The honest answer is "cannot establish significance", never
+    // a degenerate CI that happens to look positive.
+    const level = adjustedConfidenceLevel(0.95, 1_000_000);
+    expect(bootstrapCI(PATTERN, level, 10_000)).toBeNull();
   });
 });
 

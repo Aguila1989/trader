@@ -152,6 +152,22 @@ export interface StrategyIntent {
   targetPrice: number;
   /** Price that invalidates the thesis (quote per base) — the stop level. */
   invalidationPrice: number;
+  /**
+   * TRUE when this intent CLOSES/reduces an existing position rather than
+   * opening new risk (e.g. funding-carry buying back a short it holds).
+   *
+   * Why it must exist: without it, "buy to close a short" and "open a new
+   * long" are indistinguishable — synthesis.ts would fuse an exit into a
+   * fresh directional open, and a downstream executor would ADD risk when the
+   * signal meant "flatten". Any arm that emits a close MUST set this, and any
+   * consumer (fusion, executor) MUST honor it. Absent/false = opens risk.
+   * (Review 2026-08-04, strategy-arms P1.)
+   *
+   * TODO(wiring): the live executor must translate this to the venue's
+   * reduce-only flag (Hyperliquid `r: true`) once the orchestrator routes
+   * StrategyIntents — until then no executor consumes intents at all.
+   */
+  reduceOnly?: boolean;
   /** Plain-language explanation, for logs/audit (mirrors StrategySignal.reason). */
   rationale: string;
 }

@@ -1,3 +1,4 @@
+import { sidakAlpha } from "./stats";
 import { armKeyOf, type ArmAttribution, type EvalArmKey } from "./types";
 
 /**
@@ -189,19 +190,38 @@ export function adjustedConfidenceLevel(
   baseLevel: number,
   variantsTried: number,
 ): number {
-  const baseAlpha = 1 - baseLevel;
-  const n = Math.max(1, variantsTried);
-  const adjustedAlpha = baseAlpha / n;
-  // TODO(review 2026-08-04, eval-honesty P1): this 0.995 clamp saturates the
-  // multiple-comparisons correction — beyond ~10 variants the bar stops
-  // tightening, so a thousands-of-variants automated search is under-corrected
-  // and a noise winner can reach "ready". Fix by scaling the bootstrap resample
-  // count with the level (or a BCa/analytic tail) so the correction keeps
-  // biting, and UNIFY with stats.ts (whose Šidák path has no clamp, so the two
-  // honesty layers disagree at high variant counts). Deliberately not rushed
-  // here — a wrong stats change makes honesty worse; do it with a known-answer
-  // test before the eval loop is ever run.
-  return Math.min(1 - adjustedAlpha, 0.995);
+  // UNIFIED with src/eval/stats.ts: both honesty layers now use the same Šidák
+  // correction, so they can never disagree on the bar. NOT clamped — a clamp
+  // saturated the penalty (beyond ~10 variants the bar stopped tightening, so
+  // a thousands-of-variants search was corrected as if it were ten, and a
+  // noise winner could reach "ready"). The bootstrap tail is kept
+  // non-degenerate by SCALING RESAMPLES to the level instead (see
+  // bootstrapCI), and when the required level is beyond what feasible compute
+  // can resolve we return "not significant" rather than silently testing at a
+  // weaker bar than advertised. (Review 2026-08-04, eval-honesty P1.)
+  return 1 - sidakAlpha(1 - baseLevel, variantsTried);
+}
+
+/**
+ * Minimum number of resamples that must fall in EACH tail for the percentile
+ * to be a real order statistic rather than "the single most extreme resample
+ * mean" (which is noise, not a calibrated bound).
+ */
+const MIN_TAIL_RESAMPLES = 20;
+
+/**
+ * Hard ceiling on bootstrap resamples. A level tight enough to need more than
+ * this cannot be honestly resolved by this method at realistic sample sizes —
+ * bootstrapCI returns null there, which reads downstream as NOT significant
+ * (fail closed), never as a pass.
+ */
+const MAX_RESAMPLES = 200_000;
+
+/** Resamples actually needed so `level`'s tail index doesn't degenerate to 0. */
+export function requiredResamplesFor(level: number): number {
+  const tail = (1 - level) / 2;
+  if (!(tail > 0)) return Number.POSITIVE_INFINITY;
+  return Math.ceil(MIN_TAIL_RESAMPLES / tail);
 }
 
 export interface BootstrapCI {
@@ -226,21 +246,35 @@ export function bootstrapCI(
 ): BootstrapCI | null {
   const n = returns.length;
   if (n < 2) return null;
+  // Scale the resample count to the LEVEL so the tail percentile stays a real
+  // order statistic. Without this, a heavily-corrected level floors the tail
+  // index to 0 and the "CI bound" degenerates into the single most extreme
+  // resample mean. If even MAX_RESAMPLES can't resolve the level, we cannot
+  // honestly test at this bar: return null, which every caller reads as NOT
+  // significant (fail closed). (Review 2026-08-04, eval-honesty P1.)
+  const needed = requiredResamplesFor(level);
+  if (!Number.isFinite(needed) || needed > MAX_RESAMPLES) return null;
+  const effectiveResamples = Math.min(
+    MAX_RESAMPLES,
+    Math.max(resamples, needed),
+  );
   const rng = mulberry32(0x9e3779b9);
-  const means = new Array<number>(resamples);
-  for (let b = 0; b < resamples; b++) {
+  const means = new Array<number>(effectiveResamples);
+  for (let b = 0; b < effectiveResamples; b++) {
     let sum = 0;
     for (let i = 0; i < n; i++) sum += returns[Math.floor(rng() * n)]!;
     means[b] = sum / n;
   }
   means.sort((a, b) => a - b);
   const tail = (1 - level) / 2;
-  const lowerR = means[Math.max(0, Math.floor(tail * resamples))]!;
+  const lowerR = means[Math.max(0, Math.floor(tail * effectiveResamples))]!;
   const upperR =
-    means[Math.min(resamples - 1, Math.ceil((1 - tail) * resamples) - 1)]!;
+    means[
+      Math.min(effectiveResamples - 1, Math.ceil((1 - tail) * effectiveResamples) - 1)
+    ]!;
   return {
     level,
-    resamples,
+    resamples: effectiveResamples,
     lowerR: round(lowerR),
     upperR: round(upperR),
     excludesZero: lowerR > 0 || upperR < 0,

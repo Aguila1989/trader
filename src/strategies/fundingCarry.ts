@@ -141,6 +141,9 @@ export function makeFundingCarryArm(params: FundingCarryParams = DEFAULT_FUNDING
               confidence: 70,
               targetPrice: entry,
               invalidationPrice: entry,
+              // This CLOSES the held position - it must never be read as a
+              // fresh directional open (see StrategyIntent.reduceOnly).
+              reduceOnly: true,
               rationale: reason,
             },
           ];

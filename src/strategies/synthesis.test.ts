@@ -181,6 +181,37 @@ describe("synthesis - agreement fuses to one intent", () => {
   });
 });
 
+describe("synthesis - an EXIT is never fused into a fresh open (reduceOnly)", () => {
+  // Regression for the review's P1. Setup: on hyperliquid, funding-carry HOLDS
+  // a short and funding has flipped, so it emits "buy to CLOSE". Without the
+  // reduceOnly carve-out synthesis saw a unanimous "buy" and sized a brand-new
+  // LONG off quote balance - adding risk when the signal meant "flatten".
+  const heldShortFlipped = (): StrategyContext =>
+    baseCtx({
+      chain: "hyperliquid",
+      // rate < 0 = shorts PAY longs, so the held short no longer earns -> exit.
+      funding: { rate: -0.001, intervalHours: 1, asOf: ctxTime() },
+      inventory: {
+        netBaseQty: -50, // short 50
+        avgEntryPrice: 100,
+        availableQuoteBalance: 100_000,
+        availableBaseBalance: 0, // flat perp account
+      },
+    });
+
+  it("passes the close through as reduceOnly instead of opening a new position", async () => {
+    const out = await synthesisArm.propose(heldShortFlipped());
+    expect(out).toHaveLength(1);
+    const intent = out[0]!;
+    expect(intent.reduceOnly).toBe(true);
+    expect(intent.side).toBe("buy"); // buying back the short
+    // The give-away of the old bug: a fresh long would be sized off the
+    // 100k quote balance, not capped at the 50 units actually held.
+    expect(intent.size).toBe(50);
+    expect(intent.armId).toBe(SYNTHESIS_ARM_ID);
+  });
+});
+
 describe("synthesis - conflict is a veto", () => {
   it("stands aside when sub-arms propose opposite sides", async () => {
     const ctx = baseCtx({

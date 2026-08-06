@@ -99,6 +99,17 @@ export function makeSynthesisArm(params: SynthesisParams = DEFAULT_SYNTHESIS_PAR
       const fired = await collectFired(ctx);
       if (fired.length === 0) return [];
 
+      // EXIT intents are not opinions about direction - they are "flatten this
+      // position". Fusing one as a fresh directional open would ADD risk when
+      // a sub-arm asked to remove it (e.g. funding-carry buying back a short
+      // reads as a unanimous "buy"). Pass them through untouched, ahead of any
+      // fusion, and never let them vote on a new entry.
+      // (Review 2026-08-04, strategy-arms P1.)
+      const exits = fired.filter((f) => f.intent.reduceOnly === true);
+      if (exits.length > 0) {
+        return exits.map((e) => ({ ...e.intent, armId: SYNTHESIS_ARM_ID }));
+      }
+
       const sides = new Set<TradeSide>(fired.map((f) => f.intent.side));
       // Unconditional veto #2: the sub-arms disagree on direction. Standing
       // aside (rather than picking a "winner") is the whole point - this
