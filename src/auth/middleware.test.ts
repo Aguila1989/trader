@@ -1,11 +1,17 @@
-import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterEach } from "vitest";
 import type { Request, Response } from "express";
 import { config } from "../config";
 import { signJwt } from "./jwt";
 import { JWT_COOKIE } from "./cookies";
-import { currentUserId, resetCurrentUserId } from "../users/context";
+import { currentUserId, resetCurrentUserId, DEFAULT_USER_ID } from "../users/context";
 import * as store from "./store";
-import { requireAuth, authRateLimiter, PUBLIC_API_PATHS, __resetAuthRateLimiterForTests } from "./middleware";
+import {
+  requireAuth,
+  authRateLimiter,
+  resolveOptionalUserId,
+  PUBLIC_API_PATHS,
+  __resetAuthRateLimiterForTests,
+} from "./middleware";
 
 function mockRes() {
   const res = {
@@ -148,6 +154,85 @@ describe("auth/middleware - requireAuth gate", () => {
     await Promise.all(done);
     expect(seen.A).toBe("userA");
     expect(seen.B).toBe("userB");
+  });
+});
+
+describe("auth/middleware - SINGLE_USER personal mode bypass", () => {
+  beforeEach(() => {
+    config.singleUser = true;
+    store.__resetMemoryStoreForTests();
+    resetCurrentUserId();
+  });
+  // CRITICAL: never leak the flag into the other describes/files - flag off
+  // must stay the byte-for-byte-unchanged product behavior everywhere else.
+  afterEach(() => {
+    config.singleUser = false;
+  });
+
+  function req(path: string, cookie?: string): Request {
+    return { path, headers: cookie ? { cookie } : {}, ip: "1.2.3.4" } as unknown as Request;
+  }
+
+  it("passes a protected route with NO cookie and scopes it to the operator", async () => {
+    const res = mockRes();
+    let seenUser = "";
+    let called = false;
+    await requireAuth(req("/api/state"), res, () => {
+      called = true;
+      seenUser = currentUserId(); // read inside the runWithUserId scope
+    });
+    expect(called).toBe(true);
+    expect(seenUser).toBe(DEFAULT_USER_ID);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("scopes PUBLIC paths too (academy preview writes are attributed, not anonymous)", async () => {
+    let seenUser = "";
+    await requireAuth(req("/api/health"), mockRes(), () => {
+      seenUser = currentUserId();
+    });
+    expect(seenUser).toBe(DEFAULT_USER_ID);
+  });
+
+  it("works without any JWT_SECRET configured (no sessions exist)", async () => {
+    const saved = config.jwtSecret;
+    config.jwtSecret = "";
+    try {
+      let called = false;
+      await requireAuth(req("/api/state"), mockRes(), () => { called = true; });
+      expect(called).toBe(true);
+    } finally {
+      config.jwtSecret = saved;
+    }
+  });
+
+  it("resolveOptionalUserId returns the operator instead of anonymous", async () => {
+    expect(await resolveOptionalUserId(req("/api/academy/progress/c1-l1"))).toBe(DEFAULT_USER_ID);
+  });
+
+  it("IGNORES a stale/foreign JWT cookie and still scopes to the operator", async () => {
+    // "No sessions exist" is the mode's semantics: a leftover cookie from a
+    // previous multi-tenant deployment must not re-scope the request.
+    await store.createSession({ id: "jStale", userId: "user-42", expiresAt: Date.now() + 60_000 });
+    const jwt = signJwt({ sub: "user-42", email: "a@b.com", jti: "jStale" }, config.jwtSecret, {
+      nowSec: Math.floor(Date.now() / 1000),
+      ttlSec: 3600,
+    });
+    let seenUser = "";
+    await requireAuth(req("/api/state", `${JWT_COOKIE}=${jwt}`), mockRes(), () => {
+      seenUser = currentUserId();
+    });
+    expect(seenUser).toBe(DEFAULT_USER_ID);
+  });
+
+  it("flag OFF restores the default-deny gate unchanged (401 with no cookie)", async () => {
+    config.singleUser = false;
+    const res = mockRes();
+    let called = false;
+    await requireAuth(req("/api/state"), res, () => { called = true; });
+    expect(called).toBe(false);
+    expect(res.statusCode).toBe(401);
+    expect(await resolveOptionalUserId(req("/api/academy/progress/c1-l1"))).toBe(null);
   });
 });
 

@@ -5,8 +5,8 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { config, isReadOnly, dbConfigured, smtpConfigured } from "./config";
-import { checkOrigin, isLoopbackBind } from "./csrf";
-import { createAuthRouter } from "./auth/routes";
+import { checkOrigin, isLoopbackBind, isAllowedSingleUserHost } from "./csrf";
+import { createAuthRouter, createSingleUserAuthRouter } from "./auth/routes";
 import { requireAuth, authRateLimiter } from "./auth/middleware";
 import { createGeneralRateLimiter } from "./rateLimit";
 import { initSentry, setupSentryErrorHandler } from "./monitoring/sentry";
@@ -177,8 +177,9 @@ app.use((_req, res, next) => {
 });
 if (webBuilt) app.use(express.static(webDist));
 // Feature 4: /admin static app, mounted BEFORE the SPA fallback so its assets
-// and shell never fall through to the main app's index.html.
-if (adminBuilt) app.use("/admin", express.static(adminDist));
+// and shell never fall through to the main app's index.html. SINGLE_USER mode
+// has no admin backoffice at all - the shell is simply not served.
+if (!config.singleUser && adminBuilt) app.use("/admin", express.static(adminDist));
 
 // CSRF guard: reject cross-site STATE-CHANGING requests to /api. The decision
 // lives in ./csrf (checkOrigin) so it can be unit-tested without booting the
@@ -247,13 +248,36 @@ app.use(authRateLimiter);
 // TOTP + its own aud-scoped 4h cookie). Mounted BEFORE requireAuth: admin
 // requests never touch the user gate, never get a user context, and the two
 // session types can't cross (both verifiers enforce the aud claim). The CSRF
-// origin guard + per-IP rate limiter above still apply.
-app.use("/api/admin", createAdminRouter());
+// origin guard + per-IP rate limiter above still apply. SINGLE_USER mode has
+// no admin backoffice - the router is not mounted (requests 404).
+if (!config.singleUser) app.use("/api/admin", createAdminRouter());
+// SINGLE_USER anti-DNS-rebinding gate. The CSRF guard above allows every GET
+// (in the product build an unauthenticated GET simply answers 401), but with
+// the auth gate bypassed a rebound hostname would let any site the operator
+// visits READ the whole /api surface from their browser. Validate the Host
+// header against the fixed, server-controlled host set. See csrf.ts.
+if (config.singleUser) {
+  app.use((req, res, next) => {
+    if (!req.path.toLowerCase().startsWith("/api")) return next();
+    if (
+      isAllowedSingleUserHost(req.headers.host, {
+        port: config.port,
+        trustedOrigins: config.trustedOrigins,
+        bindHost: config.bindHost,
+      })
+    ) {
+      return next();
+    }
+    res.status(403).json({ error: "forbidden", code: "BAD_HOST" });
+  });
+}
 app.use(requireAuth);
 // Blanket per-user rate limit on state-changing /api/* routes (money-moving
 // routes get a tighter budget); see src/rateLimit.ts for the design + exemptions.
 app.use(createGeneralRateLimiter());
-app.use("/api/auth", createAuthRouter());
+// SINGLE_USER mode mounts a two-endpoint stub (/me + /onboarding - what the
+// SPA still calls) instead of the full login/register/2FA/reset surface.
+app.use("/api/auth", config.singleUser ? createSingleUserAuthRouter() : createAuthRouter());
 // Feature 3: wallet management. Mounted AFTER requireAuth so every route runs in
 // the authenticated user's scope (currentUserId()); absent from PUBLIC_API_PATHS.
 app.use("/api/wallet", createWalletRouter());
@@ -262,31 +286,35 @@ app.use("/api/wallet", createWalletRouter());
 // user's scope; the WEBHOOK is public (in PUBLIC_API_PATHS - Stripe has no
 // session cookie) and is authenticated by its HMAC signature over the raw body
 // captured above. Any verification/shape failure answers 400; a handler error
-// answers 500 so Stripe retries the delivery.
-app.use("/api/billing", createBillingRouter());
+// answers 500 so Stripe retries the delivery. SINGLE_USER mode has no billing:
+// neither the router nor the webhook is mounted (the SPA's billing store
+// self-answers premium=true under its own flag and never calls these).
+if (!config.singleUser) app.use("/api/billing", createBillingRouter());
 
 // Academy progress (2026-07 Feature 1): per-user lesson progress + quiz
 // attempts. Mounted AFTER requireAuth so every route runs in the authenticated
 // user's scope; only the preview lesson's PATCH path is public (see
 // PUBLIC_API_PATHS) and that handler resolves an optional session itself.
 app.use("/api/academy", createAcademyRouter());
-app.post("/api/billing/webhook", async (req, res) => {
-  if (!stripeConfigured()) {
-    res.status(503).json({ error: "billing not configured" });
-    return;
-  }
-  try {
-    const status = await processWebhookDelivery(
-      (req as RawBodyRequest).rawBody,
-      req.header("stripe-signature"),
-      config.billing.stripeWebhookSecret,
-    );
-    res.status(status).json({ received: status === 200 });
-  } catch (err) {
-    store.log("error", `Stripe webhook processing failed: ${(err as Error).message}`);
-    res.status(500).json({ error: "webhook processing failed" });
-  }
-});
+if (!config.singleUser) {
+  app.post("/api/billing/webhook", async (req, res) => {
+    if (!stripeConfigured()) {
+      res.status(503).json({ error: "billing not configured" });
+      return;
+    }
+    try {
+      const status = await processWebhookDelivery(
+        (req as RawBodyRequest).rawBody,
+        req.header("stripe-signature"),
+        config.billing.stripeWebhookSecret,
+      );
+      res.status(status).json({ received: status === 200 });
+    } catch (err) {
+      store.log("error", `Stripe webhook processing failed: ${(err as Error).message}`);
+      res.status(500).json({ error: "webhook processing failed" });
+    }
+  });
+}
 
 app.get("/api/health", async (_req, res) => {
   // Real liveness/readiness check for uptime monitors: DB down => 503 so a
@@ -2248,7 +2276,8 @@ app.post("/api/provider", (req, res) => {
 
 // Feature 4: /admin/* falls back to the ADMIN shell (registered before the
 // main SPA fallback so an admin deep link never serves the user app).
-if (adminBuilt) {
+// SINGLE_USER mode: no admin shell; /admin falls through to the main SPA 404.
+if (!config.singleUser && adminBuilt) {
   app.use((req, res, next) => {
     if (req.method !== "GET" || !req.path.toLowerCase().startsWith("/admin")) {
       next();
@@ -2349,20 +2378,24 @@ async function start(): Promise<void> {
   // app's entry point, so unlike the optional DASHBOARD_TOKEN this is mandatory:
   // refuse to start without it, and refuse a weak one (HS256 wants a high-entropy
   // key). Generate with `openssl rand -hex 32`.
-  if (config.jwtSecret === "") {
-    console.error(
-      "\n  REFUSING TO START: JWT_SECRET is not set.\n" +
-        "  The login system signs session tokens with it. Set a long random secret,\n" +
-        "  e.g. `openssl rand -hex 32`, in your environment / .env.\n",
-    );
-    process.exit(1);
-  }
-  if (config.jwtSecret.length < 32) {
-    console.error(
-      "\n  REFUSING TO START: JWT_SECRET is too short (< 32 chars).\n" +
-        "  A short secret is brute-forceable. Use `openssl rand -hex 32` (64 hex chars).\n",
-    );
-    process.exit(1);
+  // SINGLE_USER mode issues no sessions at all (the auth gate is bypassed), so
+  // the JWT secret is not required there.
+  if (!config.singleUser) {
+    if (config.jwtSecret === "") {
+      console.error(
+        "\n  REFUSING TO START: JWT_SECRET is not set.\n" +
+          "  The login system signs session tokens with it. Set a long random secret,\n" +
+          "  e.g. `openssl rand -hex 32`, in your environment / .env.\n",
+      );
+      process.exit(1);
+    }
+    if (config.jwtSecret.length < 32) {
+      console.error(
+        "\n  REFUSING TO START: JWT_SECRET is too short (< 32 chars).\n" +
+          "  A short secret is brute-forceable. Use `openssl rand -hex 32` (64 hex chars).\n",
+      );
+      process.exit(1);
+    }
   }
 
   // Feature 3: each user's Stellar secret is encrypted at rest (AES-256-GCM)
@@ -2390,8 +2423,10 @@ async function start(): Promise<void> {
   // AUDIT-010 in src/auth/service.ts: the raw reset link is deliberately not
   // logged on mainnet). Without SMTP configured, a user who loses their password
   // can NEVER recover their account (and their funded wallet). Refuse to boot in
-  // that state unless the operator explicitly opts out.
+  // that state unless the operator explicitly opts out. SINGLE_USER mode has no
+  // accounts to recover (no login, no reset emails), so the guard is moot there.
   if (
+    !config.singleUser &&
     config.network === "public" &&
     !smtpConfigured &&
     !config.allowMainnetWithoutSmtp
@@ -2485,6 +2520,27 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 
+  // SINGLE_USER + a non-loopback bind is CATEGORICALLY more dangerous than the
+  // TLS question SEC-14 asks above: with the auth gate bypassed there is no
+  // login at all, so ANYONE who can reach the port drives the live custodial
+  // wallet (pay / swap / import a key / arm trading / kill switch). TLS in
+  // front (ALLOW_INSECURE_EXPOSED) encrypts that access - it does not
+  // authenticate it. Refuse, unless the operator sets the separate, explicitly
+  // named acknowledgement AND has put their own authentication (reverse-proxy
+  // basic-auth / VPN / mTLS / SSO) in front.
+  if (config.singleUser && !isLoopbackBind(config.bindHost) && !config.singleUserAllowExposed) {
+    console.error(
+      `\n  REFUSING TO START: SINGLE_USER=true with BIND_HOST=${config.bindHost} (not loopback).\n` +
+        "  Single-user mode has NO login: every request is executed as the operator,\n" +
+        "  so an exposed port hands anyone who can reach it full control of the live\n" +
+        "  wallet (send, swap, import a key, arm trading). TLS alone does NOT fix this.\n" +
+        "  Bind to 127.0.0.1 (recommended - use an SSH tunnel for remote access), or,\n" +
+        "  if you have put your OWN authentication in front (VPN / proxy auth / mTLS),\n" +
+        "  set SINGLE_USER_ALLOW_EXPOSED=true to acknowledge.\n",
+    );
+    process.exit(1);
+  }
+
   app.listen(config.port, config.bindHost, () => {
     store.log(
       "info",
@@ -2540,7 +2596,11 @@ async function start(): Promise<void> {
     console.log("\n  Atrium");
     console.log(`  Dashboard: http://${host}:${config.port}`);
     console.log(`  Bind host: ${config.bindHost}${config.bindHost === "0.0.0.0" ? " (EXPOSED on all interfaces)" : " (loopback only)"}`);
-    console.log(`  API auth:  ON (login required - JWT session cookie)`);
+    console.log(
+      config.singleUser
+        ? `  API auth:  OFF - SINGLE_USER personal mode (every request runs as the operator account; auth/admin/billing not mounted)`
+        : `  API auth:  ON (login required - JWT session cookie)`,
+    );
     console.log(`  Network:   ${config.network}`);
     console.log(
       `  AI:        ${aiProviderId()} / ${aiModel()}${aiReady() ? "" : " (NO API KEY - analyst disabled)"}`,

@@ -21,7 +21,12 @@ import {
   type CookieOptions,
 } from "./cookies";
 import { verifyJwt } from "./jwt";
-import { currentUserId } from "../users/context";
+import {
+  currentUserId,
+  DEFAULT_USER_ID,
+  DEFAULT_USER_EMAIL,
+  DEFAULT_USER_DISPLAY_NAME,
+} from "../users/context";
 import * as auth from "./service";
 
 const cookieBase = (): Pick<CookieOptions, "secure" | "sameSite" | "path"> => ({
@@ -318,6 +323,59 @@ export function createAuthRouter(): Router {
     }
     clearSessionCookies(res);
     res.json({ ok: true });
+  });
+
+  return router;
+}
+
+/**
+ * PERSONAL SOLO-OPERATOR MODE (SINGLE_USER=true): the tiny /api/auth surface
+ * the SPA still expects when the full auth router is not mounted. Exactly two
+ * endpoints - GET /me (the onboarding tour + Account tab identity read; the
+ * SPA's authApi.account() hits the same path) and POST /onboarding (persist
+ * the tour's completed flag). Nothing else: no login/register/2FA/reset/
+ * delete-account surface exists in single-user mode. Every request already
+ * runs as DEFAULT_USER_ID via the requireAuth bypass, so currentUserId() is
+ * the operator. Resilient to a missing Users row (in-memory boot): falls back
+ * to the DEFAULT-account constants with onboardingCompleted=true so the tour
+ * never nags when nothing can persist.
+ */
+export function createSingleUserAuthRouter(): Router {
+  const router = Router();
+
+  router.get("/me", async (_req: Request, res: Response) => {
+    const user = await auth.getAccount(currentUserId()).catch(() => null);
+    res.json({
+      user: user
+        ? {
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName ?? null,
+            createdAt: user.createdAt,
+            onboardingCompleted: user.onboardingCompleted,
+            totpEnabled: user.totpEnabled,
+          }
+        : {
+            id: DEFAULT_USER_ID,
+            email: DEFAULT_USER_EMAIL,
+            displayName: DEFAULT_USER_DISPLAY_NAME,
+            createdAt: null,
+            onboardingCompleted: true,
+            totpEnabled: false,
+          },
+    });
+  });
+
+  router.post("/onboarding", async (req: Request, res: Response) => {
+    const completed = req.body?.completed;
+    if (typeof completed !== "boolean") {
+      res.status(400).json({ error: "completed must be a boolean" });
+      return;
+    }
+    // Best-effort: without a Users row (in-memory boot) there is nothing to
+    // persist - still answer ok so the tour UI never errors for the operator.
+    await auth.setOnboardingCompleted(currentUserId(), completed).catch(() => {});
+    res.json({ ok: true, onboardingCompleted: completed });
   });
 
   return router;

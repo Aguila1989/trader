@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkOrigin, isLoopbackBind, type OriginPolicy } from "./csrf";
+import { checkOrigin, isLoopbackBind, isAllowedSingleUserHost, type OriginPolicy } from "./csrf";
 
 // Server bound to loopback (the default + dev): loopback origins are trusted.
 const loopback: OriginPolicy = { port: 3000, trustedOrigins: [], trustLoopback: true, trustProxy: false };
@@ -115,5 +115,49 @@ describe("isLoopbackBind", () => {
 
   it("treats 0.0.0.0 and routable IPs as exposed", () => {
     for (const h of ["0.0.0.0", "192.168.1.10", "10.0.0.5"]) expect(isLoopbackBind(h)).toBe(false);
+  });
+});
+
+describe("isAllowedSingleUserHost (SINGLE_USER anti-DNS-rebinding)", () => {
+  const policy = { port: 3000, trustedOrigins: [] as string[], bindHost: "127.0.0.1" };
+
+  it("allows the loopback hosts the operator actually browses to", () => {
+    for (const h of ["127.0.0.1:3000", "localhost:3000", "[::1]:3000", "LOCALHOST:3000"]) {
+      expect(isAllowedSingleUserHost(h, policy)).toBe(true);
+    }
+  });
+
+  it("allows port-less loopback (a proxy on :80/:443 strips the port)", () => {
+    expect(isAllowedSingleUserHost("localhost", policy)).toBe(true);
+    expect(isAllowedSingleUserHost("127.0.0.1", policy)).toBe(true);
+  });
+
+  it("REJECTS a rebound attacker hostname (the whole point)", () => {
+    for (const h of ["evil.com", "evil.com:3000", "rebind.attacker.test:3000"]) {
+      expect(isAllowedSingleUserHost(h, policy)).toBe(false);
+    }
+  });
+
+  it("rejects a loopback host on the WRONG port", () => {
+    expect(isAllowedSingleUserHost("127.0.0.1:9999", policy)).toBe(false);
+  });
+
+  it("allows a missing Host header (not a browser, so not a rebinding victim)", () => {
+    expect(isAllowedSingleUserHost(undefined, policy)).toBe(true);
+    expect(isAllowedSingleUserHost("", policy)).toBe(true);
+  });
+
+  it("allows the configured bind host and explicit trusted origins", () => {
+    const p = { port: 3000, trustedOrigins: ["trader.example.com"], bindHost: "192.168.1.10" };
+    expect(isAllowedSingleUserHost("192.168.1.10:3000", p)).toBe(true);
+    expect(isAllowedSingleUserHost("192.168.1.10", p)).toBe(true);
+    expect(isAllowedSingleUserHost("trader.example.com", p)).toBe(true);
+    expect(isAllowedSingleUserHost("evil.com", p)).toBe(false);
+  });
+
+  it("never self-authorizes from a wildcard bind", () => {
+    const p = { port: 3000, trustedOrigins: [] as string[], bindHost: "0.0.0.0" };
+    expect(isAllowedSingleUserHost("evil.com:3000", p)).toBe(false);
+    expect(isAllowedSingleUserHost("0.0.0.0:3000", p)).toBe(false);
   });
 });

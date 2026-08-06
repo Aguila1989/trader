@@ -96,6 +96,25 @@ export const config = {
   networkPassphrase: network === "public" ? Networks.PUBLIC : Networks.TESTNET,
 
   /**
+   * PERSONAL SOLO-OPERATOR MODE (2026-08). One flag collapses the app to a
+   * single custodial operator: every API request runs as the DEFAULT account
+   * (no login / JWT), the SaaS surfaces (auth/admin/billing routers) are not
+   * mounted, premium gating is always satisfied, platform fees are disabled,
+   * and the env STELLAR_SECRET wallet is reported as the operator wallet.
+   * OFF by default - the multi-tenant product build is byte-for-byte
+   * unchanged when false. Frontend counterpart: VITE_SINGLE_USER (web/.env).
+   */
+  singleUser: bool("SINGLE_USER", false),
+  /**
+   * Acknowledge running SINGLE_USER mode on a NON-loopback bind. Single-user has
+   * no login, so an exposed port = anyone on the network can drive the live
+   * wallet; TLS encrypts that access but does not authenticate it. The server
+   * refuses to start in that posture unless this is explicitly true AND the
+   * operator has put their own auth (VPN / proxy auth / mTLS) in front.
+   */
+  singleUserAllowExposed: bool("SINGLE_USER_ALLOW_EXPOSED", false),
+
+  /**
    * Chains the platform offers for wallets (multi-chain, 2026-07). Always
    * includes "stellar" (the trading chain); a user can additionally hold e.g.
    * a Solana wallet when CHAINS=stellar,solana. Trading remains Stellar-only —
@@ -109,6 +128,21 @@ export const config = {
    * endpoints are rate-limited; set this before enabling Solana for real users.
    */
   solanaRpcUrl: env("SOLANA_RPC_URL"),
+  /**
+   * Hyperliquid REST base URL (Phase 2, personal build). Blank = the network
+   * default (mainnet `api.hyperliquid.xyz` / testnet). Only read by the
+   * Hyperliquid ChainAdapter (src/chains/hyperliquid), which is NOT registered
+   * for trading yet — see the plan's testnet gate.
+   */
+  hyperliquidApiUrl: env("HYPERLIQUID_API_URL"),
+  /**
+   * Hyperliquid custodial signing key (secp256k1 hex) for the DEFAULT operator
+   * account, mirroring STELLAR_SECRET. **Blank (default) = HL trading DISABLED**:
+   * the adapter throws "wallet not configured", so it is fully inert until set.
+   * ⚠️ TESTNET FIRST — the HL wire format carries constants that are unverified
+   * offline (see src/chains/hyperliquid TODO(hl-verify)). NEVER commit it.
+   */
+  hyperliquidPrivateKey: env("HYPERLIQUID_PRIVATE_KEY"),
 
   // The env-based hot wallet. Since Feature 3 (per-user wallets) this is the
   // SEED/FALLBACK wallet of the DEFAULT account only: it keeps the single-

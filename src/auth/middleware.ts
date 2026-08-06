@@ -20,7 +20,7 @@ import { config } from "../config";
 import { verifyJwt } from "./jwt";
 import { isSessionActive } from "./store";
 import { JWT_COOKIE, parseCookies } from "./cookies";
-import { runWithUserId } from "../users/context";
+import { runWithUserId, DEFAULT_USER_ID } from "../users/context";
 import { PREVIEW_PROGRESS_PUBLIC_PATH } from "../academy/constants";
 
 /**
@@ -62,6 +62,16 @@ const nowSec = (): number => Math.floor(Date.now() / 1000);
  * the JWT eventually expires).
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // PERSONAL SOLO-OPERATOR MODE (SINGLE_USER=true): no sessions exist - scope
+  // EVERY request (public paths included, so e.g. the academy preview PATCH is
+  // attributed instead of anonymous) to the default operator account. This is
+  // the same DEFAULT_USER_ID the background loops (autopilot/monitor) already
+  // run as, so all data lands on one account. The product build (flag off) is
+  // untouched below this line.
+  if (config.singleUser) {
+    runWithUserId(DEFAULT_USER_ID, () => next());
+    return;
+  }
   // Express routes are case-INSENSITIVE by default, so `/API/state` matches the
   // `/api/state` handler. Normalize the path here too, otherwise a case-varied
   // path would slip past a case-sensitive `startsWith("/api")` as "non-API" and
@@ -118,6 +128,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
  * data would land on the operator's account.
  */
 export async function resolveOptionalUserId(req: Request): Promise<string | null> {
+  // PERSONAL SOLO-OPERATOR MODE: the operator IS the only user that exists, so
+  // "anonymous" has no meaning - attribute the (public) preview-progress write
+  // to the default account. This is a deliberately distinct, flag-gated branch:
+  // the multi-user invariant below ("NEVER fall back to DEFAULT_USER_ID") stays
+  // word-for-word intact when the flag is off.
+  if (config.singleUser) return DEFAULT_USER_ID;
   const token = parseCookies(req.headers.cookie)[JWT_COOKIE] ?? "";
   if (!token) return null;
   const verdict = verifyJwt(token, config.jwtSecret, nowSec());

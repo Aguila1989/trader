@@ -98,3 +98,44 @@ export function checkOrigin(
 export function isLoopbackBind(bindHost: string): boolean {
   return /^(127\.0\.0\.1|localhost|::1)$/i.test(bindHost.trim());
 }
+
+/**
+ * SINGLE_USER anti-DNS-rebinding check.
+ *
+ * The CSRF guard above only inspects state-changing verbs with an Origin
+ * header, so it deliberately allows every GET. In the multi-tenant product
+ * that is fine: an unauthenticated GET answers 401. In SINGLE_USER mode there
+ * is no auth gate, so a site the operator visits could rebind its hostname to
+ * 127.0.0.1 and have the browser READ every /api GET (portfolio, balances,
+ * trade history, wallet public keys, settings, the SSE stream).
+ *
+ * A rebound request carries the ATTACKER's hostname in `Host` (that's what the
+ * browser asked for), so validating Host against the same fixed, SERVER-
+ * controlled host set the CSRF policy uses kills the attack without
+ * reintroducing authentication. A missing Host (HTTP/1.0 / raw socket) is not
+ * a browser, so it cannot be a rebinding victim - allowed, exactly like the
+ * no-Origin carve-out above.
+ */
+export function isAllowedSingleUserHost(
+  hostHeader: string | undefined,
+  policy: { port: number; trustedOrigins: string[]; bindHost: string },
+): boolean {
+  const host = (hostHeader ?? "").trim().toLowerCase();
+  if (host === "") return true; // not a browser
+  const allowed = new Set<string>([
+    `127.0.0.1:${policy.port}`,
+    `localhost:${policy.port}`,
+    `[::1]:${policy.port}`,
+    // Port-less forms (a proxy on :80/:443 strips it).
+    "127.0.0.1",
+    "localhost",
+    "[::1]",
+  ]);
+  const bind = (policy.bindHost ?? "").trim().toLowerCase();
+  if (bind !== "" && bind !== "0.0.0.0" && bind !== "::") {
+    allowed.add(bind);
+    allowed.add(`${bind}:${policy.port}`);
+  }
+  for (const h of policy.trustedOrigins) allowed.add(h.trim().toLowerCase());
+  return allowed.has(host);
+}

@@ -18,6 +18,7 @@ import { session, logout } from "../auth/session";
 import { useAcademyStore } from "../academy/progress";
 import { uiState, toggleSidebar, openSettings } from "../ui/uiState";
 import { billingState } from "../billing/premium";
+import { SINGLE_USER } from "../singleUser";
 
 // Fix 3: Help & support. The address is a shared placeholder constant — see
 // web/src/support.ts (operator MUST replace before launch; tracked in DEPLOY.md).
@@ -195,7 +196,8 @@ async function doLogout(): Promise<void> {
         </span>
         <span class="sb-label">{{ t("settingsModal.gear") }}</span>
       </button>
-      <button class="sb-link sb-logout" type="button" :title="t('sidebar.logout')" @click="doLogout">
+      <!-- SINGLE_USER personal build: there is no session to log out of. -->
+      <button v-if="!SINGLE_USER" class="sb-link sb-logout" type="button" :title="t('sidebar.logout')" @click="doLogout">
         <span class="sb-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M14 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h6a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M10 12h10M20 12l-3-3M20 12l-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </span>

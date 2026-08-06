@@ -82,6 +82,12 @@ export async function upsertPlatformSetting(key: string, value: string): Promise
 let platformHaltedCache: boolean | null = null;
 
 export async function isPlatformHalted(): Promise<boolean> {
+  // SINGLE_USER personal mode: the platform emergency-stop is an ADMIN control,
+  // and single-user mode has no admin backoffice to release it. A stale
+  // "halted" row inherited from a prior multi-tenant deployment would block all
+  // AI execution forever with no reachable off-switch. The operator's own kill
+  // switch (store.killSwitch) remains the halt control in this mode.
+  if (config.singleUser) return false;
   if (platformHaltedCache != null) return platformHaltedCache;
   if (!dbReady()) {
     platformHaltedCache = false;

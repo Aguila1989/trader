@@ -10,6 +10,7 @@ import { useTraderStore } from "./stores/trader";
 import { setUnauthorizedHandler } from "./api";
 import { isLoggedIn, session, refreshSession } from "./auth/session";
 import { resetWalletState } from "./wallet/walletState";
+import { SINGLE_USER } from "./singleUser";
 import ErrorBoundary from "./components/ErrorBoundary.vue";
 
 const store = useTraderStore();
@@ -27,6 +28,17 @@ onMounted(() => {
   // Any 401 from the API means the session is gone/expired: drop local session
   // state and send the user to login (unless they're already on a public screen).
   setUnauthorizedHandler(() => {
+    // SINGLE_USER personal build: there is no /login route to bounce to (the
+    // auth routes aren't registered), so a redirect would land the operator on
+    // the 404 page with no way back. A 401 here can only mean the SPA was built
+    // with VITE_SINGLE_USER while the backend runs WITHOUT SINGLE_USER - a
+    // configuration mismatch. Log it loudly and stay put.
+    if (SINGLE_USER) {
+      console.error(
+        "[auth] Got 401 in SINGLE_USER mode: the frontend was built with VITE_SINGLE_USER=true but the backend is NOT running with SINGLE_USER=true. Set both (or neither) and restart.",
+      );
+      return;
+    }
     refreshSession();
     const name = String(router.currentRoute.value.name ?? "");
     if (name !== "login" && name !== "register" && name !== "academy") {

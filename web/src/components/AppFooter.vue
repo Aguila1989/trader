@@ -6,6 +6,7 @@
 // Contact is the shared support mailbox (web/src/support.ts).
 import { useI18n } from "vue-i18n";
 import { SUPPORT_EMAIL } from "../support";
+import { SINGLE_USER } from "../singleUser";
 
 const { t } = useI18n();
 </script>
@@ -14,12 +15,16 @@ const { t } = useI18n();
   <footer class="app-footer">
     <nav class="af-nav" aria-label="footer">
       <router-link class="af-link" to="/academy">{{ t("footer.academy") }}</router-link>
-      <span class="af-sep" aria-hidden="true">·</span>
-      <span class="af-link af-disabled" :title="t('footer.comingSoon')">{{ t("footer.privacy") }}</span>
-      <span class="af-sep" aria-hidden="true">·</span>
-      <router-link class="af-link" to="/transparency">{{ t("footer.transparency") }}</router-link>
-      <span class="af-sep" aria-hidden="true">·</span>
-      <a class="af-link" :href="`mailto:${SUPPORT_EMAIL}`">{{ t("footer.contact") }}</a>
+      <!-- SINGLE_USER personal build: no legal/fee-transparency/support surface
+           (no public audience) - only the Academy link remains. -->
+      <template v-if="!SINGLE_USER">
+        <span class="af-sep" aria-hidden="true">·</span>
+        <span class="af-link af-disabled" :title="t('footer.comingSoon')">{{ t("footer.privacy") }}</span>
+        <span class="af-sep" aria-hidden="true">·</span>
+        <router-link class="af-link" to="/transparency">{{ t("footer.transparency") }}</router-link>
+        <span class="af-sep" aria-hidden="true">·</span>
+        <a class="af-link" :href="`mailto:${SUPPORT_EMAIL}`">{{ t("footer.contact") }}</a>
+      </template>
     </nav>
   </footer>
 </template>

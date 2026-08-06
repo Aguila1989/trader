@@ -5,6 +5,7 @@
 // pricing page's "your tier" strip.
 import { reactive } from "vue";
 import { billingApi, type BillingStatus } from "../api";
+import { SINGLE_USER } from "../singleUser";
 
 export const billingState = reactive<{
   loaded: boolean;
@@ -33,6 +34,16 @@ export const billingState = reactive<{
 let inflight: Promise<void> | null = null;
 
 export async function loadBillingStatus(force = false): Promise<void> {
+  // SINGLE_USER personal build: there is no billing surface at all (the backend
+  // doesn't even mount /api/billing). The solo operator is always entitled and
+  // never pays platform fees - answer locally, never call the API.
+  if (SINGLE_USER) {
+    billingState.billingConfigured = false;
+    billingState.feesEnabled = false;
+    billingState.isPremium = true;
+    billingState.loaded = true;
+    return;
+  }
   if (billingState.loaded && !force) return;
   if (inflight) return inflight;
   inflight = (async () => {

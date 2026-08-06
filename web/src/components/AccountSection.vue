@@ -14,6 +14,7 @@ import { dateTimeStr } from "../format";
 import { closeSettings } from "../ui/uiState";
 import { startTour } from "../onboarding/tour";
 import { billingState, loadBillingStatus } from "../billing/premium";
+import { SINGLE_USER } from "../singleUser";
 import AiKeySection from "./AiKeySection.vue";
 import TwoFactorSection from "./TwoFactorSection.vue";
 import PasswordStrengthMeter from "./auth/PasswordStrengthMeter.vue";
@@ -184,58 +185,63 @@ async function deleteAccount(): Promise<void> {
   <section class="panel acct">
     <h2>{{ t("account.title") }}</h2>
 
-    <dl class="acct-meta">
-      <div class="acct-row">
-        <dt>{{ t("account.email") }}</dt>
-        <dd class="mono">{{ email }}</dd>
-      </div>
-      <div v-if="createdAt" class="acct-row">
-        <dt>{{ t("account.created") }}</dt>
-        <dd>{{ dateTimeStr(createdAt) }}</dd>
-      </div>
-    </dl>
+    <!-- SINGLE_USER personal build: no account identity, billing/subscription,
+         2FA, password or GDPR surface exists (there is no account system). The
+         Account tab keeps only the AI key section + the tutorial restart. -->
+    <template v-if="!SINGLE_USER">
+      <dl class="acct-meta">
+        <div class="acct-row">
+          <dt>{{ t("account.email") }}</dt>
+          <dd class="mono">{{ email }}</dd>
+        </div>
+        <div v-if="createdAt" class="acct-row">
+          <dt>{{ t("account.created") }}</dt>
+          <dd>{{ dateTimeStr(createdAt) }}</dd>
+        </div>
+      </dl>
 
-    <h3 class="acct-sub">{{ t("billing.account.title") }}</h3>
-    <dl class="acct-meta">
-      <div class="acct-row">
-        <dt>{{ t("billing.account.status") }}</dt>
-        <dd>
-          <strong :class="billingState.isPremium ? 'pos' : ''">
-            {{ billingState.isPremium ? t("billing.account.premium") : t("billing.account.free") }}
-          </strong>
-          <span v-if="billingState.subscriptionStatus" class="muted"> · {{ billingState.subscriptionStatus }}</span>
-        </dd>
-      </div>
-      <div v-if="billingState.isPremium && billingState.subscriptionEnd" class="acct-row">
-        <dt>{{ t("billing.account.nextBilling") }}</dt>
-        <dd>{{ dateTimeStr(billingState.subscriptionEnd) }}</dd>
-      </div>
-    </dl>
-    <p v-if="billingState.subscriptionStatus === 'past_due'" class="violations" role="alert">
-      {{ t("billing.account.pastDue") }}
-    </p>
-    <p v-else-if="billingState.subscriptionStatus === 'canceled'" class="acct-hint">
-      {{ t("billing.account.canceled") }}
-    </p>
-    <button v-if="!billingState.isPremium" class="btn acct-restart" type="button" @click="goPricing">
-      {{ t("billing.account.upgrade") }}
-    </button>
-    <button
-      v-else
-      class="btn acct-restart"
-      type="button"
-      :disabled="openingPortal"
-      @click="openPortal"
-    >
-      {{ openingPortal ? t("billing.account.opening") : t("billing.account.manage") }}
-    </button>
-    <p v-if="portalError" class="violations" role="alert">{{ portalError }}</p>
+      <h3 class="acct-sub">{{ t("billing.account.title") }}</h3>
+      <dl class="acct-meta">
+        <div class="acct-row">
+          <dt>{{ t("billing.account.status") }}</dt>
+          <dd>
+            <strong :class="billingState.isPremium ? 'pos' : ''">
+              {{ billingState.isPremium ? t("billing.account.premium") : t("billing.account.free") }}
+            </strong>
+            <span v-if="billingState.subscriptionStatus" class="muted"> · {{ billingState.subscriptionStatus }}</span>
+          </dd>
+        </div>
+        <div v-if="billingState.isPremium && billingState.subscriptionEnd" class="acct-row">
+          <dt>{{ t("billing.account.nextBilling") }}</dt>
+          <dd>{{ dateTimeStr(billingState.subscriptionEnd) }}</dd>
+        </div>
+      </dl>
+      <p v-if="billingState.subscriptionStatus === 'past_due'" class="violations" role="alert">
+        {{ t("billing.account.pastDue") }}
+      </p>
+      <p v-else-if="billingState.subscriptionStatus === 'canceled'" class="acct-hint">
+        {{ t("billing.account.canceled") }}
+      </p>
+      <button v-if="!billingState.isPremium" class="btn acct-restart" type="button" @click="goPricing">
+        {{ t("billing.account.upgrade") }}
+      </button>
+      <button
+        v-else
+        class="btn acct-restart"
+        type="button"
+        :disabled="openingPortal"
+        @click="openPortal"
+      >
+        {{ openingPortal ? t("billing.account.opening") : t("billing.account.manage") }}
+      </button>
+      <p v-if="portalError" class="violations" role="alert">{{ portalError }}</p>
+    </template>
 
     <!-- Feature 3: bring-your-own AI API key (premium AI trading). -->
     <AiKeySection />
 
     <!-- End-user 2FA (TOTP), opt-in. -->
-    <TwoFactorSection />
+    <TwoFactorSection v-if="!SINGLE_USER" />
 
     <h3 class="acct-sub">{{ t("onboarding.account.title") }}</h3>
     <p class="acct-hint">{{ t("onboarding.account.hint") }}</p>
@@ -244,6 +250,7 @@ async function deleteAccount(): Promise<void> {
       {{ t("onboarding.account.restart") }}
     </button>
 
+    <template v-if="!SINGLE_USER">
     <h3 class="acct-sub">{{ t("account.changePassword") }}</h3>
     <form class="acct-form" @submit.prevent="submit">
       <label class="acct-field">
@@ -305,6 +312,7 @@ async function deleteAccount(): Promise<void> {
         </button>
       </form>
     </div>
+    </template>
   </section>
 </template>
 

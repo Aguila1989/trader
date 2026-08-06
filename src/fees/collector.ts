@@ -46,6 +46,11 @@ let seeded = false;
 /** The configured platform fee wallet, or null = fee system disabled.
  *  Seeds dbo.PlatformSettings from PLATFORM_FEE_WALLET exactly once. */
 export async function feeWalletAddress(): Promise<string | null> {
+  // SINGLE_USER personal mode: the operator IS the only user - a platform fee
+  // would just charge himself (at the worst rate, since the DEFAULT account has
+  // no premium row). Hard-disable fees regardless of any stale/inherited
+  // dbo.PlatformSettings fee wallet from a prior multi-tenant deployment.
+  if (config.singleUser) return null;
   if (feeWalletCache && Date.now() - feeWalletCache.at < 60_000) return feeWalletCache.value;
   if (!dbReady()) return null;
   let addr = await billing.getPlatformSetting(billing.PLATFORM_KEYS.feeWalletAddress);

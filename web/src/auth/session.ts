@@ -9,6 +9,7 @@
 // server-side against the signed JWT + the session record.
 import { reactive } from "vue";
 import { authApi } from "../api";
+import { SINGLE_USER, OPERATOR_USER } from "../singleUser";
 
 const SESSION_COOKIE = "trader_session";
 
@@ -52,6 +53,10 @@ function decodeMarker(): Marker | null {
  * logged out.
  */
 export function isLoggedIn(): boolean {
+  // SINGLE_USER personal build: the operator is permanently "logged in" - no
+  // session cookie exists (the backend's auth gate is bypassed under its own
+  // SINGLE_USER flag).
+  if (SINGLE_USER) return true;
   const m = decodeMarker();
   return !!m && m.exp * 1000 > Date.now();
 }
@@ -63,6 +68,11 @@ export const session = reactive<{ user: { email: string; displayName: string | n
 
 /** Re-read the marker cookie into the reactive `session` (after login/logout). */
 export function refreshSession(): void {
+  // SINGLE_USER personal build: synthesize the operator (no cookie exists).
+  if (SINGLE_USER) {
+    session.user = { email: OPERATOR_USER.email, displayName: OPERATOR_USER.displayName };
+    return;
+  }
   const m = decodeMarker();
   session.user = m && m.exp * 1000 > Date.now() ? { email: m.email, displayName: m.displayName } : null;
 }

@@ -12,7 +12,7 @@
 // Auth is determined CLIENT-SIDE from the readable session marker cookie (no API
 // call). The server still enforces auth on every API call; this guard is only UX
 // (a strict allowlist via meta.public — anything else requires a session).
-import { createRouter, createWebHashHistory } from "vue-router";
+import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 import AppLayout from "../components/AppLayout.vue";
 import TradingPage from "../components/TradingPage.vue";
 import ReceiveSendPage from "../components/ReceiveSendPage.vue";
@@ -21,32 +21,42 @@ import LogsPage from "../components/LogsPage.vue";
 import { isLoggedIn } from "../auth/session";
 import { isPreviewLesson } from "../academy/preview";
 import { loadWalletStatus, walletState } from "../wallet/walletState";
+import { SINGLE_USER } from "../singleUser";
 import i18n from "../i18n";
+
+// SINGLE_USER personal build: the auth screens (login/register/forgot/reset/
+// verify) don't exist - there is no account system. Registered only for the
+// multi-tenant product build; in single-user any such URL hits the 404 page.
+const authRoutes: RouteRecordRaw[] = SINGLE_USER
+  ? []
+  : [
+      { path: "/login", name: "login", component: () => import("../components/auth/LoginPage.vue"), meta: { public: true } },
+      { path: "/register", name: "register", component: () => import("../components/auth/RegisterPage.vue"), meta: { public: true } },
+      {
+        path: "/forgot-password",
+        name: "forgot-password",
+        component: () => import("../components/auth/ForgotPasswordPage.vue"),
+        meta: { public: true },
+      },
+      {
+        path: "/reset-password",
+        name: "reset-password",
+        component: () => import("../components/auth/ResetPasswordPage.vue"),
+        meta: { public: true },
+      },
+      {
+        path: "/verify-email",
+        name: "verify-email",
+        component: () => import("../components/auth/VerifyEmailPage.vue"),
+        meta: { public: true },
+      },
+    ];
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     // --- standalone (no shell) ---
-    { path: "/login", name: "login", component: () => import("../components/auth/LoginPage.vue"), meta: { public: true } },
-    { path: "/register", name: "register", component: () => import("../components/auth/RegisterPage.vue"), meta: { public: true } },
-    {
-      path: "/forgot-password",
-      name: "forgot-password",
-      component: () => import("../components/auth/ForgotPasswordPage.vue"),
-      meta: { public: true },
-    },
-    {
-      path: "/reset-password",
-      name: "reset-password",
-      component: () => import("../components/auth/ResetPasswordPage.vue"),
-      meta: { public: true },
-    },
-    {
-      path: "/verify-email",
-      name: "verify-email",
-      component: () => import("../components/auth/VerifyEmailPage.vue"),
-      meta: { public: true },
-    },
+    ...authRoutes,
     // The forced wallet-setup gate: logged-in, but intentionally no sidebar/header
     // so the user completes setup first.
     {
@@ -67,14 +77,21 @@ const router = createRouter({
         { path: "receive", name: "receive", component: ReceiveSendPage, meta: { hidePortfolio: true } },
         { path: "pending", name: "pending", component: PendingPaymentsPage, meta: { hidePortfolio: true } },
         { path: "logs", name: "logs", component: LogsPage, meta: { hidePortfolio: true } },
-        {
-          // Feature 2: pricing/upgrade page. Sidebar but no trading header
-          // (standalone, like the Academy) - it's a marketing/decision page.
-          path: "pricing",
-          name: "pricing",
-          component: () => import("../components/PricingPage.vue"),
-          meta: { standalone: true },
-        },
+        // SINGLE_USER: no pricing/upgrade page (nothing to buy) - see below for
+        // the same treatment of /transparency (a public fee explainer with no
+        // audience in a personal build).
+        ...(SINGLE_USER
+          ? []
+          : [
+              {
+                // Feature 2: pricing/upgrade page. Sidebar but no trading header
+                // (standalone, like the Academy) - it's a marketing/decision page.
+                path: "pricing",
+                name: "pricing",
+                component: () => import("../components/PricingPage.vue"),
+                meta: { standalone: true },
+              } satisfies RouteRecordRaw,
+            ]),
         {
           // Feature 5: token detail as a real, bookmarkable page (order book +
           // chart + stop-loss form). ":assetIssuer" is "native" for XLM.
@@ -84,14 +101,18 @@ const router = createRouter({
           component: () => import("../components/TokenDetailPage.vue"),
           meta: { standalone: true },
         },
-        {
-          // Feature 2 (2026-07): the "how we earn" page. Fully public and
-          // standalone like the Academy (no trading header, no session needed).
-          path: "transparency",
-          name: "transparency",
-          component: () => import("../components/TransparencyPage.vue"),
-          meta: { public: true, standalone: true },
-        },
+        ...(SINGLE_USER
+          ? []
+          : [
+              {
+                // Feature 2 (2026-07): the "how we earn" page. Fully public and
+                // standalone like the Academy (no trading header, no session needed).
+                path: "transparency",
+                name: "transparency",
+                component: () => import("../components/TransparencyPage.vue"),
+                meta: { public: true, standalone: true },
+              } satisfies RouteRecordRaw,
+            ]),
         {
           path: "academy",
           name: "academy",

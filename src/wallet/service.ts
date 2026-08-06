@@ -24,7 +24,7 @@ import {
 } from "../db/repo";
 import { adapterFor, enabledChains, isChainEnabled, isChainSupported } from "../chains/registry";
 import type { ChainAccountProbe } from "../chains/types";
-import { currentUserId } from "../users/context";
+import { currentUserId, DEFAULT_USER_ID } from "../users/context";
 import {
   findUserById,
   findCredentialByEmail,
@@ -102,6 +102,16 @@ export async function createWallet(): Promise<{ publicKey: string; secret: strin
   ensureWalletStorage();
   if (await getActiveWallet()) {
     throw new WalletError(409, "You already have an active wallet. Replace it via import instead.");
+  }
+  // SINGLE_USER: the env-key wallet reports as configured (getWalletStatus) but
+  // is not a dbo.Wallets row, so the check above would miss it and a new wallet
+  // would silently supersede the env key mid-flight (leaving its resting offers
+  // orphaned). Treat it as an existing active wallet.
+  if (config.singleUser && singleUserEnvPublicKey()) {
+    throw new WalletError(
+      409,
+      "Your wallet comes from the server configuration (STELLAR_SECRET in .env). Change it there and restart rather than creating a second wallet.",
+    );
   }
   const kp = Keypair.random();
   // Supersede any earlier un-confirmed pending wallet so they don't accumulate.
@@ -193,6 +203,13 @@ export async function importWallet(
   ensureWalletStorage();
   if (await getActiveWallet()) {
     throw new WalletError(409, "You already have an active wallet. Replace it instead.");
+  }
+  // SINGLE_USER: same env-wallet shadowing guard as createWallet above.
+  if (config.singleUser && singleUserEnvPublicKey()) {
+    throw new WalletError(
+      409,
+      "Your wallet comes from the server configuration (STELLAR_SECRET in .env). Change it there and restart rather than importing a second wallet.",
+    );
   }
   const kp = keypairFromSecret(secret);
   const probe = await probeAccount(kp.publicKey());
@@ -341,6 +358,28 @@ export async function getWalletsOverview(): Promise<ChainWalletView[]> {
         view.canRemove = false;
         view.removeBlockReason = "Balance check unavailable right now — try again in a moment.";
       }
+    } else if (chainId === "stellar" && config.singleUser) {
+      // SINGLE_USER personal mode: surface the env-key operator wallet (see
+      // getWalletStatus) so /status and /chains agree. It comes from the
+      // server .env, so it is never removable through the UI.
+      const envPub = singleUserEnvPublicKey();
+      if (envPub) {
+        view.configured = true;
+        view.publicKey = envPub;
+        view.clientSigned = false;
+        view.explorerUrl = adapter.explorerAccountUrl(envPub);
+        view.canRemove = false;
+        view.removeBlockReason =
+          "This wallet comes from the server configuration (STELLAR_SECRET in .env) and cannot be removed here.";
+        try {
+          const probe = await adapter.probeAccount(envPub);
+          view.funded = probe.exists;
+          view.nativeBalance = probe.nativeBalance;
+          view.hasAnyFunds = probe.hasAnyFunds;
+        } catch {
+          // Best-effort: the row still shows as configured without balances.
+        }
+      }
     }
     out.push(view);
   }
@@ -390,10 +429,53 @@ export async function removeChainWallet(
   return { chain: chainId, removed: true };
 }
 
+/**
+ * SINGLE_USER personal mode: the operator wallet from the env (STELLAR_PUBLIC,
+ * or derived from STELLAR_SECRET) - the exact mirror of the DEFAULT-account
+ * fallback in stellar/keyProvider.ts (envFallbackPublic), duplicated here so
+ * the wallet-status layer stays decoupled from the signing layer. Returns null
+ * for any non-default user or when no env key is configured.
+ */
+function singleUserEnvPublicKey(): string | null {
+  if (currentUserId() !== DEFAULT_USER_ID) return null;
+  if (config.stellarPublic) return config.stellarPublic;
+  if (config.stellarSecret) {
+    try {
+      return Keypair.fromSecret(config.stellarSecret).publicKey();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** Wallet status for the header chip + setup gate. Never returns a secret. */
 export async function getWalletStatus(): Promise<WalletStatusView> {
   const wallet = await getActiveWallet();
-  if (!wallet) return { configured: false, network: config.network, nonCustodial: config.nonCustodial };
+  if (!wallet) {
+    // SINGLE_USER personal mode: the env-key operator wallet (the same
+    // DEFAULT-account fallback the signing path already honors - see
+    // stellar/keyProvider.ts) is reported as the active custodial wallet so
+    // the setup gate / header chip / Receive page work without a dbo.Wallets
+    // row. No env key configured -> fall through to the normal setup flow.
+    const envPub = config.singleUser ? singleUserEnvPublicKey() : null;
+    if (envPub) {
+      const probe = await probeAccount(envPub).catch(() => ({
+        funded: false,
+        xlmBalance: null,
+      }));
+      return {
+        configured: true,
+        network: config.network,
+        publicKey: envPub,
+        funded: probe.funded,
+        xlmBalance: probe.xlmBalance,
+        clientSigned: false,
+        nonCustodial: config.nonCustodial,
+      };
+    }
+    return { configured: false, network: config.network, nonCustodial: config.nonCustodial };
+  }
   const probe = await probeAccount(wallet.publicKey).catch(() => ({
     funded: false,
     xlmBalance: null,
@@ -420,6 +502,12 @@ export async function getWalletStatus(): Promise<WalletStatusView> {
  * and each attempt lands in dbo.LoginAttempts with a wallet-replace reason.
  */
 async function verifyCurrentPassword(password: unknown): Promise<void> {
+  // SINGLE_USER personal mode: no account password exists (the operator row is
+  // bootstrapped with an empty hash and there is no login), so the re-auth gate
+  // would be an unsatisfiable dead-end AND every attempt would rack up the
+  // lockout counter. Skip it: request authenticity in this mode rests on the
+  // CSRF origin gate + the loopback/acknowledged-exposure bind guard.
+  if (config.singleUser) return;
   const pw = String(password ?? "");
   if (!pw) throw new WalletError(400, "Your password is required to replace your wallet.");
   const user = await findUserById(currentUserId());
@@ -472,6 +560,15 @@ export async function replaceWallet(
   await verifyCurrentPassword(password);
   const old = await getActiveWallet();
   if (!old) {
+    // SINGLE_USER: the env-key wallet is not a dbo.Wallets row, so there is
+    // nothing to "replace" - importing simply creates the first DB wallet,
+    // which then supersedes the env key (see importWallet's note).
+    if (config.singleUser && singleUserEnvPublicKey()) {
+      throw new WalletError(
+        409,
+        "Your wallet comes from the server configuration (STELLAR_SECRET in .env). Change it there and restart, or use import to store a new wallet in the database instead.",
+      );
+    }
     throw new WalletError(409, "No active wallet to replace. Use create or import instead.");
   }
   const kp = keypairFromSecret(secret);
