@@ -195,6 +195,16 @@ export interface ArmAttribution {
   modeledTrades: number;
   /** Open (unrealized) base position still on the book, by pair. */
   openLots: OpenLotSummary[];
+  /**
+   * Total mark-to-last-observed-price PnL on everything still OPEN, in XLM.
+   *
+   * Honesty guard: `netPnlXlm` and `netReturns` count only CLOSED trades, so
+   * an arm that realizes its winners promptly and lets its losers ride looks
+   * profitable while sitting on a large unrealized loss. This surfaces that,
+   * and readiness refuses "ready" when it is big relative to the realized
+   * edge. (Review 2026-08-04, eval-honesty P2.)
+   */
+  unrealizedPnlXlm: number;
 }
 
 export interface RegimeBreakdown {
@@ -209,6 +219,12 @@ export interface OpenLotSummary {
   /** Signed net base units still open (+ long, - short). */
   netQty: number;
   avgPrice: number;
+  /** Last price OBSERVED for this pair (the most recent fill's price) — the
+   *  only mark available to a fill-stream attributor. Absent when unknown. */
+  lastPrice?: number;
+  /** Mark-to-last-observed-price PnL on the still-open position, in XLM.
+   *  Absent when there is no mark. (Review 2026-08-04, eval-honesty P2.) */
+  unrealizedPnlXlm?: number;
 }
 
 /**

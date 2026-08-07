@@ -250,7 +250,12 @@ export function rebalancePlan(
     }
 
     const sized = Math.min(raw, cap);
-    if (sized < limits.minRebalanceXlm) continue;
+    // `sized <= 0` guards the dust case the minimum alone misses: with the cap
+    // resolved to 0 (rebalancing effectively disabled) AND minRebalanceXlm 0,
+    // the old check emitted a no-op {xlmValue: 0} intent that a consumer
+    // trusting a non-empty plan could act on or log as a real action.
+    // (Review 2026-08-04, phase31 P2.)
+    if (sized <= 0 || sized < limits.minRebalanceXlm) continue;
 
     intents.push({
       base: t.base,
@@ -293,7 +298,15 @@ export function explainPhantomSkips(
 ): string[] {
   return skips.map((skip) => {
     const label = `${displaySpec(skip.base)}/${displaySpec(skip.quote)}`;
-    const fundability = report.pairs.find((p) => p.base === skip.base && p.quote === skip.quote);
+    // Canonicalize BOTH sides, exactly as the rebalance-plan lookup below
+    // does. Matching this one on raw strings meant a caller that derived the
+    // skip from one path ("native") and the report from another ("XLM") never
+    // found the entry, so the "wallet CAN fund this now" de-escalation never
+    // fired and a stale PHANTOM message kept showing.
+    // (Review 2026-08-04, phase31 P2.)
+    const fundability = report.pairs.find(
+      (p) => normSpec(p.base) === normSpec(skip.base) && normSpec(p.quote) === normSpec(skip.quote),
+    );
     const stillPhantom = fundability
       ? skip.side === "buy"
         ? !fundability.canBuy

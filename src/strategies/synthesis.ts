@@ -138,8 +138,16 @@ export function makeSynthesisArm(params: SynthesisParams = DEFAULT_SYNTHESIS_PAR
       const entry = lead.intent.limitPrice;
       if (!(entry > 0)) return [];
 
+      // Sizing capacity is VENUE-dependent. On a quote-margined perp venue a
+      // flat account holds margin and ZERO base units, so sizing a short
+      // against base balance would always yield 0 and silently kill every
+      // short (the bug fixed in fundingCarry.ts). On a spot venue selling
+      // really does require holding the base. (Review 2026-08-04.)
+      const isPerpVenue = ctx.chain === "hyperliquid";
       const availableCapacity =
-        side === "buy" ? ctx.inventory.availableQuoteBalance : ctx.inventory.availableBaseBalance * entry;
+        isPerpVenue || side === "buy"
+          ? ctx.inventory.availableQuoteBalance
+          : ctx.inventory.availableBaseBalance * entry;
       const desiredNotional = lead.intent.size * entry * sizeMultiplier;
       const notional = Math.min(ctx.limits.maxNotionalQuote, availableCapacity, desiredNotional);
       if (!(notional > 0)) return [];

@@ -202,10 +202,14 @@ export function attributeArm(
   // handful of real round trips. So we aggregate every chunk a single fill
   // closes into one notional-weighted net return. (Review 2026-08-04, P0.)
   const roundTripReturns: number[] = [];
+  // Most recent observed price per pair - the only mark a fill-stream
+  // attributor has for valuing what is still OPEN (see unrealizedPnlXlm).
+  const lastPriceByPair = new Map<string, number>();
   const ordered = [...fills].sort(byTs);
 
   for (const fill of ordered) {
     const k = pairKey(fill.base, fill.quote);
+    if (fill.avgPrice > 0) lastPriceByPair.set(k, fill.avgPrice);
     let lots = byPair.get(k);
     if (!lots) {
       lots = [];
@@ -231,7 +235,7 @@ export function attributeArm(
     }
   }
 
-  return summarize(key, closedTrades, byPair, roundTripReturns);
+  return summarize(key, closedTrades, byPair, roundTripReturns, lastPriceByPair);
 }
 
 /** Split a mixed fill stream by arm×venue and attribute each independently. */
@@ -261,6 +265,7 @@ function summarize(
   trades: ClosedTrade[],
   byPair: Map<string, Lot[]>,
   roundTripReturns: number[],
+  lastPriceByPair: Map<string, number>,
 ): ArmAttribution {
   let wins = 0;
   let losses = 0;
@@ -332,6 +337,7 @@ function summarize(
   }
 
   const openLots: OpenLotSummary[] = [];
+  let unrealizedPnlXlm = 0;
   for (const [k, lots] of byPair) {
     const netQty = lots.reduce((s, l) => s + l.qty, 0);
     if (Math.abs(netQty) < EPS) continue;
@@ -341,12 +347,22 @@ function summarize(
         ? lots.reduce((s, l) => s + Math.abs(l.qty) * l.price, 0) / totAbs
         : 0;
     const [b = "", q = ""] = k.split("/");
-    openLots.push({
+    const lastPrice = lastPriceByPair.get(k);
+    const entry: OpenLotSummary = {
       base: b,
       quote: q,
       netQty: round7(netQty),
       avgPrice: round7(avgPrice),
-    });
+    };
+    if (lastPrice != null && lastPrice > 0 && avgPrice > 0) {
+      // Signed: a long marks up when price rises, a short when it falls.
+      const unrealizedQuote = (lastPrice - avgPrice) * netQty;
+      const inXlm = realizedToXlm(unrealizedQuote, b, q, lastPrice);
+      entry.lastPrice = round7(lastPrice);
+      entry.unrealizedPnlXlm = round7(inXlm);
+      unrealizedPnlXlm += inXlm;
+    }
+    openLots.push(entry);
   }
 
   return {
@@ -369,6 +385,7 @@ function summarize(
     byQuote,
     modeledTrades,
     openLots,
+    unrealizedPnlXlm: round7(unrealizedPnlXlm),
   };
 }
 

@@ -89,6 +89,26 @@ export function summaryStats(returns: readonly number[]): SummaryStats {
   };
 }
 
+/**
+ * Minimum resamples that must land in EACH tail for the percentile to be a
+ * real order statistic rather than "the single most extreme resample mean".
+ */
+const MIN_TAIL_RESAMPLES = 20;
+
+/**
+ * Hard ceiling on bootstrap resamples. A level tight enough to need more than
+ * this cannot be honestly resolved by this method at realistic sample sizes;
+ * bootstrapCI returns null there, which reads as NOT significant.
+ */
+export const MAX_RESAMPLES = 200_000;
+
+/** Resamples needed so `level`'s tail index doesn't degenerate to 0. */
+export function requiredResamplesFor(level: number): number {
+  const tail = (1 - level) / 2;
+  if (!(tail > 0)) return Number.POSITIVE_INFINITY;
+  return Math.ceil(MIN_TAIL_RESAMPLES / tail);
+}
+
 export interface ConfidenceInterval {
   level: number;
   resamples: number;
@@ -114,20 +134,31 @@ export function bootstrapCI(
 ): ConfidenceInterval | null {
   const n = returns.length;
   if (n < 2) return null;
+  // Scale resamples to the LEVEL so each tail keeps enough resamples to be a
+  // real order statistic. Without this, a heavily multiplicity-corrected level
+  // floors the tail index to 0 and the "bound" degenerates into the single
+  // most extreme resample mean - noise, not a calibrated 1-in-N bar. When even
+  // MAX_RESAMPLES can't resolve the level we return null, which every caller
+  // reads as NOT significant (fail closed) rather than a pass at a weaker bar
+  // than advertised. (Review 2026-08-04, eval-honesty P2.)
+  const needed = requiredResamplesFor(level);
+  if (!Number.isFinite(needed) || needed > MAX_RESAMPLES) return null;
+  const effectiveResamples = Math.min(MAX_RESAMPLES, Math.max(resamples, needed));
   const rng = mulberry32(seed);
-  const means = new Array<number>(resamples);
-  for (let b = 0; b < resamples; b++) {
+  const means = new Array<number>(effectiveResamples);
+  for (let b = 0; b < effectiveResamples; b++) {
     let sum = 0;
     for (let i = 0; i < n; i++) sum += returns[Math.floor(rng() * n)]!;
     means[b] = sum / n;
   }
   means.sort((a, b) => a - b);
   const tail = (1 - level) / 2;
-  const lower = means[Math.max(0, Math.floor(tail * resamples))]!;
-  const upper = means[Math.min(resamples - 1, Math.ceil((1 - tail) * resamples) - 1)]!;
+  const lower = means[Math.max(0, Math.floor(tail * effectiveResamples))]!;
+  const upper =
+    means[Math.min(effectiveResamples - 1, Math.ceil((1 - tail) * effectiveResamples) - 1)]!;
   return {
     level,
-    resamples,
+    resamples: effectiveResamples,
     lower: round(lower, 6),
     upper: round(upper, 6),
     excludesZero: lower > 0 || upper < 0,

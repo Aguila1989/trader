@@ -1,4 +1,4 @@
-import { sidakAlpha } from "./stats";
+import { sidakAlpha, requiredResamplesFor, bootstrapCI as statsBootstrapCI } from "./stats";
 import { armKeyOf, type ArmAttribution, type EvalArmKey } from "./types";
 
 /**
@@ -76,9 +76,12 @@ export interface ReadinessConfig {
   /** M: iterations over which "no material improvement" must hold to call it
    *  plateaued. */
   plateauWindow: number;
-  /** Minimum change in mean net return between consecutive iterations that
-   *  still counts as "materially improving" (i.e. NOT yet plateaued). */
-  materialImprovement: number;
+  /** Improvement between consecutive iterations that still counts as
+   *  "materially improving" (i.e. NOT yet plateaued), as a FRACTION of the
+   *  window's typical |mean net return| — a relative bar, because per-trade
+   *  returns are small fractions and an absolute one is either meaningless or
+   *  unreachable depending on the arm. 0.10 = "a 10% jump is still progress". */
+  materialImprovementFraction: number;
   /** Base two-sided confidence level for the edge-vs-zero CI, BEFORE the
    *  multiple-comparisons correction (0.95 matches the repo's existing
    *  backtest/metrics.ts + eval/types.ts DEFAULT_EVAL_CONFIG convention). */
@@ -95,6 +98,15 @@ export interface ReadinessConfig {
   minConsistentFraction: number;
   /** Bootstrap resamples for the significance recompute. */
   ciResamples: number;
+  /**
+   * Refuse "ready" when the arm's pooled UNREALIZED loss on still-open
+   * positions exceeds this multiple of its pooled realized net PnL.
+   *
+   * Closing winners promptly while letting losers ride makes the realized
+   * record (which is all `netReturns` sees) look like an edge. 1.0 = "an
+   * unrealized loss as large as everything you realized blocks ready".
+   */
+  maxUnrealizedLossRatio: number;
   /** Minimum INDEPENDENT round-trip observations (pooled across the
    *  confirmation tail) required before significance is even tested. The
    *  observations are one-per-closing-decision (see attribution.ts) precisely
@@ -107,13 +119,14 @@ export interface ReadinessConfig {
 export const DEFAULT_READINESS_CONFIG: ReadinessConfig = {
   minConsecutiveIterations: 5,
   plateauWindow: 3,
-  materialImprovement: 0.02,
+  materialImprovementFraction: 0.1,
   baseConfidenceLevel: 0.95,
   minTradesPerRegimeBucket: 5,
   minRegimesCovered: 2,
   minConsistentFraction: 0.6,
   ciResamples: 10_000,
   minIndependentTrades: 30,
+  maxUnrealizedLossRatio: 1,
 };
 
 export type Recommendation =
@@ -129,6 +142,9 @@ export interface ArmReadiness {
   regimeStable: boolean;
   consistent: boolean;
   plateaued: boolean;
+  /** False when a large unrealized loss on still-open positions makes the
+   *  realized record misleading (deferred-loser guard). */
+  unrealizedOk: boolean;
   reasons: string[];
 }
 
@@ -162,19 +178,28 @@ export function trailingConfirmationRun(
 /**
  * "No material improvement for M iterations." Walks the trailing `window`
  * consecutive-pair deltas of `scores` (already in iteration order) and
- * requires every one of them to be <= `materialImprovement`. Fewer than
+ * requires every one of them to be <= the scale-relative threshold. Fewer than
  * `window + 1` points is "not enough evidence to call it plateaued yet",
  * which correctly keeps a short history from being declared plateaued.
  */
 export function detectPlateau(
   scores: number[],
   window: number,
-  materialImprovement: number,
+  materialImprovementFraction: number,
 ): boolean {
   if (scores.length < window + 1) return false;
   const tail = scores.slice(scores.length - (window + 1));
+  // The threshold is RELATIVE to the typical magnitude of the scores in the
+  // window, not an absolute constant. Mean per-trade net returns are small
+  // fractions (~0.001-0.01), so the old absolute 0.02 was larger than the
+  // entire signal: every trail read as "plateaued" and gate #5 ("the edge has
+  // stopped improving") never fired. A tiny absolute floor keeps a
+  // hovering-near-zero trail from making the threshold vanish.
+  // (Review 2026-08-04, eval-honesty P2.)
+  const scale = tail.reduce((s, x) => s + Math.abs(x), 0) / tail.length;
+  const threshold = Math.max(PLATEAU_ABS_FLOOR, materialImprovementFraction * scale);
   for (let i = 1; i < tail.length; i++) {
-    if (tail[i]! - tail[i - 1]! > materialImprovement) return false;
+    if (tail[i]! - tail[i - 1]! > threshold) return false;
   }
   return true;
 }
@@ -207,22 +232,14 @@ export function adjustedConfidenceLevel(
  * to be a real order statistic rather than "the single most extreme resample
  * mean" (which is noise, not a calibrated bound).
  */
-const MIN_TAIL_RESAMPLES = 20;
+export { requiredResamplesFor };
 
 /**
- * Hard ceiling on bootstrap resamples. A level tight enough to need more than
- * this cannot be honestly resolved by this method at realistic sample sizes —
- * bootstrapCI returns null there, which reads downstream as NOT significant
- * (fail closed), never as a pass.
+ * Absolute floor under the relative plateau threshold, so a trail hovering at
+ * ~0 doesn't shrink the bar to nothing and call pure noise "still improving".
+ * One basis point of per-trade net return.
  */
-const MAX_RESAMPLES = 200_000;
-
-/** Resamples actually needed so `level`'s tail index doesn't degenerate to 0. */
-export function requiredResamplesFor(level: number): number {
-  const tail = (1 - level) / 2;
-  if (!(tail > 0)) return Number.POSITIVE_INFINITY;
-  return Math.ceil(MIN_TAIL_RESAMPLES / tail);
-}
+const PLATEAU_ABS_FLOOR = 1e-4;
 
 export interface BootstrapCI {
   level: number;
@@ -244,40 +261,18 @@ export function bootstrapCI(
   level: number,
   resamples: number,
 ): BootstrapCI | null {
-  const n = returns.length;
-  if (n < 2) return null;
-  // Scale the resample count to the LEVEL so the tail percentile stays a real
-  // order statistic. Without this, a heavily-corrected level floors the tail
-  // index to 0 and the "CI bound" degenerates into the single most extreme
-  // resample mean. If even MAX_RESAMPLES can't resolve the level, we cannot
-  // honestly test at this bar: return null, which every caller reads as NOT
-  // significant (fail closed). (Review 2026-08-04, eval-honesty P1.)
-  const needed = requiredResamplesFor(level);
-  if (!Number.isFinite(needed) || needed > MAX_RESAMPLES) return null;
-  const effectiveResamples = Math.min(
-    MAX_RESAMPLES,
-    Math.max(resamples, needed),
-  );
-  const rng = mulberry32(0x9e3779b9);
-  const means = new Array<number>(effectiveResamples);
-  for (let b = 0; b < effectiveResamples; b++) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += returns[Math.floor(rng() * n)]!;
-    means[b] = sum / n;
-  }
-  means.sort((a, b) => a - b);
-  const tail = (1 - level) / 2;
-  const lowerR = means[Math.max(0, Math.floor(tail * effectiveResamples))]!;
-  const upperR =
-    means[
-      Math.min(effectiveResamples - 1, Math.ceil((1 - tail) * effectiveResamples) - 1)
-    ]!;
+  // Delegates to stats.ts - ONE bootstrap implementation for both honesty
+  // layers (this file's banner asked for exactly that once stats.ts landed).
+  // It owns the resample-scaling + fail-closed-null behavior; this wrapper
+  // only adapts the field names this module's callers already use.
+  const ci = statsBootstrapCI(returns, level, resamples, 0x9e3779b9);
+  if (!ci) return null;
   return {
-    level,
-    resamples: effectiveResamples,
-    lowerR: round(lowerR),
-    upperR: round(upperR),
-    excludesZero: lowerR > 0 || upperR < 0,
+    level: ci.level,
+    resamples: ci.resamples,
+    lowerR: round(ci.lower),
+    upperR: round(ci.upper),
+    excludesZero: ci.excludesZero,
   };
 }
 
@@ -379,11 +374,26 @@ function evaluateArmReadiness(
     );
   }
 
+  // Deferred-loser guard: netReturns only sees CLOSED trades, so an arm that
+  // banks winners and lets losers ride reads as an edge. Block "ready" when
+  // the pooled unrealized loss rivals the realized net. (Review 2026-08-04.)
+  const pooledUnrealized = tail.reduce((s, it) => s + (it.attribution.unrealizedPnlXlm ?? 0), 0);
+  const pooledRealized = tail.reduce((s, it) => s + it.attribution.netPnlXlm, 0);
+  const unrealizedLoss = pooledUnrealized < 0 ? -pooledUnrealized : 0;
+  const unrealizedOk =
+    unrealizedLoss <= 0 ||
+    (pooledRealized > 0 && unrealizedLoss <= config.maxUnrealizedLossRatio * pooledRealized);
+  if (!unrealizedOk) {
+    reasons.push(
+      `${label}: ${round(unrealizedLoss)} XLM of UNREALIZED loss sits on still-open positions vs ${round(pooledRealized)} XLM realized - the realized record flatters a deferred loser`,
+    );
+  }
+
   const fullTrail = iterations.map((it) => mean(it.attribution.netReturns));
   const plateaued = detectPlateau(
     fullTrail,
     config.plateauWindow,
-    config.materialImprovement,
+    config.materialImprovementFraction,
   );
   if (!plateaued) {
     reasons.push(
@@ -392,7 +402,7 @@ function evaluateArmReadiness(
   }
 
   const ready =
-    enoughConsecutive && consistent && significant && regimeStable && plateaued;
+    enoughConsecutive && consistent && significant && regimeStable && plateaued && unrealizedOk;
 
   return {
     key,
@@ -402,6 +412,7 @@ function evaluateArmReadiness(
     regimeStable,
     consistent,
     plateaued,
+    unrealizedOk,
     reasons,
   };
 }

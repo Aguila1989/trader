@@ -289,7 +289,7 @@ export function step(state: LoopState, deps: StepDeps): LoopState {
         detectPlateau(
           trail,
           deps.config.readiness.plateauWindow,
-          deps.config.readiness.materialImprovement,
+          deps.config.readiness.materialImprovementFraction,
         )
       ) {
         lockedAtIteration = iteration;

@@ -109,21 +109,92 @@ describe("readiness — minimum independent round-trips gate (P0)", () => {
   });
 });
 
+describe("readiness — deferred-loser guard (unrealized loss)", () => {
+  // netReturns only sees CLOSED trades, so banking winners while letting
+  // losers ride reads as an edge. (Review 2026-08-04, eval-honesty P2.)
+  function iterWithUnrealized(iteration: number, unrealizedPnlXlm: number): ArmIterationResult {
+    const attribution = {
+      ...makeAttribution(PATTERN, {
+        "trending-up": regimeBucket(5, 0.15 * 5),
+        ranging: regimeBucket(5, 0.054 * 5),
+      }),
+      unrealizedPnlXlm,
+    };
+    return { iteration, key: KEY, isOutOfSample: true, tunedThisIteration: false, attribution };
+  }
+
+  it("blocks ready when a big unrealized loss sits behind the realized record", () => {
+    // Each iteration realizes ~+1.02 XLM but hides -5 XLM still open.
+    const history = [1, 2, 3, 4, 5].map((i) => iterWithUnrealized(i, -5));
+    const res = evaluateReadiness(
+      { [armKeyOf(KEY)]: history },
+      { [armKeyOf(KEY)]: 1 },
+      { exhausted: false, iterationsUsed: 5, maxIterations: 50 },
+    );
+    const arm = res.perArm[0]!;
+    expect(arm.unrealizedOk).toBe(false);
+    expect(arm.ready).toBe(false);
+    expect(res.recommendation).not.toBe("ready-for-tiny-live");
+    expect(arm.reasons.join(" ")).toMatch(/unrealized/i);
+  });
+
+  it("allows ready with no open exposure (nothing hidden)", () => {
+    const history = [1, 2, 3, 4, 5].map((i) => iterWithUnrealized(i, 0));
+    const res = evaluateReadiness(
+      { [armKeyOf(KEY)]: history },
+      { [armKeyOf(KEY)]: 1 },
+      { exhausted: false, iterationsUsed: 5, maxIterations: 50 },
+    );
+    expect(res.perArm[0]!.unrealizedOk).toBe(true);
+    expect(res.recommendation).toBe("ready-for-tiny-live");
+  });
+
+  it("an unrealized GAIN never blocks readiness", () => {
+    const history = [1, 2, 3, 4, 5].map((i) => iterWithUnrealized(i, +99));
+    const res = evaluateReadiness(
+      { [armKeyOf(KEY)]: history },
+      { [armKeyOf(KEY)]: 1 },
+      { exhausted: false, iterationsUsed: 5, maxIterations: 50 },
+    );
+    expect(res.perArm[0]!.unrealizedOk).toBe(true);
+  });
+});
+
 describe("detectPlateau", () => {
+  // The threshold is a FRACTION of the window's typical magnitude (0.1 = 10%),
+  // not an absolute delta. (Review 2026-08-04, eval-honesty P2.)
+  const F = 0.1;
+
   it("is false when there isn't enough history to judge yet", () => {
-    expect(detectPlateau([0.1, 0.1], 3, 0.02)).toBe(false);
+    expect(detectPlateau([0.1, 0.1], 3, F)).toBe(false);
   });
 
   it("is false while a trail is still materially improving", () => {
-    expect(detectPlateau([0.1, 0.3, 0.5, 0.7, 0.9], 3, 0.02)).toBe(false);
+    expect(detectPlateau([0.1, 0.3, 0.5, 0.7, 0.9], 3, F)).toBe(false);
   });
 
   it("is true once a trail has flattened out", () => {
-    expect(detectPlateau([0.1, 0.1, 0.1, 0.1], 3, 0.02)).toBe(true);
+    expect(detectPlateau([0.1, 0.1, 0.1, 0.1], 3, F)).toBe(true);
   });
 
-  it("tolerates noise below the materialImprovement threshold", () => {
-    expect(detectPlateau([0.1, 0.105, 0.098, 0.101], 3, 0.02)).toBe(true);
+  it("tolerates noise below the relative threshold", () => {
+    expect(detectPlateau([0.1, 0.105, 0.098, 0.101], 3, F)).toBe(true);
+  });
+
+  it("SCALES with the data: the same delta is 'improving' at small magnitudes", () => {
+    // The whole point of the fix. Both trails improve by 10x their own scale,
+    // but the old absolute 0.02 threshold declared the small one plateaued
+    // (0.005 < 0.02) even though it was still climbing steeply.
+    const small = [0.001, 0.002, 0.003, 0.005];
+    expect(detectPlateau(small, 3, F)).toBe(false);
+    // ...and a genuinely flat small-magnitude trail still reads as plateaued.
+    expect(detectPlateau([0.001, 0.001, 0.001, 0.001], 3, F)).toBe(true);
+  });
+
+  it("does not let a near-zero trail shrink the bar to nothing (absolute floor)", () => {
+    // Deltas here are ~1e-9: noise, not improvement. Without the floor the
+    // relative threshold would collapse toward 0 and call this 'improving'.
+    expect(detectPlateau([1e-9, 2e-9, 1e-9, 3e-9], 3, F)).toBe(true);
   });
 });
 

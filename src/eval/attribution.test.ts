@@ -74,6 +74,26 @@ describe("FIFO realized PnL", () => {
     expect(a.netReturns[0]!).toBeCloseTo(0.1, 6); // notional-weighted +10% net
   });
 
+  it("marks the OPEN remainder to the last observed price (deferred-loser guard)", () => {
+    // Buy 20 @100, sell only 10 @110 (banking a winner) while the market's
+    // last observed print is 110... then a later print at 60 shows the
+    // remaining 10 units are deep under water. Realized PnL looks great; the
+    // unrealized mark is what stops that flattering the record.
+    // (Review 2026-08-04, eval-honesty P2.)
+    const fills = [
+      fill({ orderId: "e", side: "buy", filledBase: 20, avgPrice: 100, ts: "t1" }),
+      fill({ orderId: "x", side: "sell", filledBase: 10, avgPrice: 110, ts: "t2" }),
+      // A later small print marks the pair much lower.
+      fill({ orderId: "e2", side: "buy", filledBase: 1, avgPrice: 60, ts: "t3" }),
+    ];
+    const a = attributeArm(fills);
+    expect(a.netPnlXlm).toBeGreaterThan(0); // the realized record looks fine...
+    expect(a.unrealizedPnlXlm).toBeLessThan(0); // ...but the open book is under water
+    const open = a.openLots[0]!;
+    expect(open.lastPrice).toBe(60);
+    expect(open.unrealizedPnlXlm).toBeLessThan(0);
+  });
+
   it("counts each scaling-OUT close as its own round-trip observation", () => {
     // One 20-unit long closed by TWO separate sells = two closing DECISIONS.
     const fills = [
