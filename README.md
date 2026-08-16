@@ -1,5 +1,9 @@
 # Atrium
 
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/Aguila1989/trader/actions/workflows/ci.yml/badge.svg)](https://github.com/Aguila1989/trader/actions)
+[![Buy Me a Coffee](https://img.shields.io/badge/support-buy%20me%20a%20coffee-ffdd00.svg)](https://buymeacoffee.com/aguila1989)
+
 A self-hosted trading dashboard for the **Stellar DEX** with an optional **AI trading copilot** — bring your own LLM key, keep your own keys, run it on your own machine.
 
 > ⚠️ **Read this first.** Atrium can move **real money on a real blockchain**. It ships in **testnet mode by default** — keep it there until you have read the safety model below and understand exactly what you're arming. This is a personal project provided **as-is, without warranty** (see [License](#license)). Nothing in this repository is financial advice, and the bundled example strategy is **not** proven profitable — the built-in backtester will tell you the same.
